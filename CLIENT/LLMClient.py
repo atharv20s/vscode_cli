@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator
 from typing import Any
-from CLIENT.response import EventType, StreamEvent, TokenUsage
-from openai import AsyncOpenAI
+from CLIENT.response import StreamEventType, StreamEvent, TokenUsage
+from openai import AsyncOpenAI, RateLimitError, APIConnectionError, APIError
 
 from dataclasses import dataclass
 
@@ -13,6 +13,9 @@ class TextDelta:
 class LLMClient:
   def __init__(self):
     self.client: AsyncOpenAI | None = None
+    self._max_retries: int = 4
+
+    finish_reason: str | None = None
 
   def get_client(self) -> AsyncOpenAI:
     if self.client is None:
@@ -32,19 +35,60 @@ class LLMClient:
     messages: list[dict[str, Any]],
     stream: bool = True,
   ) -> AsyncGenerator[StreamEvent, None]:
-    
     client = self.get_client()
     kwargs = {
-      "model": "mistralai/devstral-2512:free",
-      "messages": messages,
-      "stream": stream,
+          "model": "mistralai/devstral-2512:free",
+          "messages": messages,
+          "stream": stream,
     }
-    if stream:
-      async for event in self._stream_response(client, kwargs):
+
+
+    for attempt in range(self._max_retries+1):
+      try:
+        
+        if stream:
+          async for event in self._stream_response(client, kwargs):
+            yield event
+        else:
+          event = await anext(self._non_stream_response(client, kwargs))
         yield event
-    else:
-      event = await anext(self._non_stream_response(client, kwargs))
-    yield event
+        return
+      except RateLimitError as e:
+        if attempt<self._max_retries:
+          ##were holdin up by te eponential backoffs as in here
+          wait_time=2**attempt
+          await asyncio.sleep(wait_time)
+
+        else:
+          yield StreamEvent(
+            type=StreamEventType.ERROR,
+            error=f"Rate limit exceeded: {str(e)}",
+          )
+          return
+      except APIConnectionError as e:
+        if attempt<self._max_retries:
+          wait_time=2**attempt
+          await asyncio.sleep(wait_time)
+        else:
+          yield StreamEvent(
+            type=StreamEventType.ERROR,
+            error=f"API connection error: {str(e)}",
+          )
+          return
+
+      except APIError as e:
+        yield StreamEvent(
+          type=StreamEventType.ERROR,
+          error=f"API error: {str(e)}",
+        )
+        return
+        # yield StreamEvent(
+        #   type=EventType.ERROR,
+        #   error=f"API connection error: {str(e)}",
+        # )
+        # return
+
+      
 
 
   async def _stream_response(
@@ -53,14 +97,36 @@ class LLMClient:
     kwargs: dict[str, Any],
   )-> AsyncGenerator[StreamEvent, None]:
     response = await client.chat.completions.create(**kwargs)
+
+
+    usage:TokenUsage|None
+
+
     async for chunk in response:
       if hasattr(chunk, 'usage') and chunk.usage:
         usage=TokenUsage(
-          prompt_tokens=response.usage.prompt_tokens,
-          completion_tokens=response.usage.completion_tokens,
-          total_tokens=response.usage.total_tokens,
-          cached_tokens=getattr(response.usage.prompt_tokens_details, 'cached_tokens', 0),
+          prompt_tokens=chunk.usage.prompt_tokens,
+          completion_tokens=chunk.usage.completion_tokens,
+          total_tokens=chunk.usage.total_tokens,
+          cached_tokens=getattr(chunk.usage.prompt_tokens_details, 'cached_tokens', 0),
         )
+      if not chunk.choices:
+        continue  
+
+      choice=chunk.choices[0]
+      text_delta=None
+
+      if choice.finish_reason:
+        finish_reason=choice.finish_reason
+
+      delta = choice.delta  # stream payload contains incremental delta
+      if delta and delta.content:
+        yield StreamEvent(
+          type=StreamEventType.TEXT_DELTA,
+          text_delta=TextDelta(delta.content),
+
+        )
+
       #yield chunk
 
 
