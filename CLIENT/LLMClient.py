@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 from CLIENT.response import StreamEventType, StreamEvent, TokenUsage
@@ -20,7 +21,7 @@ class LLMClient:
   def get_client(self) -> AsyncOpenAI:
     if self.client is None:
       self.client = AsyncOpenAI(
-        api_key="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",
+        api_key="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",
         base_url="https://openrouter.ai/api/v1",
       )
     return self.client
@@ -134,34 +135,30 @@ class LLMClient:
     self,
     client: AsyncOpenAI,
     kwargs: dict[str, Any],
-  ) -> StreamEvent | None:
+  ) -> AsyncGenerator[StreamEvent, None]:
+    """Handle non-streaming API response."""
     response = await client.chat.completions.create(**kwargs)
 
-    async for chunk in response:
-      yield chunk
-
-
-    choice=response.choices[0]
-    message=choice.message
-    text_delta=None
+    choice = response.choices[0]
+    message = choice.message
+    text_delta = None
+    
     if message.content:
-      text_delta=TextDelta(content=message.content)
-    usage=None
+      text_delta = TextDelta(content=message.content)
+    
+    usage = None
     if response.usage:
-      usage=TokenUsage(
+      usage = TokenUsage(
         prompt_tokens=response.usage.prompt_tokens,
         completion_tokens=response.usage.completion_tokens,
         total_tokens=response.usage.total_tokens,
-        cached_tokens=getattr(response.usage.prompt_tokens_details, 'cached_tokens', 0),
+        cached_tokens=getattr(response.usage.prompt_tokens_details, 'cached_tokens', 0) if response.usage.prompt_tokens_details else 0,
       )
 
-      yield StreamEvent(
-        type=EventType.MESSAGE_COMPLETE,
-        text_delta=text_delta,
-        finish_reason=choice.finish_reason,
-        usage=usage,
-      )
-
-
-    print(response)
+    yield StreamEvent(
+      type=StreamEventType.MESSAGE_COMPLETE,
+      text_delta=text_delta,
+      finish_reason=choice.finish_reason,
+      usage=usage,
+    )
       
