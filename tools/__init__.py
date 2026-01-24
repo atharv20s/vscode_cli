@@ -1,11 +1,14 @@
 """
 Tools package - Extensible tool system for the Agentic CLI.
 
-Available Tools (6):
+Available Tools (9):
 - read_file: Read file contents
-- write_file: Write/create files  
+- write_file: Write/create files
+- edit_file: Find and replace text in files
 - list_dir: List directory contents
 - shell: Execute shell commands
+- grep: Search text patterns inside files
+- glob: Find files by name pattern
 - web_search: Search via DuckDuckGo
 - fetch_url: Fetch URL content
 

@@ -52,6 +52,8 @@ TOOL_ICONS = {
     "edit_file": "✏️",
     "list_dir": "📁",
     "shell": "💻",
+    "grep": "🔎",
+    "glob": "🗂️",
     "web_search": "🔍",
     "fetch_url": "🌐",
     "calculator": "🧮",
