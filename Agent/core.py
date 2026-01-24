@@ -36,6 +36,7 @@ class Agent:
         persona: str = "default",
         tools_enabled: bool = True,
         max_iterations: int | None = None,
+        model: str | None = None,
     ):
         """Initialize the Agent.
         
@@ -44,6 +45,7 @@ class Agent:
             persona: Preset persona name (default, coder, teacher, analyst, creative)
             tools_enabled: Whether to enable tool calling
             max_iterations: Max tool calling loops (default from settings)
+            model: Model to use (overrides settings)
         """
         self.settings = get_settings()
         self.client: LLMClient | None = None
@@ -53,6 +55,7 @@ class Agent:
         self.tools_enabled = tools_enabled
         self.registry: ToolRegistry | None = None
         self.current_turn: int = 0
+        self.model = model  # Store model selection
         
         # Use settings for max iterations if not specified
         self.max_iterations = max_iterations or self.settings.max_iterations
@@ -65,7 +68,7 @@ class Agent:
 
     async def __aenter__(self) -> Agent:
         """Async context manager entry - initialize resources."""
-        self.client = LLMClient()
+        self.client = LLMClient(model=self.model)
         self._is_initialized = True
         
         # Setup tools if enabled

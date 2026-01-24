@@ -7,18 +7,32 @@ Usage:
     python main.py -w "Hello"  # with welcome banner
     python main.py -t "Read main.py and summarize"  # with tools enabled
     python main.py -i  # interactive mode (REPL)
+    python main.py -m plan "Design a REST API"  # Plan mode - think first
+    python main.py -m think "Complex problem"  # Deep reasoning mode
+    python main.py --model gpt-4o "Question"  # Use specific model
+    python main.py --list-models  # Show available models
 """
 
 from typing import Any
 import asyncio
 import click
+import os
 
 from Agent.core import Agent
 from Agent.events import AgentEventType
+from Agent.modes import AgentMode, get_mode_config, get_all_modes
 from prompts import SYSTEM_PROMPTS
 from ui import TUI, get_console
+from context.memory import ProjectMemory
+from config.models import MODELS, get_model
 
 console = get_console()
+
+# Initialize project memory
+try:
+    memory = ProjectMemory(os.getcwd())
+except Exception:
+    memory = None
 
 
 class CLI:
@@ -29,20 +43,58 @@ class CLI:
         persona: str = "default",
         system_prompt: str | None = None,
         tools_enabled: bool = False,
+        mode: str = "agent",
+        model: str | None = None,
     ):
         self.agent: Agent | None = None
         self.tui = TUI(console=console)
         self.persona = persona
         self.system_prompt = system_prompt
         self.tools_enabled = tools_enabled
+        self.mode = mode
+        self.model = model
         self._running = False  # Track if interactive mode is running
+        
+        # Apply mode settings
+        self._apply_mode_settings()
+    
+    def _apply_mode_settings(self) -> None:
+        """Apply mode-specific settings."""
+        try:
+            mode_enum = AgentMode(self.mode.upper())
+            config = get_mode_config(mode_enum)
+            
+            # Mode can override tools_enabled (e.g., ASK mode disables tools)
+            if not config.tools_enabled:
+                self.tools_enabled = False
+            
+            # Add mode-specific addon to system prompt if exists
+            if config.system_prompt_addon and self.system_prompt is None:
+                base_prompt = SYSTEM_PROMPTS.get(self.persona, SYSTEM_PROMPTS["default"])
+                self.system_prompt = base_prompt + "\n\n" + config.system_prompt_addon
+                
+        except (ValueError, KeyError):
+            pass  # Use defaults if mode not recognized
 
     async def run_single(self, message: str) -> None:
         """Run a single message through the agent (single-shot mode)."""
+        # Build memory context if available
+        memory_context = ""
+        if memory:
+            memory_context = memory.generate_context_prompt()
+        
+        # Prepend memory to system prompt if we have it
+        effective_prompt = self.system_prompt
+        if memory_context and effective_prompt:
+            effective_prompt = effective_prompt + "\n\n" + memory_context
+        elif memory_context:
+            effective_prompt = memory_context
+        
         async with Agent(
-            system_prompt=self.system_prompt,
+            system_prompt=effective_prompt,
             persona=self.persona,
             tools_enabled=self.tools_enabled,
+            model=self.model,
         ) as agent:
             self.agent = agent
             await self._process_message(message)
@@ -51,14 +103,27 @@ class CLI:
         """Run interactive mode (REPL) with persistent context."""
         self._running = True
         
+        # Build memory context
+        memory_context = ""
+        if memory:
+            memory_context = memory.generate_context_prompt()
+        
+        effective_prompt = self.system_prompt
+        if memory_context and effective_prompt:
+            effective_prompt = effective_prompt + "\n\n" + memory_context
+        elif memory_context:
+            effective_prompt = memory_context
+        
         async with Agent(
-            system_prompt=self.system_prompt,
+            system_prompt=effective_prompt,
             persona=self.persona,
             tools_enabled=self.tools_enabled,
+            model=self.model,
         ) as agent:
             self.agent = agent
             
             self.tui.show_interactive_welcome(self.persona, self.tools_enabled)
+            self.tui.show_info(f"Mode: {self.mode.upper()} | Model: {self.model or 'default'}")
             self.tui.show_info("Type 'exit' or 'quit' to leave. '/help' for commands.")
             console.print()
             
@@ -103,9 +168,37 @@ class CLI:
                         # Show available tools
                         if self.tools_enabled and agent.registry:
                             tools = agent.registry.list_tools()
-                            self.tui.show_info(f"Available tools: {', '.join(tools)}")
+                            self.tui.show_info(f"Available tools ({len(tools)}): {', '.join(tools)}")
                         else:
                             self.tui.show_info("Tools are disabled. Use -t flag to enable.")
+                        console.print()
+                        continue
+                    
+                    if lower_input == "/memory":
+                        # Show memory info
+                        if memory:
+                            entries = memory.list_all()
+                            self.tui.show_info(f"Memory entries: {len(entries)}")
+                            for entry in entries[:5]:  # Show last 5
+                                console.print(f"  • [{entry.category}] {entry.content[:50]}...")
+                        else:
+                            self.tui.show_info("Memory not available")
+                        console.print()
+                        continue
+                    
+                    if lower_input.startswith("/remember "):
+                        # Quick remember
+                        content = user_input[10:].strip()
+                        if memory and content:
+                            memory.remember(content, category="user_note")
+                            self.tui.show_success(f"Remembered: {content[:50]}...")
+                        console.print()
+                        continue
+                    
+                    if lower_input == "/mode":
+                        # Show current mode
+                        self.tui.show_info(f"Current mode: {self.mode.upper()}")
+                        self.tui.show_info("Available modes: ask, edit, agent, plan, think, debug, review")
                         console.print()
                         continue
                     
@@ -138,12 +231,25 @@ class CLI:
   [bold]/clear[/bold], [bold]/reset[/bold]  - Clear conversation context
   [bold]/context[/bold]        - Show conversation message count
   [bold]/tools[/bold]          - List available tools
+  [bold]/memory[/bold]         - Show stored memories
+  [bold]/remember <text>[/bold] - Store a memory
+  [bold]/mode[/bold]           - Show current mode info
   [bold]/help[/bold], [bold]/?[/bold]       - Show this help
   [bold]exit[/bold], [bold]quit[/bold]      - Exit interactive mode
+
+[bold cyan]Agent Modes:[/bold cyan]
+  • [bold]ask[/bold]    - Questions only, no file changes
+  • [bold]edit[/bold]   - Targeted file edits
+  • [bold]agent[/bold]  - Full autonomous mode (default)
+  • [bold]plan[/bold]   - Think before acting
+  • [bold]think[/bold]  - Deep reasoning mode
+  • [bold]debug[/bold]  - Debugging specialist
+  • [bold]review[/bold] - Code review mode
 
 [bold cyan]Tips:[/bold cyan]
   • Conversation context is preserved between messages
   • Use /clear to start a fresh conversation
+  • Memory persists across sessions
   • Press Ctrl+C twice to force exit
 """
         console.print(help_text)
@@ -222,9 +328,24 @@ class CLI:
 @click.option("--welcome", "-w", is_flag=True, help="Show welcome message")
 @click.option(
     "--persona", "-p",
-    type=click.Choice(["default", "coder", "teacher", "analyst", "creative", "terminal", "concise"]),
+    type=click.Choice([
+        "default", "coder", "teacher", "analyst", "creative", 
+        "terminal", "concise", "elite_coder", "debugger", "refactor"
+    ]),
     default="default",
-    help="AI persona to use"
+    help="AI persona to use (elite_coder, debugger, refactor are powerful coding personas)"
+)
+@click.option(
+    "--mode", "-m",
+    type=click.Choice(["ask", "edit", "agent", "plan", "think", "debug", "review"]),
+    default="agent",
+    help="Agent mode: ask (read-only), edit (targeted), agent (full), plan (think first), think (deep reasoning)"
+)
+@click.option(
+    "--model",
+    type=str,
+    default=None,
+    help="Model to use (e.g., gpt-4o, claude-sonnet, devstral). Use --list-models to see options."
 )
 @click.option(
     "--system", "-s",
@@ -235,14 +356,20 @@ class CLI:
 @click.option("--tools", "-t", is_flag=True, help="Enable tool calling (read_file, shell, web_search, etc.)")
 @click.option("--interactive", "-i", is_flag=True, help="Run in interactive mode (REPL with persistent context)")
 @click.option("--list-personas", is_flag=True, help="List available personas")
+@click.option("--list-models", is_flag=True, help="List available models")
+@click.option("--list-modes", is_flag=True, help="List available agent modes")
 def main(
     prompt: tuple[str, ...] | None,
     welcome: bool,
     persona: str,
+    mode: str,
+    model: str | None,
     system: str | None,
     tools: bool,
     interactive: bool,
     list_personas: bool,
+    list_models: bool,
+    list_modes: bool,
 ) -> None:
     """Agentic CLI - Your AI-powered terminal assistant.
     
@@ -250,6 +377,9 @@ def main(
         python main.py "Explain Python decorators"
         python main.py -p coder "Write a sorting function"
         python main.py -t "Read main.py and summarize it"
+        python main.py -m plan "Design a REST API"
+        python main.py -m think "Complex algorithm problem"
+        python main.py --model gpt-4o "Use GPT-4o for this"
         python main.py -s "You are a pirate" "Tell me about ships"
         python main.py -i  # Interactive mode
         python main.py -i -t  # Interactive mode with tools
@@ -263,8 +393,33 @@ def main(
             first_line = prompt_text.strip().split("\n")[0]
             console.print(f"  [dim]{first_line}[/dim]")
         return
+    
+    if list_models:
+        tui.show_info("Available Models:")
+        for model_id, model_config in MODELS.items():
+            provider = model_config.provider.value
+            console.print(f"\n[bold cyan]{model_id}[/bold cyan] ({provider})")
+            console.print(f"  [dim]{model_config.display_name} - Context: {model_config.context_window:,} tokens[/dim]")
+            console.print(f"  Best for: {', '.join(model_config.best_for)}")
+            if model_config.cost_per_1k_input == 0:
+                console.print(f"  [green]FREE[/green]")
+        return
+    
+    if list_modes:
+        tui.show_info("Available Agent Modes:")
+        for mode_info in get_all_modes():
+            console.print(f"\n[bold cyan]{mode_info.mode.value.lower()}[/bold cyan]")
+            console.print(f"  {mode_info.description}")
+            console.print(f"  [dim]Tools: {'✓' if mode_info.tools_enabled else '✗'} | Max iterations: {mode_info.max_iterations}[/dim]")
+        return
 
-    cli = CLI(persona=persona, system_prompt=system, tools_enabled=tools)
+    cli = CLI(
+        persona=persona,
+        system_prompt=system,
+        tools_enabled=tools,
+        mode=mode,
+        model=model,
+    )
 
     if welcome:
         cli.tui.show_welcome()

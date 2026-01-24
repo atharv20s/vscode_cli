@@ -1,5 +1,5 @@
 """
-LLM Client for OpenRouter/OpenAI API communication.
+LLM Client for OpenRouter/OpenAI API communication with multi-model support.
 """
 
 import asyncio
@@ -17,17 +17,56 @@ from config.settings import get_settings
 class LLMClient:
     """Async LLM client with streaming support, tool calling, and retry logic."""
     
-    def __init__(self):
+    def __init__(self, model: str | None = None):
+        """Initialize LLM client.
+        
+        Args:
+            model: Optional model override. If None, uses settings default.
+        """
         self.client: AsyncOpenAI | None = None
         self._max_retries: int = 4
         self._settings = get_settings()
+        self._model_override = model
+        
+        # Resolve model and provider
+        self._resolved_model: str = self._settings.model
+        self._resolved_base_url: str = self._settings.api_base_url
+        self._resolved_api_key: str = self._settings.api_key
+        
+        if model:
+            self._resolve_model_config(model)
+    
+    def _resolve_model_config(self, model: str) -> None:
+        """Resolve model configuration from models registry."""
+        try:
+            from config.models import get_model, PROVIDERS, LLMProvider
+            
+            model_config = get_model(model)
+            if model_config:
+                self._resolved_model = model_config.model_id
+                provider_config = PROVIDERS.get(model_config.provider)
+                
+                if provider_config:
+                    self._resolved_base_url = provider_config.base_url
+                    # Use environment variable for API key based on provider
+                    import os
+                    env_key = provider_config.env_key
+                    env_api_key = os.environ.get(env_key)
+                    if env_api_key:
+                        self._resolved_api_key = env_api_key
+            else:
+                # Model name not in registry, use as-is (direct model ID)
+                self._resolved_model = model
+        except ImportError:
+            # Fallback if models.py not available
+            self._resolved_model = model
 
     def get_client(self) -> AsyncOpenAI:
         """Get or create the AsyncOpenAI client."""
         if self.client is None:
             self.client = AsyncOpenAI(
-                api_key=self._settings.api_key,
-                base_url=self._settings.api_base_url,
+                api_key=self._resolved_api_key,
+                base_url=self._resolved_base_url,
             )
         return self.client
 
@@ -55,7 +94,7 @@ class LLMClient:
         """
         client = self.get_client()
         kwargs: dict[str, Any] = {
-            "model": self._settings.model,
+            "model": self._resolved_model,
             "messages": messages,
             "stream": stream,
         }
