@@ -4,6 +4,14 @@
 !main.py
 !CLIENT/
 !README.md
+!Agent/
+!tools/
+!ui/
+!config/
+!prompts/
+!context/
+!examples/
+!AGENTS.md
 
 # Python virtual environment
 pyvenv.cfg
