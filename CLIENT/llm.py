@@ -3,24 +3,19 @@ LLM Client for OpenRouter/OpenAI API communication.
 """
 
 import asyncio
+import json
 from collections.abc import AsyncGenerator
 from typing import Any
 from dataclasses import dataclass
 
 from openai import AsyncOpenAI, RateLimitError, APIConnectionError, APIError
 
-from CLIENT.response import StreamEventType, StreamEvent, TokenUsage
+from CLIENT.response import StreamEventType, StreamEvent, TokenUsage, TextDelta, ToolCallDelta
 from config.settings import get_settings
 
 
-@dataclass
-class TextDelta:
-    """Represents a text delta from streaming response."""
-    content: str
-
-
 class LLMClient:
-    """Async LLM client with streaming support and retry logic."""
+    """Async LLM client with streaming support, tool calling, and retry logic."""
     
     def __init__(self):
         self.client: AsyncOpenAI | None = None
@@ -46,22 +41,29 @@ class LLMClient:
         self,
         messages: list[dict[str, Any]],
         stream: bool = True,
+        tools: list[dict[str, Any]] | None = None,
     ) -> AsyncGenerator[StreamEvent, None]:
         """Send a chat completion request to the LLM.
         
         Args:
             messages: List of message dicts with 'role' and 'content'
             stream: Whether to stream the response
+            tools: Optional list of tool definitions (OpenAI function format)
             
         Yields:
-            StreamEvent objects for text deltas, completion, or errors
+            StreamEvent objects for text deltas, tool calls, completion, or errors
         """
         client = self.get_client()
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "model": self._settings.model,
             "messages": messages,
             "stream": stream,
         }
+        
+        # Add tools if provided
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
 
         for attempt in range(self._max_retries + 1):
             try:
@@ -107,9 +109,12 @@ class LLMClient:
         client: AsyncOpenAI,
         kwargs: dict[str, Any],
     ) -> AsyncGenerator[StreamEvent, None]:
-        """Handle streaming API response."""
+        """Handle streaming API response with tool call support."""
         response = await client.chat.completions.create(**kwargs)
         usage: TokenUsage | None = None
+        
+        # Accumulate tool calls across chunks
+        tool_calls_acc: dict[int, dict[str, str]] = {}
 
         async for chunk in response:
             if hasattr(chunk, 'usage') and chunk.usage:
@@ -126,11 +131,47 @@ class LLMClient:
                 continue
 
             choice = chunk.choices[0]
-
+            
+            # Handle text content
             if choice.delta and choice.delta.content:
                 yield StreamEvent(
                     type=StreamEventType.TEXT_DELTA,
                     text_delta=TextDelta(choice.delta.content),
+                )
+            
+            # Handle tool calls (accumulate across chunks)
+            if choice.delta and choice.delta.tool_calls:
+                for tc in choice.delta.tool_calls:
+                    idx = tc.index
+                    if idx not in tool_calls_acc:
+                        tool_calls_acc[idx] = {
+                            "id": "",
+                            "name": "",
+                            "arguments": "",
+                        }
+                    
+                    if tc.id:
+                        tool_calls_acc[idx]["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        tool_calls_acc[idx]["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        tool_calls_acc[idx]["arguments"] += tc.function.arguments
+            
+            # Check if we're done
+            if choice.finish_reason == "tool_calls":
+                # Emit all accumulated tool calls
+                tool_call_deltas = [
+                    ToolCallDelta(
+                        id=tc["id"],
+                        name=tc["name"],
+                        arguments=tc["arguments"],
+                    )
+                    for tc in tool_calls_acc.values()
+                ]
+                yield StreamEvent(
+                    type=StreamEventType.TOOL_CALL,
+                    tool_calls=tool_call_deltas,
+                    finish_reason="tool_calls",
                 )
 
     async def _non_stream_response(
@@ -138,16 +179,13 @@ class LLMClient:
         client: AsyncOpenAI,
         kwargs: dict[str, Any],
     ) -> AsyncGenerator[StreamEvent, None]:
-        """Handle non-streaming API response."""
+        """Handle non-streaming API response with tool call support."""
         response = await client.chat.completions.create(**kwargs)
 
         choice = response.choices[0]
         message = choice.message
-        text_delta = None
         
-        if message.content:
-            text_delta = TextDelta(content=message.content)
-        
+        # Parse usage
         usage = None
         if response.usage:
             usage = TokenUsage(
@@ -158,10 +196,27 @@ class LLMClient:
                     response.usage.prompt_tokens_details, 'cached_tokens', 0
                 ) if response.usage.prompt_tokens_details else 0,
             )
-
-        yield StreamEvent(
-            type=StreamEventType.MESSAGE_COMPLETE,
-            text_delta=text_delta,
-            finish_reason=choice.finish_reason,
-            usage=usage,
-        )
+        
+        # Check for tool calls
+        if message.tool_calls:
+            tool_call_deltas = [
+                ToolCallDelta(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments=tc.function.arguments,
+                )
+                for tc in message.tool_calls
+            ]
+            yield StreamEvent(
+                type=StreamEventType.TOOL_CALL,
+                tool_calls=tool_call_deltas,
+                finish_reason=choice.finish_reason,
+                usage=usage,
+            )
+        elif message.content:
+            yield StreamEvent(
+                type=StreamEventType.MESSAGE_COMPLETE,
+                text_delta=TextDelta(content=message.content),
+                finish_reason=choice.finish_reason,
+                usage=usage,
+            )
