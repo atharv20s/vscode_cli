@@ -49,6 +49,7 @@ AGENT_THEME = Theme(
 TOOL_ICONS = {
     "read_file": "📄",
     "write_file": "✍️",
+    "edit_file": "✏️",
     "list_dir": "📁",
     "shell": "💻",
     "web_search": "🔍",
@@ -223,17 +224,69 @@ class TUI:
             self.console.print(Panel(content, title="[assistant]Assistant[/assistant]", border_style="grey35"))
         self.console.print()
 
-    def show_error(self, error: str) -> None:
-        """Display an error message."""
+    def show_error(self, error: str, error_type: str | None = None) -> None:
+        """Display an error message with enhanced formatting.
+        
+        Args:
+            error: The error message
+            error_type: Optional error category (api, tool, validation, etc.)
+        """
         # End any streaming first
         if self._is_streaming:
             self.end_assistant_response()
+        
+        # Categorize error for better display
+        error_lower = error.lower()
+        
+        if error_type:
+            category = error_type
+        elif "api" in error_lower or "401" in error_lower or "403" in error_lower:
+            category = "API Error"
+        elif "timeout" in error_lower:
+            category = "Timeout"
+        elif "permission" in error_lower:
+            category = "Permission Denied"
+        elif "not found" in error_lower or "404" in error_lower:
+            category = "Not Found"
+        elif "max iterations" in error_lower:
+            category = "Iteration Limit"
+        elif "tool" in error_lower:
+            category = "Tool Error"
+        else:
+            category = "Error"
+        
+        # Choose icon based on category
+        icons = {
+            "API Error": "🔑",
+            "Timeout": "⏱️",
+            "Permission Denied": "🚫",
+            "Not Found": "🔍",
+            "Iteration Limit": "🔄",
+            "Tool Error": "🔧",
+            "Error": "❌",
+        }
+        icon = icons.get(category, "❌")
+        
+        # Format error message with potential multi-line support
+        error_lines = error.split('\n')
+        if len(error_lines) > 1:
+            # Multi-line error - format nicely
+            formatted = Text()
+            formatted.append(f"{icon} ", style="error")
+            formatted.append(error_lines[0] + "\n", style="bright_white")
+            for line in error_lines[1:]:
+                formatted.append(f"   {line}\n", style="dim")
+            content = formatted
+        else:
+            content = Text(f"{icon} {error}", style="error")
+        
         self.console.print()
         self.console.print(
             Panel(
-                f"[error]❌ Error:[/error] {error}",
+                content,
                 border_style="red",
-                title="Error",
+                title=f"[bold red]{category}[/bold red]",
+                padding=(0, 1),
             )
         )
         self.console.print()
@@ -418,8 +471,20 @@ class TUI:
                 content = Text(display_result)
                 
         elif name == "write_file":
-            # Show confirmation message
+            # Show confirmation message with success styling
             content = Text(display_result, style="success")
+            
+        elif name == "edit_file":
+            # Show edit confirmation with diff-style info
+            lines = display_result.split('\n')
+            formatted = Text()
+            for line in lines:
+                if line.startswith("Lines:"):
+                    # Parse the diff info  
+                    formatted.append(line.replace("-", "[red]-[/red]").replace("+", "[green]+[/green]"), style="dim")
+                else:
+                    formatted.append(line + "\n", style="success")
+            content = formatted
             
         else:
             content = Text(display_result)

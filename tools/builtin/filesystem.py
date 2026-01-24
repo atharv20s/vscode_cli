@@ -153,6 +153,120 @@ class WriteFileTool(Tool):
             return ToolResult.fail(f"Error writing file: {str(e)}")
 
 
+class EditFileTool(Tool):
+    """
+    Edit a file by replacing specific text.
+    
+    This tool allows surgical edits to files by finding and replacing
+    exact text matches. It's safer than full file rewrites since it
+    preserves surrounding content.
+    """
+    
+    @property
+    def name(self) -> str:
+        return "edit_file"
+    
+    @property
+    def description(self) -> str:
+        return (
+            "Edit a file by replacing specific text. "
+            "Find an exact text match and replace it with new content. "
+            "Use this for surgical edits instead of rewriting entire files. "
+            "The old_text must match exactly (including whitespace/indentation)."
+        )
+    
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "path": {
+                "type": "string",
+                "description": "Path to the file to edit",
+            },
+            "old_text": {
+                "type": "string",
+                "description": "Exact text to find and replace (must match exactly)",
+            },
+            "new_text": {
+                "type": "string",
+                "description": "Text to replace with",
+            },
+            "all_occurrences": {
+                "type": "boolean",
+                "description": "If true, replace all occurrences. Default: only first match.",
+            },
+        }
+    
+    @property
+    def required_params(self) -> list[str]:
+        return ["path", "old_text", "new_text"]
+    
+    @property
+    def is_dangerous(self) -> bool:
+        return True
+    
+    async def execute(
+        self,
+        path: str,
+        old_text: str,
+        new_text: str,
+        all_occurrences: bool = False,
+    ) -> ToolResult:
+        """Edit the file by replacing text."""
+        try:
+            file_path = Path(path).resolve()
+            
+            if not file_path.exists():
+                return ToolResult.fail(f"File not found: {path}")
+            
+            if not file_path.is_file():
+                return ToolResult.fail(f"Not a file: {path}")
+            
+            # Read current content
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            
+            # Check if old_text exists
+            if old_text not in content:
+                # Provide helpful error with context
+                preview = old_text[:100] + "..." if len(old_text) > 100 else old_text
+                return ToolResult.fail(
+                    f"Text not found in file. Search text:\n{preview}\n\n"
+                    "Tip: The text must match exactly including whitespace and indentation."
+                )
+            
+            # Count occurrences
+            count = content.count(old_text)
+            
+            # Perform replacement
+            if all_occurrences:
+                new_content = content.replace(old_text, new_text)
+                replaced = count
+            else:
+                new_content = content.replace(old_text, new_text, 1)
+                replaced = 1
+            
+            # Write back
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+            
+            # Calculate diff info
+            lines_removed = old_text.count('\n') + 1
+            lines_added = new_text.count('\n') + 1
+            
+            return ToolResult.ok(
+                f"Edited {file_path.name}: replaced {replaced} occurrence(s)\n"
+                f"Lines: -{lines_removed} +{lines_added}",
+                path=str(file_path),
+                occurrences_found=count,
+                occurrences_replaced=replaced,
+            )
+            
+        except PermissionError:
+            return ToolResult.fail(f"Permission denied: {path}")
+        except Exception as e:
+            return ToolResult.fail(f"Error editing file: {str(e)}")
+
+
 class ListDirTool(Tool):
     """List directory contents."""
     
@@ -242,4 +356,4 @@ class ListDirTool(Tool):
 
 
 # Export tools
-TOOLS = [ReadFileTool(), WriteFileTool(), ListDirTool()]
+TOOLS = [ReadFileTool(), WriteFileTool(), EditFileTool(), ListDirTool()]
