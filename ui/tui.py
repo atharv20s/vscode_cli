@@ -54,7 +54,36 @@ TOOL_ICONS = {
     "web_search": "🔍",
     "fetch_url": "🌐",
     "calculator": "🧮",
+    "memory_store": "🧠",
+    "memory_retrieve": "🧠",
     "default": "🔧",
+}
+
+# Language detection patterns for syntax highlighting
+LANGUAGE_PATTERNS = {
+    ".py": "python",
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".json": "json",
+    ".md": "markdown",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".html": "html",
+    ".css": "css",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".sql": "sql",
+    ".rs": "rust",
+    ".go": "go",
+    ".java": "java",
+    ".c": "c",
+    ".cpp": "cpp",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".toml": "toml",
+    ".xml": "xml",
+    ".gitignore": "gitignore",
+    ".env": "dotenv",
 }
 
 _console: Console | None = None
@@ -71,6 +100,20 @@ def get_console() -> Console:
 def get_tool_icon(name: str) -> str:
     """Get the icon for a tool."""
     return TOOL_ICONS.get(name, TOOL_ICONS["default"])
+
+
+def detect_language(file_path: str) -> str | None:
+    """Detect programming language from file extension."""
+    import os
+    ext = os.path.splitext(file_path)[1].lower()
+    name = os.path.basename(file_path).lower()
+    
+    # Check exact filename first
+    if name in LANGUAGE_PATTERNS:
+        return LANGUAGE_PATTERNS[name]
+    
+    # Then check extension
+    return LANGUAGE_PATTERNS.get(ext)
 
 
 class TUI:
@@ -263,48 +306,121 @@ class TUI:
         name: str,
         result: str,
         success: bool = True,
+        context: dict[str, Any] | None = None,
     ) -> None:
-        """Display the result of a tool execution."""
+        """Display the result of a tool execution.
+        
+        Args:
+            name: Tool name
+            result: Tool output
+            success: Whether execution succeeded
+            context: Optional context (e.g., file_path for read_file)
+        """
         icon = get_tool_icon(name)
+        context = context or {}
         
         # Truncate long results for display
-        max_lines = 15
+        max_lines = 20
         result_lines = result.split('\n')
-        if len(result_lines) > max_lines:
+        total_lines = len(result_lines)
+        truncated = False
+        
+        if total_lines > max_lines:
             display_result = '\n'.join(result_lines[:max_lines])
-            display_result += f"\n... ({len(result_lines) - max_lines} more lines)"
+            display_result += f"\n... ({total_lines - max_lines} more lines)"
+            truncated = True
         else:
             display_result = result
         
         if success:
             border_style = "green"
-            title = f"[success]{icon} {name} Result[/success]"
+            title = f"[success]{icon} {name}[/success]"
             status_icon = "✅"
         else:
             border_style = "red"
             title = f"[error]{icon} {name} Failed[/error]"
             status_icon = "❌"
         
-        # Try to detect and syntax highlight code
+        # Build subtitle with context info
+        subtitle_parts = [f"{status_icon} {'Success' if success else 'Failed'}"]
+        if total_lines > 1:
+            subtitle_parts.append(f"{total_lines} lines")
+        if truncated:
+            subtitle_parts.append("truncated")
+        subtitle = " | ".join(subtitle_parts)
+        
+        # Try to detect and syntax highlight code based on tool type
         content: Any
+        
         if name == "read_file" and display_result.strip():
-            # Try to detect language from content
-            if display_result.strip().startswith(('def ', 'class ', 'import ', 'from ')):
+            # Get file path from context for language detection
+            file_path = context.get("file_path", context.get("path", ""))
+            lang = detect_language(file_path) if file_path else None
+            
+            # Fallback to content-based detection if no extension
+            if not lang:
+                first_lines = display_result.strip()[:200]
+                if first_lines.startswith(('def ', 'class ', 'import ', 'from ', 'async ')):
+                    lang = "python"
+                elif first_lines.startswith(('function ', 'const ', 'let ', 'var ', 'export ')):
+                    lang = "javascript"
+                elif first_lines.startswith('{') or first_lines.startswith('['):
+                    lang = "json"
+                elif first_lines.startswith('<!DOCTYPE') or first_lines.startswith('<html'):
+                    lang = "html"
+            
+            if lang:
                 try:
-                    content = Syntax(display_result, "python", theme="monokai", line_numbers=True)
+                    content = Syntax(
+                        display_result, 
+                        lang, 
+                        theme="monokai", 
+                        line_numbers=True,
+                        word_wrap=True,
+                    )
+                    # Update title with file info
+                    if file_path:
+                        import os
+                        title = f"[success]{icon} {os.path.basename(file_path)}[/success]"
                 except Exception:
                     content = Text(display_result)
             else:
                 content = Text(display_result)
+                
         elif name == "list_dir":
-            content = Text(display_result)
+            # Format directory listing nicely
+            lines = []
+            for line in display_result.strip().split('\n'):
+                if line.endswith('/'):
+                    lines.append(f"📁 {line}")
+                else:
+                    lines.append(f"📄 {line}")
+            content = Text('\n'.join(lines))
+            
         elif name == "shell":
-            content = Text(display_result, style="dim")
+            # Show shell output with command styling
+            try:
+                content = Syntax(display_result, "bash", theme="monokai", line_numbers=False)
+            except Exception:
+                content = Text(display_result, style="dim")
+                
         elif name == "web_search":
             try:
                 content = Markdown(display_result)
             except Exception:
                 content = Text(display_result)
+                
+        elif name == "fetch_url":
+            # Try to parse as markdown or show as text
+            try:
+                content = Markdown(display_result)
+            except Exception:
+                content = Text(display_result)
+                
+        elif name == "write_file":
+            # Show confirmation message
+            content = Text(display_result, style="success")
+            
         else:
             content = Text(display_result)
         
@@ -312,7 +428,7 @@ class TUI:
             Panel(
                 content,
                 title=title,
-                subtitle=f"[dim]{status_icon} {'Success' if success else 'Failed'}[/dim]",
+                subtitle=f"[dim]{subtitle}[/dim]",
                 border_style=border_style,
                 padding=(0, 1),
             )
@@ -342,6 +458,27 @@ class TUI:
 
     def show_turn(self, turn: int, max_turns: int) -> None:
         """Display the current turn number in the agentic loop."""
+        # Use different colors based on how many turns used
+        if turn == 1:
+            style = "dim italic"
+            icon = "🔄"
+        elif turn < max_turns * 0.5:
+            style = "cyan italic"
+            icon = "🔄"
+        elif turn < max_turns * 0.8:
+            style = "yellow italic"
+            icon = "⚠️"
+        else:
+            style = "bright_red italic"
+            icon = "🔴"
+        
         self.console.print(
-            Text(f"  🔄 Turn {turn}/{max_turns}", style="dim italic")
+            Text(f"  {icon} Turn {turn}/{max_turns}", style=style)
         )
+    
+    def show_context_info(self, message_count: int, approx_tokens: int | None = None) -> None:
+        """Display context window information."""
+        info = f"📊 Context: {message_count} messages"
+        if approx_tokens:
+            info += f" (~{approx_tokens:,} tokens)"
+        self.console.print(Text(info, style="dim"))

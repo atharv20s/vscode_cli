@@ -110,8 +110,17 @@ class AgentEvent:
         name: str,
         result: str,
         success: bool = True,
+        context: dict[str, Any] | None = None,
     ) -> AgentEvent:
-        """Tool execution completed."""
+        """Tool execution completed.
+        
+        Args:
+            tool_id: The tool call ID
+            name: Tool name
+            result: Tool output
+            success: Whether execution succeeded
+            context: Optional context (e.g., {"file_path": "..."})
+        """
         return cls(
             type=AgentEventType.TOOL_RESULT,
             data={
@@ -119,6 +128,7 @@ class AgentEvent:
                 "name": name,
                 "result": result,
                 "success": success,
+                "context": context or {},
             }
         )
     

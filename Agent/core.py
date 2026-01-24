@@ -164,8 +164,8 @@ class Agent:
             response_text = ""
             pending_tool_calls: list[ToolCall] = []
             
-            # Emit turn start event (only if we have tools and past turn 1)
-            if self.tools_enabled and self.current_turn > 1:
+            # Emit turn start event for all turns when tools are enabled
+            if self.tools_enabled and self.settings.show_turn_count:
                 yield AgentEvent.turn_start(self.current_turn, self.max_iterations)
             
             # Get tool schemas if enabled
@@ -233,12 +233,20 @@ class Agent:
                     # Execute the tool
                     result = await self.registry.execute(tc.name, **tc.arguments)
                     
+                    # Build context for TUI display
+                    tool_context = {"arguments": tc.arguments}
+                    if "path" in tc.arguments:
+                        tool_context["file_path"] = tc.arguments["path"]
+                    elif "file_path" in tc.arguments:
+                        tool_context["file_path"] = tc.arguments["file_path"]
+                    
                     if result.success:
                         yield AgentEvent.tool_result(
                             tool_id=tc.id,
                             name=tc.name,
                             result=result.output,
                             success=True,
+                            context=tool_context,
                         )
                         tool_content = result.output
                     else:
@@ -264,5 +272,9 @@ class Agent:
                 yield AgentEvent.agent_error("No response from LLM")
                 return
         
-        # Max iterations reached
-        yield AgentEvent.agent_error(f"Max iterations ({self.max_iterations}) reached")
+        # Max iterations reached - provide helpful message
+        yield AgentEvent.agent_error(
+            f"Max iterations ({self.max_iterations}) reached. "
+            f"The task may be too complex or require manual intervention. "
+            f"Consider breaking it into smaller steps."
+        )

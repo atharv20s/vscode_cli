@@ -92,7 +92,10 @@ class CLI:
                     if lower_input == "/context":
                         # Show conversation context size
                         msg_count = len(agent.messages) - 1  # Exclude system prompt
-                        self.tui.show_info(f"Conversation context: {msg_count} messages")
+                        # Estimate tokens (rough: ~4 chars per token)
+                        total_chars = sum(len(str(m.get("content", ""))) for m in agent.messages)
+                        approx_tokens = total_chars // 4
+                        self.tui.show_context_info(msg_count, approx_tokens)
                         console.print()
                         continue
                     
@@ -196,7 +199,9 @@ class CLI:
                 name = event.data.get("name", "unknown")
                 result = event.data.get("result", "")
                 success = event.data.get("success", True)
-                self.tui.show_tool_result(name, result, success)
+                # Pass context for enhanced display (e.g., file path)
+                context = event.data.get("context", {})
+                self.tui.show_tool_result(name, result, success, context)
             
             elif event.type == AgentEventType.TOOL_ERROR:
                 name = event.data.get("name", "unknown")
