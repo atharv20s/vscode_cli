@@ -6,13 +6,15 @@ This module provides the foundation for all tools:
 - ToolDefinition: Schema for LLM function calling
 - Tool: Abstract base class for implementing tools
 - FunctionTool: Create tools from simple async functions
+- ToolConfirmation: For approval dialogs
+- Diff: For showing file changes
 - @tool decorator: Easy tool creation
 """
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from typing import Any, Callable, Awaitable, Optional
 from enum import Enum
 
 
@@ -22,6 +24,62 @@ class ToolStatus(Enum):
     FAILURE = "failure"
     PENDING = "pending"
     CANCELLED = "cancelled"
+
+
+@dataclass
+class Diff:
+    """
+    Represents a file diff for display.
+    
+    Attributes:
+        old_content: Original content
+        new_content: New content
+        path: File path
+    """
+    old_content: str
+    new_content: str
+    path: Optional[str] = None
+    
+    def to_diff(self) -> str:
+        """Generate unified diff format."""
+        import difflib
+        
+        old_lines = self.old_content.splitlines(keepends=True)
+        new_lines = self.new_content.splitlines(keepends=True)
+        
+        diff = difflib.unified_diff(
+            old_lines,
+            new_lines,
+            fromfile=f"a/{self.path or 'file'}" if self.path else "a/original",
+            tofile=f"b/{self.path or 'file'}" if self.path else "b/modified",
+        )
+        
+        return "".join(diff)
+    
+    def has_changes(self) -> bool:
+        """Check if there are any changes."""
+        return self.old_content != self.new_content
+
+
+@dataclass
+class ToolConfirmation:
+    """
+    Request for user confirmation before executing a tool.
+    
+    Attributes:
+        tool_name: Name of the tool
+        description: Human-readable description of what will happen
+        command: Shell command (for shell tools)
+        diff: File diff (for write/edit tools)
+        risk_level: Risk level (low, medium, high, critical)
+        metadata: Additional context
+    """
+    tool_name: str
+    description: str
+    command: Optional[str] = None
+    diff: Optional[Diff] = None
+    risk_level: str = "medium"
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
