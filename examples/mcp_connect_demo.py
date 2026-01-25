@@ -13,7 +13,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 console = Console()
 
-
+##hello atharv here is the code for mcp connection demo
 async def demo_mcp_connections():
     """Connect to MCP servers and show their capabilities."""
     
