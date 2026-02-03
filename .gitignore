@@ -12,6 +12,12 @@
 !context/
 !examples/
 !AGENTS.md
+!nebula-agent-studio/
+!cli.py
+!setup.py
+!hooks/
+!safety/
+!utils/
 
 # Python virtual environment
 pyvenv.cfg
