@@ -18,7 +18,6 @@ This package provides:
 - Base classes for creating tools (Tool, FunctionTool)
 - Tool registry for managing available tools
 - Auto-discovery of tools from builtin/ and custom paths
-- MCP integration for external tool servers
 - Subagent tools for complex autonomous tasks
 
 Quick Start:

@@ -53,7 +53,7 @@ class Config:
     temperature: float = 0.7
     
     # Agent settings
-    max_iterations: int = 10
+    max_iterations: int = 25
     show_welcome: bool = True
     show_turn_count: bool = True
     
@@ -83,7 +83,7 @@ class Config:
             approval_mode=ApprovalMode(os.getenv("AGENTIC_APPROVAL", "write")),
             max_tokens=int(os.getenv("AGENTIC_MAX_TOKENS", "4096")),
             temperature=float(os.getenv("AGENTIC_TEMPERATURE", "0.7")),
-            max_iterations=int(os.getenv("AGENTIC_MAX_ITERATIONS", "10")),
+            max_iterations=int(os.getenv("AGENTIC_MAX_ITERATIONS", "25")),
         )
     
     def to_dict(self) -> dict[str, Any]:

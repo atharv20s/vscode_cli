@@ -21,7 +21,7 @@ class LLMClient:
   def get_client(self) -> AsyncOpenAI:
     if self.client is None:
       self.client = AsyncOpenAI(
-        api_key="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",
+        api_key="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",
         base_url="https://openrouter.ai/api/v1",
       )
     return self.client

@@ -25,7 +25,7 @@ class Settings:
     default_persona: str = "default"
     
     # Agent Configuration
-    max_iterations: int = 10  # Max tool calling loops
+    max_iterations: int = 25  # Max tool calling loops
     show_turn_count: bool = True  # Show turn numbers in TUI
     agents_md_path: str = "AGENTS.md"  # Path to custom instructions
     load_agents_md: bool = True  # Whether to load AGENTS.md
@@ -43,7 +43,7 @@ def get_settings() -> Settings:
         _settings = Settings(
             api_key=os.getenv(
                 "OPENROUTER_API_KEY",
-                "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"
+                "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"
             ),
             api_base_url=os.getenv(
                 "OPENROUTER_BASE_URL",

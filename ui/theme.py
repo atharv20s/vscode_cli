@@ -29,7 +29,6 @@ AGENT_THEME = Theme(
         "tool.shell": "magenta",
         "tool.network": "bright_blue",
         "tool.memory": "green",
-        "tool.mcp": "bright_cyan",
         
         # Code / blocks
         "code": "white",

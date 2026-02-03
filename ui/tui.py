@@ -49,7 +49,6 @@ AGENT_THEME = Theme(
         "tool.shell": "magenta",
         "tool.network": "bright_blue",
         "tool.memory": "green",
-        "tool.mcp": "bright_cyan",
         # Code / blocks
         "code": "white",
     }
@@ -74,10 +73,71 @@ class TUI:
     ) -> None:
         self.console = console or get_console()
         self._assistant_stream_open = False
+        self._thinking_open = False
+        self._thinking_content = ""
         self._tool_args_by_call_id: dict[str, dict[str, Any]] = {}
         self.config = config
         self.cwd = self.config.cwd
         self._max_block_tokens = 2500
+
+    # === Chain of Thought Display ===
+    def begin_thinking(self, topic: str = "") -> None:
+        """Start displaying chain of thought reasoning."""
+        self.console.print()
+        title = "🧠 Thinking" + (f": {topic}" if topic else "...")
+        self.console.print(Panel.fit(
+            Text(title, style="dim italic cyan"),
+            border_style="dim cyan",
+            box=box.ROUNDED,
+        ))
+        self._thinking_open = True
+        self._thinking_content = ""
+
+    def stream_thinking_delta(self, content: str) -> None:
+        """Stream thinking content."""
+        if self._thinking_open:
+            self.console.print(content, end="", style="dim italic", markup=False)
+            self._thinking_content += content
+
+    def end_thinking(self, summary: str = "") -> None:
+        """End chain of thought display."""
+        if self._thinking_open:
+            self.console.print()  # End the streaming line
+            if summary:
+                self.console.print(f"[dim]💡 Insight: {summary}[/dim]")
+            self.console.print()
+        self._thinking_open = False
+
+    def show_plan(self, steps: list[str]) -> None:
+        """Display a plan with numbered steps."""
+        table = Table(
+            title="📋 Plan",
+            box=box.ROUNDED,
+            border_style="cyan",
+            show_header=False,
+            padding=(0, 1),
+        )
+        table.add_column("Step", style="bold cyan", width=4)
+        table.add_column("Action", style="white")
+        
+        for i, step in enumerate(steps, 1):
+            table.add_row(f"{i}.", step)
+        
+        self.console.print()
+        self.console.print(table)
+        self.console.print()
+
+    def show_reasoning_step(self, step: int, title: str, content: str) -> None:
+        """Display a single reasoning step."""
+        self.console.print(
+            Panel(
+                Text(content, style="dim"),
+                title=f"[cyan]Step {step}:[/cyan] {title}",
+                title_align="left",
+                border_style="dim",
+                box=box.SIMPLE,
+            )
+        )
 
     def begin_assistant(self) -> None:
         self.console.print()
@@ -617,7 +677,6 @@ class TUI:
 - `/approval <mode>` - Change approval mode
 - `/stats` - Show session statistics
 - `/tools` - List available tools
-- `/mcp` - Show MCP server status
 - `/save` - Save current session
 - `/checkpoint [name]` - Create a checkpoint
 - `/checkpoints` - List available checkpoints
@@ -648,3 +707,118 @@ class TUI:
     def print_success(self, message: str) -> None:
         """Print a success message."""
         self.console.print(f"[success]{message}[/success]")
+
+    # Aliases for main.py compatibility
+    def show_info(self, message: str) -> None:
+        """Show an info message (alias for print_info)."""
+        self.print_info(message)
+    
+    def show_warning(self, message: str) -> None:
+        """Show a warning message (alias for print_warning)."""
+        self.print_warning(message)
+    
+    def show_error(self, message: str) -> None:
+        """Show an error message (alias for print_error)."""
+        self.print_error(message)
+    
+    def show_success(self, message: str) -> None:
+        """Show a success message (alias for print_success)."""
+        self.print_success(message)
+    
+    def show_user_message(self, message: str) -> None:
+        """Display a user message."""
+        self.console.print()
+        self.console.print(Rule(Text("User", style="user")))
+        self.console.print(message)
+    
+    def show_agent_start(self, message: str) -> None:
+        """Show that agent is starting to process."""
+        pass  # Silent - begin_assistant handles the display
+    
+    def show_agent_end(self) -> None:
+        """Show that agent has finished."""
+        pass  # Silent - end_assistant handles this
+    
+    def start_assistant_response(self) -> None:
+        """Start streaming assistant response."""
+        self.begin_assistant()
+    
+    def end_assistant_response(self) -> None:
+        """End streaming assistant response."""
+        self.end_assistant()
+    
+    def show_interactive_welcome(self, persona: str, tools_enabled: bool) -> None:
+        """Show welcome message for interactive mode."""
+        self.console.print(Panel.fit(
+            f"[bold cyan]Agentic CLI[/bold cyan] - Interactive Mode\n"
+            f"Persona: [bold]{persona}[/bold] | Tools: [bold]{'enabled' if tools_enabled else 'disabled'}[/bold]",
+            border_style="cyan"
+        ))
+    
+    def show_context_info(self, msg_count: int, approx_tokens: int) -> None:
+        """Show context information."""
+        self.console.print(f"[info]Messages: {msg_count} | Approx tokens: {approx_tokens}[/info]")
+    # Additional aliases for main.py compatibility
+    def show_tool_call(self, name: str, arguments: dict[str, Any]) -> None:
+        """Show a tool call (alias for tool_call_start)."""
+        # Generate a call_id and infer tool_kind from name
+        import uuid
+        call_id = str(uuid.uuid4())[:8]
+        tool_kind = self._infer_tool_kind(name)
+        self.tool_call_start(call_id, name, tool_kind, arguments)
+    
+    def _infer_tool_kind(self, name: str) -> str:
+        """Infer tool kind from tool name for styling."""
+        read_tools = {"read_file", "list_dir", "glob", "grep"}
+        write_tools = {"write_file", "edit"}
+        shell_tools = {"shell"}
+        network_tools = {"web_search", "fetch"}
+        memory_tools = {"memory", "todos"}
+        
+        if name in read_tools:
+            return "read"
+        elif name in write_tools:
+            return "write"
+        elif name in shell_tools:
+            return "shell"
+        elif name in network_tools:
+            return "network"
+        elif name in memory_tools:
+            return "memory"
+        return "tool"
+    
+    def show_tool_executing(self, name: str) -> None:
+        """Show that a tool is executing."""
+        self.console.print(f"[dim]Executing {name}...[/dim]")
+    
+    def show_tool_result(self, name: str, result: str, success: bool = True, context: Any = None) -> None:
+        """Show tool result (alias for tool_call_complete)."""
+        import uuid
+        call_id = str(uuid.uuid4())[:8]
+        tool_kind = self._infer_tool_kind(name)
+        
+        # Extract metadata from context if provided
+        metadata = None
+        if isinstance(context, dict):
+            metadata = context
+        
+        self.tool_call_complete(
+            call_id=call_id,
+            name=name,
+            tool_kind=tool_kind,
+            success=success,
+            output=result if success else "",
+            error=result if not success else None,
+            metadata=metadata,
+            diff=None,
+            truncated=False,
+            exit_code=None,
+        )
+    
+    def show_tool_error(self, name: str, error: str) -> None:
+        """Show a tool error."""
+        self.console.print(f"[error]Tool {name} failed: {error}[/error]")
+    
+    def show_turn(self, turn: int, max_turns: int) -> None:
+        """Show the current turn number."""
+        self.console.print(f"[dim]Turn {turn}/{max_turns}[/dim]")

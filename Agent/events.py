@@ -21,6 +21,11 @@ class AgentEventType(str, Enum):
     # Turn tracking
     TURN_START = "turn_start"  # New turn in agentic loop
     
+    # Thinking/reasoning events
+    THINKING_START = "thinking_start"  # Chain of thought begins
+    THINKING_DELTA = "thinking_delta"  # Thinking content stream
+    THINKING_END = "thinking_end"      # Chain of thought complete
+    
     # Text streaming
     TEXT_DELTA = "text_delta"
     TEXT_COMPLETE = "text_complete"
@@ -153,4 +158,28 @@ class AgentEvent:
                 "turn": turn,
                 "max_turns": max_turns,
             }
+        )
+    
+    @classmethod
+    def thinking_start(cls, topic: str = "") -> AgentEvent:
+        """Chain of thought reasoning has started."""
+        return cls(
+            type=AgentEventType.THINKING_START,
+            data={"topic": topic}
+        )
+    
+    @classmethod
+    def thinking_delta(cls, content: str) -> AgentEvent:
+        """Thinking content being streamed."""
+        return cls(
+            type=AgentEventType.THINKING_DELTA,
+            data={"content": content}
+        )
+    
+    @classmethod
+    def thinking_end(cls, summary: str = "") -> AgentEvent:
+        """Chain of thought reasoning complete."""
+        return cls(
+            type=AgentEventType.THINKING_END,
+            data={"summary": summary}
         )

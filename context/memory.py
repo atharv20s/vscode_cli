@@ -172,7 +172,9 @@ class ProjectMemory:
         """Get project metadata."""
         return self.recall("project_info")
     
-    def generate_context_prompt(self) -> str:
+    def     fastapi
+    uvicorn
+    pydanticgenerate_context_prompt(self) -> str:
         """Generate a context string for the system prompt."""
         lines = []
         

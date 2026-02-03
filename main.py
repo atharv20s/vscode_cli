@@ -25,6 +25,7 @@ from prompts import SYSTEM_PROMPTS
 from ui import TUI, get_console
 from context.memory import ProjectMemory
 from config.models import MODELS, get_model
+from config.config import Config
 
 console = get_console()
 
@@ -47,7 +48,8 @@ class CLI:
         model: str | None = None,
     ):
         self.agent: Agent | None = None
-        self.tui = TUI(console=console)
+        self.config = Config.from_env()
+        self.tui = TUI(config=self.config, console=console)
         self.persona = persona
         self.system_prompt = system_prompt
         self.tools_enabled = tools_enabled
@@ -61,8 +63,11 @@ class CLI:
     def _apply_mode_settings(self) -> None:
         """Apply mode-specific settings."""
         try:
-            mode_enum = AgentMode(self.mode.upper())
+            # Resolve mode by name (e.g., 'agent', 'think')
+            mode_enum = AgentMode[self.mode.upper()]
             config = get_mode_config(mode_enum)
+            # Store mode config for use when constructing Agent
+            self.mode_config = config
             
             # Mode can override tools_enabled (e.g., ASK mode disables tools)
             if not config.tools_enabled:
@@ -95,6 +100,8 @@ class CLI:
             persona=self.persona,
             tools_enabled=self.tools_enabled,
             model=self.model,
+            max_iterations=(self.mode_config.max_iterations if hasattr(self, 'mode_config') else None),
+            auto_verify=(self.mode_config.auto_verify if hasattr(self, 'mode_config') else None),
         ) as agent:
             self.agent = agent
             await self._process_message(message)
@@ -119,6 +126,8 @@ class CLI:
             persona=self.persona,
             tools_enabled=self.tools_enabled,
             model=self.model,
+            max_iterations=(self.mode_config.max_iterations if hasattr(self, 'mode_config') else None),
+            auto_verify=(self.mode_config.auto_verify if hasattr(self, 'mode_config') else None),
         ) as agent:
             self.agent = agent
             
@@ -319,6 +328,22 @@ class CLI:
                 turn = event.data.get("turn", 1)
                 max_turns = event.data.get("max_turns", 10)
                 self.tui.show_turn(turn, max_turns)
+            
+            # Chain of thought / thinking events
+            elif event.type == AgentEventType.THINKING_START:
+                if streaming_started:
+                    self.tui.end_assistant_response()
+                    streaming_started = False
+                topic = event.data.get("topic", "")
+                self.tui.begin_thinking(topic)
+            
+            elif event.type == AgentEventType.THINKING_DELTA:
+                content = event.data.get("content", "")
+                self.tui.stream_thinking_delta(content)
+            
+            elif event.type == AgentEventType.THINKING_END:
+                summary = event.data.get("summary", "")
+                self.tui.end_thinking(summary)
 
         return final_response
 
@@ -384,7 +409,8 @@ def main(
         python main.py -i  # Interactive mode
         python main.py -i -t  # Interactive mode with tools
     """
-    tui = TUI(console=console)
+    config = Config.from_env()
+    tui = TUI(config=config, console=console)
     
     if list_personas:
         tui.show_info("Available Personas:")

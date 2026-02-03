@@ -36,6 +36,7 @@ class Agent:
         persona: str = "default",
         tools_enabled: bool = True,
         max_iterations: int | None = None,
+        auto_verify: bool | None = None,
         model: str | None = None,
     ):
         """Initialize the Agent.
@@ -56,6 +57,8 @@ class Agent:
         self.registry: ToolRegistry | None = None
         self.current_turn: int = 0
         self.model = model  # Store model selection
+        # Whether to automatically run verification after write/edit tools
+        self.auto_verify: bool = bool(auto_verify) if auto_verify is not None else False
         
         # Use settings for max iterations if not specified
         self.max_iterations = max_iterations or self.settings.max_iterations
@@ -162,10 +165,16 @@ class Agent:
         self.current_turn = 0
         response_text = ""
         
+        # Track thinking state for chain-of-thought parsing
+        in_thinking_block = False
+        thinking_buffer = ""
+        
         while self.current_turn < self.max_iterations:
             self.current_turn += 1
             response_text = ""
             pending_tool_calls: list[ToolCall] = []
+            in_thinking_block = False
+            thinking_buffer = ""
             
             # Emit turn start event for all turns when tools are enabled
             if self.tools_enabled and self.settings.show_turn_count:
@@ -183,7 +192,32 @@ class Agent:
                 if event.type == StreamEventType.TEXT_DELTA:
                     content = event.text_delta.content
                     response_text += content
-                    yield AgentEvent.text_delta(content)
+                    
+                    # Parse for thinking blocks (```thinking ... ```)
+                    if "```thinking" in content and not in_thinking_block:
+                        in_thinking_block = True
+                        yield AgentEvent.thinking_start("Reasoning")
+                        # Don't emit the marker itself
+                        content = content.split("```thinking", 1)[-1].lstrip("\n")
+                        if content:
+                            yield AgentEvent.thinking_delta(content)
+                            thinking_buffer += content
+                    elif in_thinking_block and "```" in content:
+                        # End of thinking block
+                        parts = content.split("```", 1)
+                        if parts[0]:
+                            yield AgentEvent.thinking_delta(parts[0])
+                            thinking_buffer += parts[0]
+                        in_thinking_block = False
+                        yield AgentEvent.thinking_end()
+                        # Emit remaining content as regular text
+                        if len(parts) > 1 and parts[1].strip():
+                            yield AgentEvent.text_delta(parts[1])
+                    elif in_thinking_block:
+                        yield AgentEvent.thinking_delta(content)
+                        thinking_buffer += content
+                    else:
+                        yield AgentEvent.text_delta(content)
                     
                 elif event.type == StreamEventType.TOOL_CALL:
                     # LLM wants to call tools
@@ -252,6 +286,39 @@ class Agent:
                             context=tool_context,
                         )
                         tool_content = result.output
+                        # Auto-verify: if the agent is configured to auto-verify and
+                        # the tool written code, run the test suite to validate changes.
+                        try:
+                            write_tools = {"write_file", "edit", "create_file", "replace_string_in_file"}
+                            if self.auto_verify and tc.name in write_tools and self.registry:
+                                # Run the project's CLI test suite (fallback to test_cli_features.py)
+                                yield AgentEvent.tool_executing("run_auto_tests", {})
+                                test_cmd = "python test_cli_features.py"
+                                test_result = await self.registry.execute("shell", command=test_cmd)
+                                if test_result.success:
+                                    yield AgentEvent.tool_result(
+                                        tool_id=f"auto_tests_{tc.id}",
+                                        name="run_auto_tests",
+                                        result=test_result.output,
+                                        success=True,
+                                        context={"command": test_cmd},
+                                    )
+                                else:
+                                    yield AgentEvent.tool_result(
+                                        tool_id=f"auto_tests_{tc.id}",
+                                        name="run_auto_tests",
+                                        result=test_result.output or test_result.error,
+                                        success=False,
+                                        context={"command": test_cmd},
+                                    )
+                                # Append test output to messages for context
+                                self.messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": f"auto_tests_{tc.id}",
+                                    "content": test_result.output if test_result.success else f"ERROR: {test_result.error}",
+                                })
+                        except Exception:
+                            pass
                     else:
                         yield AgentEvent.tool_error(
                             tool_id=tc.id,

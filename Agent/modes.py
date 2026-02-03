@@ -58,9 +58,9 @@ You CAN:
 - Explain concepts
 """,
         tools_enabled=True,
-        auto_verify=False,
+        auto_verify=True,
         require_plan=False,
-        max_iterations=5,
+        max_iterations=25,
     ),
     
     AgentMode.EDIT: ModeConfig(
@@ -83,7 +83,7 @@ After each edit:
         tools_enabled=True,
         auto_verify=True,
         require_plan=False,
-        max_iterations=8,
+        max_iterations=25,
     ),
     
     AgentMode.AGENT: ModeConfig(
@@ -109,7 +109,7 @@ Workflow:
         tools_enabled=True,
         auto_verify=True,
         require_plan=True,
-        max_iterations=15,
+        max_iterations=25,
     ),
     
     AgentMode.PLAN: ModeConfig(
@@ -138,7 +138,7 @@ SHOW YOUR PLAN BEFORE EXECUTING.
         tools_enabled=True,
         auto_verify=True,
         require_plan=True,
-        max_iterations=12,
+        max_iterations=25,
     ),
     
     AgentMode.THINK: ModeConfig(
@@ -169,7 +169,7 @@ Then provide your solution.
         tools_enabled=True,
         auto_verify=True,
         require_plan=True,
-        max_iterations=10,
+        max_iterations=25,
     ),
     
     AgentMode.DEBUG: ModeConfig(
@@ -196,7 +196,7 @@ Rules:
         tools_enabled=True,
         auto_verify=True,
         require_plan=False,
-        max_iterations=15,
+        max_iterations=25,
     ),
     
     AgentMode.REVIEW: ModeConfig(
@@ -224,9 +224,9 @@ For each issue found:
 Do NOT make changes - only review and report.
 """,
         tools_enabled=True,
-        auto_verify=False,
+        auto_verify=True,
         require_plan=False,
-        max_iterations=5,
+        max_iterations=25,
     ),
 }
 
