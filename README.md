@@ -6,7 +6,43 @@ This repository contains a unified AI-powered development ecosystem. It comprise
 
 ## Architecture
 
-The project is structured as follows:
+The system architecture flow is described below:
+
+```mermaid
+graph TD
+    subgraph Client ["Browser IDE Client"]
+        UI["Explorer, Terminal, and Chat UI"]
+        WSClient["WebSocket Client (app.js)"]
+    end
+
+    subgraph Server ["Node.js Backend Server"]
+        Express["Express Server (server.js)"]
+        WSServer["WebSocket Server (wsServer.js)"]
+        TermMgr["Terminal Manager (terminalManager.js)"]
+        AgentSvc["Agent Service (agentService.js)"]
+        FileCtrl["File Controller (fileController.js)"]
+    end
+
+    subgraph System ["Local System & Environment"]
+        PtyProcess["Persistent Shell Process"]
+        PythonAgent["Python Agentic CLI (main.py)"]
+        LLM["LLM APIs (Mistral / OpenRouter)"]
+        Filesystem["Workspace Filesystem"]
+    end
+
+    UI -->|HTTP Requests| Express
+    UI -->|Interactions| WSClient
+    WSClient <-->|WebSockets (Ctrl+C, Stdout, Stdin)| WSServer
+    Express --> FileCtrl
+    FileCtrl <--> Filesystem
+    WSServer <--> TermMgr
+    TermMgr <-->|Shell I/O| PtyProcess
+    AgentSvc -->|runAgent Loop| PythonAgent
+    PythonAgent -->|Tool Calls| Filesystem
+    PythonAgent -->|Completions| LLM
+```
+
+### Directory Structure
 
 * Root directory: Holds the Python Agentic CLI codebase, setup files, and prompt configurations.
 * Agent/: Core agent logic, state execution, and event handling.
