@@ -52,6 +52,17 @@ graph TD
 * server/: Node.js backend server hosting the web IDE, handling WebSockets, managing persistent terminal shell sessions, and exposing workspace APIs.
 * server/public/: Static assets and frontend JavaScript logic for the browser IDE workspace.
 
+## Technologies and Frameworks
+
+The backend services utilize the following stack:
+* Express: REST API routes for workspace management, GitHub flows, and security.
+* WebSockets (ws): High-performance real-time terminal shell communication and interrupt packet routing.
+* Redis (ioredis): Tier 1 distributed caching with automatic fallback mechanisms.
+* In-Memory Caching (node-cache): Tier 2 zero-config local memory cache.
+* Rate Limiting (express-rate-limit): Tailored endpoint rules for authorization, general requests, GitHub hooks, and agent routes.
+* Databases (mysql2, better-sqlite3): Relational storage adapters for local SQLite and distributed MySQL instances.
+* Python Click: Structured command-line interface runtime.
+
 ## Prerequisites
 
 * Python 3.10 or higher
