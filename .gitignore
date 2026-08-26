@@ -18,6 +18,10 @@
 !examples/
 !AGENTS.md
 !nebula-agent-studio/
+!server/
+server/node_modules/
+server/workspace/
+server/data/
 !cli.py
 !setup.py
 !hooks/
