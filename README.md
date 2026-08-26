@@ -30,16 +30,19 @@ graph TD
         Filesystem["Workspace Filesystem"]
     end
 
-    UI -->|HTTP Requests| Express
-    UI -->|Interactions| WSClient
-    WSClient <-->|WebSockets (Ctrl+C, Stdout, Stdin)| WSServer
-    Express --> FileCtrl
-    FileCtrl <--> Filesystem
-    WSServer <--> TermMgr
-    TermMgr <-->|Shell I/O| PtyProcess
-    AgentSvc -->|runAgent Loop| PythonAgent
-    PythonAgent -->|Tool Calls| Filesystem
-    PythonAgent -->|Completions| LLM
+    UI -->|"HTTP Requests"| Express
+    UI -->|"Interactions"| WSClient
+    WSClient -->|"WebSockets (Ctrl+C, Stdout, Stdin)"| WSServer
+    WSServer -->|"WebSockets (Terminal Output)"| WSClient
+    Express -->|"File Operations"| FileCtrl
+    FileCtrl -->|"Read/Write Files"| Filesystem
+    WSServer -->|"Manage Terminal Pty"| TermMgr
+    TermMgr -->|"Terminal Process Control"| PtyProcess
+    PtyProcess -->|"Stdout/Stderr Streams"| TermMgr
+    TermMgr -->|"Pty Output Data"| WSServer
+    AgentSvc -->|"runAgent Loop"| PythonAgent
+    PythonAgent -->|"Tool Calls"| Filesystem
+    PythonAgent -->|"LLM Completions"| LLM
 ```
 
 ### Directory Structure
