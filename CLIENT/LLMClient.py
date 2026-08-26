@@ -1,4 +1,5 @@
 import asyncio
+import os
 from collections.abc import AsyncGenerator
 from typing import Any
 from CLIENT.response import StreamEventType, StreamEvent, TokenUsage
@@ -20,9 +21,15 @@ class LLMClient:
 
   def get_client(self) -> AsyncOpenAI:
     if self.client is None:
+      api_key = os.getenv("OPENROUTER_API_KEY", "")
+      if not api_key:
+        raise ValueError(
+          "OPENROUTER_API_KEY environment variable is not set. "
+          "Please set it in your .env file or environment."
+        )
       self.client = AsyncOpenAI(
-        api_key="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",
-        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+        base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
       )
     return self.client
 

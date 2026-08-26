@@ -43,7 +43,7 @@ def get_settings() -> Settings:
         _settings = Settings(
             api_key=os.getenv(
                 "OPENROUTER_API_KEY",
-                "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"
+                ""
             ),
             api_base_url=os.getenv(
                 "OPENROUTER_BASE_URL",
