@@ -66,10 +66,16 @@ class App {
     // Agent Streaming Events
     window.wsClient.on("turn_start", (data) => {
       this.logTerminal(`[Agent] Turn ${data.turn}/${data.maxTurns} started...`, "info");
+      const agentStateEl = document.getElementById("status-agent-state");
+      if (agentStateEl) agentStateEl.textContent = "Agent: Task execution started";
+      const turnEl = document.getElementById("status-turn-count");
+      if (turnEl) turnEl.textContent = `Turn: ${data.turn}/${data.maxTurns}`;
     });
 
     window.wsClient.on("thinking_start", () => {
       this.createThinkingCard();
+      const agentStateEl = document.getElementById("status-agent-state");
+      if (agentStateEl) agentStateEl.textContent = "Agent: Thinking...";
     });
 
     window.wsClient.on("thinking_delta", (data) => {
@@ -89,6 +95,8 @@ class App {
 
     window.wsClient.on("tool_start", (data) => {
       this.renderToolStart(data);
+      const agentStateEl = document.getElementById("status-agent-state");
+      if (agentStateEl) agentStateEl.textContent = `Agent: Running ${data.name}...`;
     });
 
     window.wsClient.on("tool_result", (data) => {
@@ -115,12 +123,16 @@ class App {
       } else {
         this.logTerminal(`[Agent] Task completed successfully.`, "success");
       }
+      const agentStateEl = document.getElementById("status-agent-state");
+      if (agentStateEl) agentStateEl.textContent = "Agent: Idle";
     });
 
     window.wsClient.on("aborted", (data) => {
       this.finalizeMessage();
       this.setGeneratingState(false);
       this.logTerminal(`[Agent] Generation stopped.`, "info");
+      const agentStateEl = document.getElementById("status-agent-state");
+      if (agentStateEl) agentStateEl.textContent = "Agent: Idle";
     });
 
     window.wsClient.on("error", (data) => {
@@ -128,11 +140,20 @@ class App {
       this.finalizeMessage();
       this.setGeneratingState(false);
       this.logTerminal(`[Agent Error] ${data.message}`, "error");
+      const agentStateEl = document.getElementById("status-agent-state");
+      if (agentStateEl) agentStateEl.textContent = "Agent: Stopped/Error";
     });
 
-    // Interactive Terminal Socket Handlers
+    window.wsClient.on("connected", (data) => {
+      if (data && data.workspace) {
+        const workspacePathEl = document.getElementById("status-workspace-path");
+        if (workspacePathEl) workspacePathEl.textContent = `WS: ${data.workspace}`;
+      }
+    });
+
+    // Terminal State & Output Listeners
     window.wsClient.on("open", () => {
-      window.wsClient.send("terminal_init", {
+      window.wsClient.send("terminal.init", {
         shell: this.currentShell || "powershell",
         cols: this.term ? this.term.cols : 80,
         rows: this.term ? this.term.rows : 24
@@ -140,12 +161,18 @@ class App {
     });
 
     if (window.wsClient.isConnected) {
-      window.wsClient.send("terminal_init", {
+      window.wsClient.send("terminal.init", {
         shell: this.currentShell || "powershell",
         cols: this.term ? this.term.cols : 80,
         rows: this.term ? this.term.rows : 24
       });
     }
+
+    window.wsClient.on("terminal.output", (data) => {
+      if (data && data.text && this.term) {
+        this.term.write(data.text);
+      }
+    });
 
     window.wsClient.on("terminal_output", (data) => {
       if (data && data.text && this.term) {
@@ -153,10 +180,60 @@ class App {
       }
     });
 
+    window.wsClient.on("terminal.state", (data) => {
+      if (!data) return;
+      const dot = document.getElementById("term-status-dot");
+      const stateLabel = document.getElementById("term-state-label");
+      const shellLabel = document.getElementById("term-shell-label");
+      const cwdLabel = document.getElementById("term-cwd-label");
+      const pidLabel = document.getElementById("term-pid-label");
+
+      if (stateLabel) stateLabel.textContent = data.state === "ready" ? "Ready" : data.state;
+      if (shellLabel && data.shell) shellLabel.textContent = data.shell;
+      if (cwdLabel && data.cwd) {
+        const parts = data.cwd.replace(/\\/g, "/").split("/");
+        cwdLabel.textContent = parts.slice(-2).join("/");
+      }
+      if (pidLabel) pidLabel.textContent = data.pid ? `PID: ${data.pid}` : "PID: --";
+      if (dot) {
+        dot.style.background = data.state === "ready" || data.state === "running" ? "#10b981" : "#f59e0b";
+      }
+    });
+
+    window.wsClient.on("terminal.exit", (data) => {
+      if (this.term) {
+        this.term.write(`\r\n[System] Terminal session exited with code ${data.code}.\r\n`);
+      }
+    });
+
     window.wsClient.on("terminal_exit", (data) => {
       if (this.term) {
         this.term.write(`\r\n[System] Terminal session exited with code ${data.code}.\r\n`);
       }
+    });
+
+    // Agent Background Task Banner Listeners
+    window.wsClient.on("agent.command.started", (data) => {
+      const banner = document.getElementById("agent-exec-banner");
+      const label = document.getElementById("agent-exec-label");
+      if (banner && label) {
+        label.textContent = `Agent executing: ${data.command || "background task"}`;
+        banner.style.display = "flex";
+        this.activeBgOperationId = data.operationId;
+      }
+    });
+
+    window.wsClient.on("agent.command.completed", () => {
+      const banner = document.getElementById("agent-exec-banner");
+      if (banner) {
+        banner.style.display = "none";
+      }
+      this.activeBgOperationId = null;
+    });
+
+    // File System Sync Listener
+    window.wsClient.on("file.changed", () => {
+      this.loadWorkspaceFiles();
     });
   }
 
@@ -1860,9 +1937,28 @@ class App {
     this.term = term;
     this.fitAddon = fitAddon;
 
+    let lineBuffer = "";
+
     term.onData((data) => {
       if (window.wsClient.isConnected) {
-        window.wsClient.send("terminal_input", { command: data });
+        // 1. Stream raw keystroke to user interactive PTY
+        window.wsClient.send("terminal.input", { data });
+
+        // 2. Track submitted commands on Enter
+        if (data === "\r") {
+          const submittedCmd = lineBuffer.trim();
+          if (submittedCmd) {
+            window.wsClient.send("terminal.command.submitted", {
+              command: submittedCmd,
+              cwd: "workspace",
+            });
+          }
+          lineBuffer = "";
+        } else if (data === "\u007f" || data === "\b") {
+          lineBuffer = lineBuffer.slice(0, -1);
+        } else if (data.length === 1 && data >= " ") {
+          lineBuffer += data;
+        }
       }
     });
 
@@ -1870,7 +1966,7 @@ class App {
       try {
         fitAddon.fit();
         if (window.wsClient.isConnected) {
-          window.wsClient.send("terminal_resize", { cols: term.cols, rows: term.rows });
+          window.wsClient.send("terminal.resize", { cols: term.cols, rows: term.rows });
         }
       } catch (err) {
         console.warn("Resize error:", err);
@@ -1898,10 +1994,21 @@ class App {
         try {
           const text = await navigator.clipboard.readText();
           if (text && window.wsClient.isConnected) {
-            window.wsClient.send("terminal_input", { command: text });
+            window.wsClient.send("terminal.paste", { text });
           }
         } catch (err) {
           console.warn("Paste error:", err);
+        }
+      });
+    }
+
+    const stopBgBtn = document.getElementById("btn-stop-bg-task");
+    if (stopBgBtn) {
+      stopBgBtn.addEventListener("click", () => {
+        if (this.activeBgOperationId && window.wsClient.isConnected) {
+          window.wsClient.send("agent.command.stop", { operationId: this.activeBgOperationId });
+          const banner = document.getElementById("agent-exec-banner");
+          if (banner) banner.style.display = "none";
         }
       });
     }

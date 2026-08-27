@@ -5,6 +5,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { config } from "../config/env.js";
+import { eventBus } from "../websocket/eventBus.js";
 
 /**
  * Resolve path safely within workspace.
@@ -103,6 +104,17 @@ export async function writeFile(req, res) {
   try {
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     await fs.writeFile(resolved, content, "utf8");
+
+    // Emit lightweight metadata-only event
+    eventBus.publish("file.changed", {
+      path: filePath,
+      operation: "modify",
+      version: Date.now(),
+    }, {
+      source: "fs",
+      actor: "user",
+    });
+
     res.json({ success: true, path: filePath, size: Buffer.byteLength(content) });
   } catch (err) {
     res.status(500).json({ error: "InternalError", message: err.message });
@@ -125,6 +137,16 @@ export async function deleteFile(req, res) {
 
   try {
     await fs.rm(resolved, { recursive: true, force: true });
+
+    eventBus.publish("file.changed", {
+      path: filePath,
+      operation: "delete",
+      version: Date.now(),
+    }, {
+      source: "fs",
+      actor: "user",
+    });
+
     res.json({ success: true, path: filePath });
   } catch (err) {
     if (err.code === "ENOENT") {
@@ -152,6 +174,18 @@ export async function moveFile(req, res) {
   try {
     await fs.mkdir(path.dirname(resolvedTo), { recursive: true });
     await fs.rename(resolvedFrom, resolvedTo);
+
+    eventBus.publish("file.changed", {
+      from,
+      to,
+      path: to,
+      operation: "move",
+      version: Date.now(),
+    }, {
+      source: "fs",
+      actor: "user",
+    });
+
     res.json({ success: true, from, to });
   } catch (err) {
     res.status(500).json({ error: "InternalError", message: err.message });
@@ -174,6 +208,16 @@ export async function createFolder(req, res) {
 
   try {
     await fs.mkdir(resolved, { recursive: true });
+
+    eventBus.publish("file.changed", {
+      path: folderPath,
+      operation: "create_folder",
+      version: Date.now(),
+    }, {
+      source: "fs",
+      actor: "user",
+    });
+
     res.json({ success: true, path: folderPath });
   } catch (err) {
     res.status(500).json({ error: "InternalError", message: err.message });
@@ -181,40 +225,30 @@ export async function createFolder(req, res) {
 }
 
 /**
- * POST /api/workspace/exec — Execute shell command in workspace directly.
- * Body: { command, shell }
+ * POST /api/workspace/exec — Execute shell command via ExecutionService in workspace.
  */
 export async function execCommand(req, res) {
   const { command, shell = "powershell" } = req.body;
   if (!command || typeof command !== "string") {
-    return res.status(400).json({ error: "BadRequest", message: "Missing command string" });
+    return res.status(400).json({ error: "BadRequest", message: "Missing 'command' in request body" });
   }
 
-  const { exec } = await import("child_process");
-  const isWindows = process.platform === "win32";
-
-  let finalCmd = command;
-  let execOptions = { cwd: config.workspaceRoot, timeout: 30000 };
-
-  if (shell === "wsl" && isWindows) {
-    // Format path for WSL
-    const winPath = config.workspaceRoot.replace(/\\/g, "/");
-    const driveMatch = winPath.match(/^([A-Za-z]):\/(.*)/);
-    const wslPath = driveMatch ? `/mnt/${driveMatch[1].toLowerCase()}/${driveMatch[2]}` : winPath;
-    const escaped = command.replace(/"/g, '\\"');
-    finalCmd = `wsl.exe --cd "${wslPath}" -e bash -c "${escaped}"`;
-  } else if (shell === "cmd" && isWindows) {
-    finalCmd = `cmd.exe /c "${command}"`;
-  } else if (shell === "powershell" && isWindows) {
-    finalCmd = `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${command.replace(/"/g, '`"')}"`;
-  }
-
-  exec(finalCmd, execOptions, (error, stdout, stderr) => {
-    res.json({
-      success: !error,
-      shellUsed: shell,
-      output: (stdout || stderr || (error ? error.message : "Command finished.")).trim(),
-      exitCode: error ? error.code || 1 : 0,
+  try {
+    const { executionService } = await import("../services/executionService.js");
+    const result = await executionService.execute({
+      command,
+      shell,
+      cwd: config.workspaceRoot,
+      mode: "AGENT_BACKGROUND",
     });
-  });
+
+    res.json({
+      success: result.success,
+      shellUsed: shell,
+      output: result.output,
+      exitCode: result.exitCode,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "InternalError", message: err.message });
+  }
 }

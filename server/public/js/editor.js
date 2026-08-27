@@ -156,6 +156,10 @@ class EditorManager {
    */
   selectTab(filePath) {
     this.activeTab = filePath;
+    const activeFileEl = document.getElementById("status-active-file");
+    if (activeFileEl) {
+      activeFileEl.textContent = filePath;
+    }
     const tabData = this.openTabs.get(filePath);
     if (!tabData) return;
 
@@ -189,6 +193,8 @@ class EditorManager {
         this.activeTab = null;
         if (this.welcomeScreen) this.welcomeScreen.style.display = "flex";
         if (this.editorView) this.editorView.style.display = "none";
+        const activeFileEl = document.getElementById("status-active-file");
+        if (activeFileEl) activeFileEl.textContent = "No file open";
       }
     }
     this.saveStateToCache();

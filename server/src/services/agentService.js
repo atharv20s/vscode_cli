@@ -15,6 +15,7 @@ import path from "path";
 import { streamChatCompletion } from "./llmService.js";
 import { getToolDefinitions, executeTool } from "../tools/index.js";
 import { logger } from "../config/logger.js";
+import { terminalContextService } from "./terminalContextService.js";
 
 /** Default system prompt */
 const DEFAULT_SYSTEM_PROMPT = `You are ATH Agent — an expert autonomous AI pair programmer embedded inside the user's IDE.
@@ -147,6 +148,7 @@ export async function runAgent({
   systemPrompt,
   model,
   workspaceDir,
+  sessionId,
   maxIterations = 15,
   signal,
   onEvent,
@@ -157,19 +159,27 @@ export async function runAgent({
   // Build messages array
   const messages = [];
 
-  // Build live environment & terminal context block
+  // Build live environment & structured terminal context block
   let contextBlock = "";
+  const parts = [];
+
+  // 1. Structured Terminal Context from central Context Service
+  const termCtx = terminalContextService.getStructuredContext(sessionId);
+  if (termCtx.cwd) {
+    parts.push(`- Current Working Directory: ${termCtx.cwd}`);
+  }
+  if (termCtx.last_command) {
+    parts.push(`- Last User Command Submitted in Terminal: "${termCtx.last_command}" (executed ${termCtx.last_command_timestamp})`);
+    if (termCtx.exit_code !== null) {
+      parts.push(`- Last Command Exit Code: ${termCtx.exit_code}`);
+    }
+  }
+  if (termCtx.recent_terminal_output_tail?.length > 0) {
+    parts.push(`- Recent Terminal Output Tail (Last ${termCtx.recent_terminal_output_tail.length} lines):\n\`\`\`\n${termCtx.recent_terminal_output_tail.join("\n")}\n\`\`\``);
+  }
+
+  // 2. Editor Context from Frontend Payload
   if (context) {
-    const parts = [];
-    if (context.terminal?.shell) {
-      parts.push(`- Active Terminal Shell: ${context.terminal.shell}`);
-    }
-    if (context.terminal?.lastError) {
-      parts.push(`- Last Terminal Command Executed: ${context.terminal.lastError.command}`);
-      parts.push(`- Last Terminal Error/Output:\n\`\`\`\n${context.terminal.lastError.output}\n\`\`\``);
-    } else if (context.terminal?.recentOutput) {
-      parts.push(`- Recent Terminal Output:\n\`\`\`\n${context.terminal.recentOutput.slice(-1500)}\n\`\`\``);
-    }
     if (context.editor?.activeFile) {
       parts.push(`- Currently Active Open File in Editor: ${context.editor.activeFile}`);
     }
@@ -179,9 +189,10 @@ export async function runAgent({
     if (context.editor?.activeContent) {
       parts.push(`- Active File Code Preview (${context.editor.activeFile}):\n\`\`\`\n${context.editor.activeContent.slice(0, 2000)}\n\`\`\``);
     }
-    if (parts.length > 0) {
-      contextBlock = `\n\n[LIVE IDE ENVIRONMENT & TERMINAL CONTEXT]:\n${parts.join("\n")}\nAlways use this real-time terminal and editor context to diagnose errors, shell issues, and solve problems accurately!`;
-    }
+  }
+
+  if (parts.length > 0) {
+    contextBlock = `\n\n[LIVE IDE ENVIRONMENT & STRUCTURED TERMINAL CONTEXT]:\n${parts.join("\n")}\nAlways use this real-time terminal and editor context to diagnose errors, shell issues, and solve problems accurately!`;
   }
 
   // System prompt
@@ -215,23 +226,19 @@ export async function runAgent({
   let totalTokens = 0;
   let iteration = 0;
 
-  const toolContext = { workspaceDir };
-
   // Agentic loop
   while (iteration < maxIterations) {
-    if (signal?.aborted) {
-      onEvent({ type: "done", data: { totalTokens, iterations: iteration, aborted: true } });
-      return { messages, totalTokens, aborted: true };
-    }
-
     iteration++;
+    const currentTurnId = `turn_${iteration}`;
 
     logger.debug(`Agent loop iteration ${iteration}/${maxIterations}`);
 
     onEvent({
       type: "turn_start",
-      data: { turn: iteration, maxTurns: maxIterations },
+      data: { turn: iteration, maxTurns: maxIterations, turnId: currentTurnId },
     });
+
+    const toolContext = { workspaceDir, sessionId, turnId: currentTurnId, signal };
 
     let textContent = "";
     let pendingToolCalls = [];

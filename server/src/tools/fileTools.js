@@ -9,6 +9,7 @@ import fs from "fs/promises";
 import path from "path";
 import { registerTool } from "./index.js";
 import { config } from "../config/env.js";
+import { eventBus } from "../websocket/eventBus.js";
 
 /**
  * Resolve a path safely within the workspace.
@@ -109,9 +110,24 @@ export function registerFileTools() {
       try {
         await fs.mkdir(path.dirname(resolved), { recursive: true });
         await fs.writeFile(resolved, args.content, "utf8");
+
+        // Emit lightweight metadata event on EventBus
+        eventBus.publish("file.changed", {
+          path: args.path,
+          operation: "modify",
+          version: Date.now(),
+        }, {
+          source: "agent",
+          actor: "agent",
+          turnId: ctx.turnId,
+          operationId: ctx.operationId,
+          sessionId: ctx.sessionId,
+          workspaceId: ctx.workspaceId || "default",
+        });
+
         return {
           success: true,
-          output: `✅ Successfully written to ${args.path} (${args.content.length} bytes)`,
+          output: `Successfully written to ${args.path} (${args.content.length} bytes)`,
         };
       } catch (err) {
         return { success: false, error: err.message };
@@ -155,9 +171,23 @@ export function registerFileTools() {
         const updated = original.replace(args.search, args.replace);
         await fs.writeFile(resolved, updated, "utf8");
 
+        // Emit lightweight metadata event on EventBus
+        eventBus.publish("file.changed", {
+          path: args.path,
+          operation: "modify",
+          version: Date.now(),
+        }, {
+          source: "agent",
+          actor: "agent",
+          turnId: ctx.turnId,
+          operationId: ctx.operationId,
+          sessionId: ctx.sessionId,
+          workspaceId: ctx.workspaceId || "default",
+        });
+
         return {
           success: true,
-          output: `✅ Edited ${args.path}\n\n--- Before ---\n${args.search}\n\n+++ After +++\n${args.replace}`,
+          output: `Edited ${args.path}\n\n--- Before ---\n${args.search}\n\n+++ After +++\n${args.replace}`,
         };
       } catch (err) {
         if (err.code === "ENOENT") {
@@ -201,14 +231,14 @@ export function registerFileTools() {
             .map(async (entry) => {
               const entryPath = path.join(resolved, entry.name);
               if (entry.isDirectory()) {
-                return `📁 ${entry.name}/`;
+                return `${entry.name}/`;
               }
               try {
                 const stat = await fs.stat(entryPath);
                 const sizeKb = (stat.size / 1024).toFixed(1);
-                return `📄 ${entry.name} (${sizeKb} KB)`;
+                return `${entry.name} (${sizeKb} KB)`;
               } catch {
-                return `📄 ${entry.name}`;
+                return `${entry.name}`;
               }
             })
         );
