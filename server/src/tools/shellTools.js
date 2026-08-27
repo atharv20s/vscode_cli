@@ -18,8 +18,10 @@ export function registerShellTools() {
       function: {
         name: "run_command",
         description:
-          "Execute a shell command in the workspace directory and return its output. " +
-          "Runs isolated in the background without interrupting the user's active terminal session.",
+          "Execute a non-interactive shell command in the workspace directory and return its output. " +
+          "Runs isolated in the background without interrupting the user's active terminal session. " +
+          "Do not run interactive REPLs (like bare 'python' or bare 'node'); instead pass a script or flags (e.g. python -c '...' or node script.js). " +
+          "For persistent dev servers, use start_preview.",
         parameters: {
           type: "object",
           properties: {
@@ -33,12 +35,37 @@ export function registerShellTools() {
               description: "Shell environment: 'powershell', 'pwsh', 'cmd', 'git-bash', 'wsl'",
               enum: ["powershell", "pwsh", "cmd", "git-bash", "wsl"],
             },
+            timeout_seconds: {
+              type: "number",
+              description: "Timeout in seconds (default 60, max 300)",
+            },
           },
           required: ["command"],
         },
       },
     },
     async (args, ctx = {}) => {
+      const trimmedCmd = (args.command || "").trim();
+
+      // Guard against bare interactive REPLs that hang indefinitely
+      if (/^(python|python3|py|node|irb|php -a|bash|sh|powershell|pwsh|cmd)$/i.test(trimmedCmd)) {
+        return {
+          success: false,
+          error:
+            `Interactive REPL detected ('${trimmedCmd}'). run_command executes non-interactively in background. ` +
+            `Please specify a script or one-liner (e.g. 'python -c "..."' or 'node -e "..."' or 'python file.py').`,
+        };
+      }
+
+      // Guard against persistent web servers invoked in run_command instead of start_preview
+      if (/^(npm run dev|npm start|vite|npx vite|python -m http\.server|http-server)/i.test(trimmedCmd)) {
+        return {
+          success: false,
+          error:
+            `Persistent server detected ('${trimmedCmd}'). For long-running preview servers, please use the 'start_preview' tool so it is tracked and managed properly without timing out.`,
+        };
+      }
+
       // 1. Permission Engine Evaluation (DENY > ASK > ALLOW)
       const perm = await permissionEngine.checkPermission({
         resource: "command",
@@ -65,6 +92,7 @@ export function registerShellTools() {
 
       // 4. Generate unique correlation operationId
       const operationId = `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const timeoutMs = Math.min(Math.max((args.timeout_seconds || 60) * 1000, 5000), 300000);
 
       // 5. Execute via ExecutionService in dedicated AGENT_BACKGROUND mode
       const result = await executionService.execute({
@@ -76,13 +104,14 @@ export function registerShellTools() {
         sessionId: ctx.sessionId || null,
         workspaceId: ctx.workspaceId || "default",
         shell: args.shell || "powershell",
+        timeout: timeoutMs,
         signal: ctx.signal || null,
       });
 
       if (result.success) {
         return { success: true, output: result.output, operationId };
       } else {
-        return { success: false, error: result.output, exitCode: result.exitCode, operationId };
+        return { success: false, error: result.output || result.error, exitCode: result.exitCode, operationId };
       }
     }
   );

@@ -339,10 +339,10 @@ async function handleMessage(ws, msg, user) {
  * Handle agent chat messages — streams agent events back over WS.
  */
 async function handleChat(ws, payload, user) {
-  const { message, conversationId, model, systemPrompt, context } = payload || {};
+  const { message, images, conversationId, model, systemPrompt, context } = payload || {};
 
-  if (!message) {
-    sendMessage(ws, "error", { message: "Missing 'message' in chat payload" });
+  if (!message && (!images || images.length === 0)) {
+    sendMessage(ws, "error", { message: "Missing 'message' or 'images' in chat payload" });
     return;
   }
 
@@ -351,14 +351,16 @@ async function handleChat(ws, payload, user) {
 
   logger.info("Agent chat started", {
     user: user?.username || "anonymous",
-    messageLength: message.length,
+    messageLength: message?.length || 0,
+    imageCount: images?.length || 0,
     model,
     hasContext: Boolean(context),
   });
 
   try {
     const result = await runAgent({
-      message,
+      message: message || "",
+      images: images || [],
       context,
       conversationHistory: [],
       model: model || undefined,

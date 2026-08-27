@@ -78,7 +78,7 @@ class WorldStateService {
     clearTimeout(this._gitPollDebounce);
     this._gitPollDebounce = setTimeout(() => {
       this._pollGitState();
-    }, 500);
+    }, 3000);
   }
 
   /**

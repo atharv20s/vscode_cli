@@ -1,7 +1,6 @@
 /**
  * Tool Registry — Central management for all agent tools.
  *
- * Mirrors the Python ToolRegistry pattern but in pure JavaScript.
  * Tools are registered with OpenAI function-calling schemas and
  * dispatched by name during the agentic loop.
  */
@@ -81,6 +80,10 @@ import { registerSearchTools } from "./searchTools.js";
 import { registerShellTools } from "./shellTools.js";
 import { registerGitTools } from "./gitTools.js";
 import { registerPreviewTools } from "./previewTools.js";
+import { registerImageTools } from "./imageTools.js";
+import { registerPlanningTools } from "./planningTools.js";
+import { registerDiagnosticTools } from "./diagnosticTools.js";
+import { registerDocTools } from "./docTools.js";
 
 /**
  * Initialize all built-in tools.
@@ -92,4 +95,8 @@ export function initializeTools() {
   registerShellTools();
   registerGitTools();
   registerPreviewTools();
+  registerImageTools();
+  registerPlanningTools();
+  registerDiagnosticTools();
+  registerDocTools();
 }

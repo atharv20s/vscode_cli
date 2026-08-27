@@ -1,46 +1,60 @@
 /**
- * Multi-Provider LLM Service
+ * Multi-Provider LLM Service with Multimodal Vision Support
  *
  * Wraps the OpenAI SDK to support multiple LLM providers:
- * - OpenRouter (default — proxies Claude, GPT, Llama, Mistral)
+ * - Mistral AI (Codestral, Mistral Large, Pixtral Vision)
+ * - OpenRouter (proxies Claude, GPT-4o, Gemini, Llama)
  * - OpenAI Direct
  * - Ollama Local
  *
- * Handles streaming, tool calling, and token usage tracking.
+ * Handles streaming, tool calling, multimodal image payload formatting, and token tracking.
  */
 
 import OpenAI from "openai";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 
-/** Available single core model with Usage Tiers */
+/** Available core models and Vision models */
 export const MODEL_PRESETS = {
   "devstral-low": {
     id: "codestral-latest",
-    name: "Codestral 2501 (🟢 Fast Mode)",
+    name: "Codestral 2501 (Fast Mode)",
     tier: "low",
     provider: "mistral",
     temperature: 0.2,
     maxTokens: 4096,
     supportsTools: true,
+    multimodal: false,
   },
   devstral: {
     id: "codestral-latest",
-    name: "Devstral / Codestral (🟡 Full Code Generation)",
+    name: "Devstral / Codestral (Code Generation)",
     tier: "medium",
     provider: "mistral",
     temperature: 0.5,
     maxTokens: 8192,
     supportsTools: true,
+    multimodal: false,
   },
   "devstral-high": {
     id: "mistral-large-latest",
-    name: "Mistral Large (🔴 Deep Reasoning / Architecture)",
+    name: "Mistral Large (Deep Reasoning & Architecture)",
     tier: "high",
     provider: "mistral",
     temperature: 0.7,
     maxTokens: 8192,
     supportsTools: true,
+    multimodal: true,
+  },
+  vision: {
+    id: "pixtral-12b-2409",
+    name: "Pixtral Vision (Multimodal Image Analysis)",
+    tier: "medium",
+    provider: "mistral",
+    temperature: 0.3,
+    maxTokens: 4096,
+    supportsTools: true,
+    multimodal: true,
   },
 };
 
@@ -83,7 +97,7 @@ function getClient(provider = "mistral") {
  * Send a streaming chat completion request to the LLM.
  *
  * @param {object} options
- * @param {Array} options.messages - Conversation messages
+ * @param {Array} options.messages - Conversation messages (can contain multimodal content arrays)
  * @param {Array} [options.tools] - Tool definitions
  * @param {string} [options.model] - Model preset name or raw model ID
  * @param {Function} options.onEvent - Callback for streaming events
@@ -91,7 +105,15 @@ function getClient(provider = "mistral") {
  */
 export async function streamChatCompletion({ messages, tools, model, onEvent }) {
   // Resolve model
-  const preset = MODEL_PRESETS[model];
+  let preset = MODEL_PRESETS[model];
+
+  // Auto-switch to vision model if any message contains image data and current model lacks vision
+  const hasImages = messages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url"));
+  if (hasImages && preset && !preset.multimodal) {
+    logger.info("Multimodal images detected in request — switching to Vision-capable model (pixtral-12b-2409)");
+    preset = MODEL_PRESETS["vision"];
+  }
+
   const modelId = preset ? preset.id : model || config.openrouterModel;
   const provider = preset ? preset.provider : "openrouter";
 
@@ -110,14 +132,13 @@ export async function streamChatCompletion({ messages, tools, model, onEvent }) 
     kwargs.tool_choice = "auto";
   }
 
-  logger.debug("LLM request", { model: modelId, provider, messageCount: messages.length });
+  logger.debug("LLM request", { model: modelId, provider, messageCount: messages.length, hasImages });
 
   try {
     let response;
     try {
       response = await client.chat.completions.create(kwargs);
     } catch (createErr) {
-      // If 402 credit limit hit, auto-retry with compact token ceiling
       if (createErr.status === 402 || createErr.message?.includes("credits")) {
         logger.warn("OpenRouter credit headroom tight — retrying with max_tokens: 300");
         kwargs.max_tokens = 300;
@@ -131,7 +152,6 @@ export async function streamChatCompletion({ messages, tools, model, onEvent }) 
     const toolCallsAcc = {};
 
     for await (const chunk of response) {
-      // Usage info (some providers send it on the last chunk)
       if (chunk.usage) {
         onEvent({
           type: "usage",

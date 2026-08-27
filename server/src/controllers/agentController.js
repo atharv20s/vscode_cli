@@ -13,12 +13,12 @@ import { config } from "../config/env.js";
  * POST /api/agent/chat — SSE streaming chat.
  */
 export async function chatStream(req, res) {
-  const { message, conversationHistory, model, systemPrompt } = req.body;
+  const { message, images, conversationHistory, model, systemPrompt } = req.body;
 
-  if (!message || typeof message !== "string") {
+  if (!message && (!images || images.length === 0)) {
     return res.status(400).json({
       error: "BadRequest",
-      message: "Missing 'message' field in request body.",
+      message: "Missing 'message' or 'images' in request body.",
     });
   }
 
@@ -30,7 +30,8 @@ export async function chatStream(req, res) {
 
   try {
     await runAgent({
-      message,
+      message: message || "",
+      images: images || [],
       conversationHistory: conversationHistory || [],
       model: model || undefined,
       systemPrompt: systemPrompt || undefined,

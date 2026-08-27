@@ -313,6 +313,52 @@ class App {
       stopBtn.addEventListener("click", () => this.stopGeneration());
     }
 
+    // Image Attachments & Multimodal Paste / Drop
+    this.pendingImages = [];
+    const imgInput = document.getElementById("composer-image-input");
+    if (imgInput) {
+      imgInput.addEventListener("change", (e) => {
+        if (e.target.files) this.handleImageFiles(Array.from(e.target.files));
+        imgInput.value = "";
+      });
+    }
+
+    if (composerInput) {
+      composerInput.addEventListener("paste", (e) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        const imgFiles = [];
+        for (const item of items) {
+          if (item.type.startsWith("image/")) {
+            const file = item.getAsFile();
+            if (file) imgFiles.push(file);
+          }
+        }
+        if (imgFiles.length > 0) {
+          this.handleImageFiles(imgFiles);
+        }
+      });
+    }
+
+    const composerBox = document.querySelector(".composer-container");
+    if (composerBox) {
+      composerBox.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        composerBox.style.borderColor = "var(--primary-light)";
+      });
+      composerBox.addEventListener("dragleave", () => {
+        composerBox.style.borderColor = "";
+      });
+      composerBox.addEventListener("drop", (e) => {
+        e.preventDefault();
+        composerBox.style.borderColor = "";
+        if (e.dataTransfer?.files) {
+          const imgFiles = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
+          if (imgFiles.length > 0) this.handleImageFiles(imgFiles);
+        }
+      });
+    }
+
     // Thread Selector Menu Dropdown
     const threadsMenuBtn = document.getElementById("btn-threads-menu");
     const threadsPopover = document.getElementById("inline-threads-popover");
@@ -1322,6 +1368,53 @@ class App {
   }
 
   /**
+   * Handle incoming image files for multimodal prompt.
+   */
+  handleImageFiles(files) {
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        this.pendingImages.push(e.target.result);
+        this.renderImagePreviews();
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  /**
+   * Render pending image thumbnails in composer.
+   */
+  renderImagePreviews() {
+    const container = document.getElementById("composer-image-previews");
+    if (!container) return;
+
+    if (!this.pendingImages || this.pendingImages.length === 0) {
+      container.style.display = "none";
+      container.innerHTML = "";
+      return;
+    }
+
+    container.style.display = "flex";
+    container.innerHTML = this.pendingImages
+      .map(
+        (dataUrl, i) => `
+        <div style="position:relative;width:44px;height:44px;border-radius:6px;overflow:hidden;border:1px solid rgba(255,255,255,0.15);background:#000;">
+          <img src="${dataUrl}" style="width:100%;height:100%;object-fit:cover;" />
+          <button onclick="app.removeImagePreview(${i})" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,0.7);color:#fff;border:none;border-radius:50%;width:14px;height:14px;font-size:10px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;">&times;</button>
+        </div>`
+      )
+      .join("");
+  }
+
+  removeImagePreview(index) {
+    if (this.pendingImages && this.pendingImages[index]) {
+      this.pendingImages.splice(index, 1);
+      this.renderImagePreviews();
+    }
+  }
+
+  /**
    * Send User Message to AI Agent
    */
   sendMessage() {
@@ -1329,7 +1422,8 @@ class App {
       const composerInput = document.getElementById("composer-input");
       if (!composerInput) return;
       const text = composerInput.value.trim();
-      if (!text) return;
+      const images = this.pendingImages ? [...this.pendingImages] : [];
+      if (!text && images.length === 0) return;
 
       if (!this.currentConversationId) {
         this.currentConversationId = `conv_${Date.now()}`;
@@ -1337,10 +1431,12 @@ class App {
       }
 
       composerInput.value = "";
+      this.pendingImages = [];
+      this.renderImagePreviews();
 
       // 1. Render User Message in Timeline
-      this.renderUserMessage(text);
-      this.chatHistory.push({ role: "user", content: text, timestamp: Date.now() });
+      this.renderUserMessage(text, images);
+      this.chatHistory.push({ role: "user", content: text, images, timestamp: Date.now() });
       this.saveChatToCache();
 
       // 2. Prepare Assistant Message Placeholder
@@ -1362,6 +1458,7 @@ class App {
 
       window.wsClient.send("chat", {
         message: text,
+        images,
         conversationId: this.currentConversationId,
         model: this.currentModel || "devstral",
         mode: this.currentMode || "agent",
@@ -1544,16 +1641,27 @@ class App {
     }
   }
 
-  renderUserMessage(text) {
+  renderUserMessage(text, images = []) {
     const timeline = document.getElementById("ai-timeline");
     const msgEl = document.createElement("div");
     msgEl.className = "chat-msg user";
+
+    let imgHtml = "";
+    if (images && images.length > 0) {
+      imgHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">
+        ${images.map((img) => `<img src="${img}" style="max-width:140px;max-height:100px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);object-fit:cover;" />`).join("")}
+      </div>`;
+    }
+
     msgEl.innerHTML = `
-      <div class="chat-bubble" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-        <span>${this.escapeHtml(text)}</span>
-        <button class="edit-prompt-btn" title="Edit prompt" style="opacity:0.6;background:none;border:none;color:#fff;cursor:pointer;padding:2px;display:flex;align-items:center;">
-          <i data-lucide="edit-3" style="width:12px;height:12px;"></i>
-        </button>
+      <div class="chat-bubble" style="display:flex;flex-direction:column;gap:6px;">
+        ${imgHtml}
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <span>${this.escapeHtml(text || (images.length > 0 ? "Attached image" : ""))}</span>
+          <button class="edit-prompt-btn" title="Edit prompt" style="opacity:0.6;background:none;border:none;color:#fff;cursor:pointer;padding:2px;display:flex;align-items:center;">
+            <i data-lucide="edit-3" style="width:12px;height:12px;"></i>
+          </button>
+        </div>
       </div>
     `;
     const editBtn = msgEl.querySelector(".edit-prompt-btn");
@@ -1653,27 +1761,41 @@ class App {
   }
 
   renderToolStart(data) {
-    const toolsLog = document.getElementById("tools-execution-log");
-    const logItem = document.createElement("div");
-    logItem.className = "term-line info";
-    logItem.textContent = `[Tool Executing] ${data.name}(${JSON.stringify(data.args || {})})`;
-    if (toolsLog) toolsLog.appendChild(logItem);
-
     if (!this.currentAssistantMessageEl) return;
 
     const card = document.createElement("div");
-    card.className = "tool-call-card";
+    card.className = "artifact-card";
     card.id = `tool-call-${data.id}`;
+    card.setAttribute("data-tool-start", Date.now().toString());
+
+    let iconName = "terminal";
+    let displayName = data.name;
+    if (data.name.includes("plan")) iconName = "clipboard-list";
+    else if (data.name.includes("image")) iconName = "image";
+    else if (data.name.includes("git")) iconName = "git-branch";
+    else if (data.name.includes("file")) iconName = "file-text";
+    else if (data.name.includes("preview")) iconName = "play";
+    else if (data.name.includes("diagnose")) iconName = "activity";
+
+    const detailText = data.args?.command || data.args?.path || data.args?.title || data.args?.prompt || "";
+
     card.innerHTML = `
-      <div class="tool-call-header">
-        <div class="tool-badge">
-          <i data-lucide="wrench"></i> ${data.name}
+      <div class="artifact-header" onclick="const b = this.nextElementSibling; if(b) b.style.display = b.style.display === 'none' ? 'block' : 'none'">
+        <div class="artifact-title">
+          <i data-lucide="${iconName}" style="width:14px;height:14px;color:var(--accent-light);"></i>
+          <span>${displayName}</span>
+          ${detailText ? `<span style="opacity:0.6;font-weight:400;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${this.escapeHtml(detailText.slice(0, 40))}</span>` : ""}
         </div>
-        <span class="tool-status-tag">running</span>
+        <span class="artifact-badge badge-running">running</span>
+      </div>
+      <div class="artifact-body" style="display:block;">
+        <div class="tool-status-hint" style="color:var(--text-dim);font-size:11px;font-family:var(--font-mono);">Executing ${data.name}...</div>
       </div>
     `;
     this.currentAssistantMessageEl.appendChild(card);
     if (window.lucide) window.lucide.createIcons();
+    const timeline = document.getElementById("ai-timeline");
+    if (timeline) timeline.scrollTop = timeline.scrollHeight;
   }
 
   renderToolResult(data) {
@@ -1685,17 +1807,55 @@ class App {
 
     const card = document.getElementById(`tool-call-${data.id}`);
     if (card) {
-      const tag = card.querySelector(".tool-status-tag");
-      if (tag) {
-        tag.className = `tool-status-tag ${data.success ? "success" : "error"}`;
-        tag.textContent = data.success ? "success" : "failed";
+      const startTime = parseInt(card.getAttribute("data-tool-start") || "0", 10);
+      const elapsedMs = startTime ? Date.now() - startTime : null;
+      const durationTag = elapsedMs ? ` (${elapsedMs}ms)` : "";
+
+      const badge = card.querySelector(".artifact-badge");
+      if (badge) {
+        badge.className = `artifact-badge ${data.success ? "badge-success" : "badge-error"}`;
+        badge.textContent = (data.success ? "completed" : "failed") + durationTag;
       }
 
-      const preview = document.createElement("div");
-      preview.className = "tool-output-preview";
-      preview.textContent = data.output || "(no output)";
-      card.appendChild(preview);
+      const body = card.querySelector(".artifact-body");
+      if (body) {
+        // Special Visual rendering for image generation
+        if (data.name === "generate_image" && data.assetPath) {
+          body.innerHTML = `
+            <div class="image-artifact-container">
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Generated visual asset: <code>${data.assetPath}</code></div>
+              <img src="/api/workspace/file?path=${encodeURIComponent(data.assetPath)}" class="image-artifact-preview" />
+              <div style="margin-top:6px;display:flex;gap:6px;">
+                <button onclick="window.editorManager?.openFile('${data.assetPath}')" class="btn" style="padding:4px 8px;font-size:11px;">Open in Editor</button>
+              </div>
+            </div>
+          `;
+        } else if (data.name === "create_plan" || data.name === "update_plan") {
+          // Special plan rendering
+          body.innerHTML = `
+            <div class="plan-artifact-container">
+              <div style="font-size:12px;font-weight:600;color:var(--text-main);margin-bottom:6px;">${this.escapeHtml(data.output || "Plan Created")}</div>
+              <button onclick="window.editorManager?.openFile('task.md')" class="btn btn-primary" style="padding:4px 8px;font-size:11px;">View Task Roadmap</button>
+            </div>
+          `;
+        } else if (data.name === "generate_walkthrough") {
+          body.innerHTML = `
+            <div class="walkthrough-artifact-container">
+              <div class="walkthrough-summary" style="font-size:11px;line-height:1.5;">${this.escapeHtml(data.output)}</div>
+              <button onclick="window.editorManager?.openFile('walkthrough.md')" class="btn btn-primary" style="padding:4px 8px;font-size:11px;">Open Walkthrough Document</button>
+            </div>
+          `;
+        } else {
+          // Standard collapsible output block
+          body.innerHTML = `
+            <div class="tool-output-block">${this.escapeHtml(data.output || data.error || "(no output)")}</div>
+          `;
+        }
+      }
+      if (window.lucide) window.lucide.createIcons();
     }
+    const timeline = document.getElementById("ai-timeline");
+    if (timeline) timeline.scrollTop = timeline.scrollHeight;
   }
 
   finalizeMessage() {

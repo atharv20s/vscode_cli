@@ -17,6 +17,7 @@ import { getToolDefinitions, executeTool } from "../tools/index.js";
 import { logger } from "../config/logger.js";
 import { terminalContextService } from "./terminalContextService.js";
 import { worldStateService } from "./worldStateService.js";
+import { ContextSelector } from "./contextSelector.js";
 
 /** Default system prompt */
 const DEFAULT_SYSTEM_PROMPT = `You are ATH Agent — an expert autonomous AI pair programmer embedded inside the user's IDE.
@@ -144,6 +145,7 @@ async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDi
  */
 export async function runAgent({
   message,
+  images = [],
   context,
   conversationHistory = [],
   systemPrompt,
@@ -160,55 +162,12 @@ export async function runAgent({
   // Build messages array
   const messages = [];
 
-  // Build live environment & structured terminal context block
-  let contextBlock = "";
-  const parts = [];
-
-  // 1. Unified World State from Central WorldStateService
-  const world = worldStateService.getWorldState(sessionId);
-  parts.push(`- Workspace: ${world.workspace.name} (${world.workspace.root})`);
-  if (world.terminal.shell) {
-    parts.push(`- Active Terminal: ${world.terminal.shell} [State: ${world.terminal.state}] in ${world.terminal.cwd}`);
-  }
-  if (world.terminal.active_process) {
-    parts.push(`- Foreground Terminal Process: ${world.terminal.active_process}`);
-  }
-  if (world.terminal.detected_ports?.length > 0) {
-    parts.push(`- Detected Active Ports: ${world.terminal.detected_ports.join(", ")}`);
-  }
-  if (world.preview.status === "running") {
-    parts.push(`- Live Preview Server: RUNNING at ${world.preview.url} (Port: ${world.preview.port})`);
-  }
-  if (world.git.branch) {
-    parts.push(`- Git Branch: ${world.git.branch} (${world.git.dirty ? `${world.git.totalChanges} uncommitted changes` : "clean"})`);
-  }
-  if (world.terminal.last_command) {
-    parts.push(`- Last Command Submitted in Terminal: "${world.terminal.last_command}" (${world.terminal.last_command_time})`);
-    if (world.terminal.exit_code !== null) parts.push(`- Last Command Exit Code: ${world.terminal.exit_code}`);
-  }
-  if (world.terminal.recent_errors?.length > 0) {
-    parts.push(`- Recent Terminal Errors:\n\`\`\`\n${world.terminal.recent_errors.join("\n")}\n\`\`\``);
-  }
-  if (world.terminal.recent_output?.length > 0) {
-    parts.push(`- Recent Terminal Output Tail (Last ${world.terminal.recent_output.length} lines):\n\`\`\`\n${world.terminal.recent_output.join("\n")}\n\`\`\``);
-  }
-
-  // 2. Editor Context from Frontend Payload
-  if (context) {
-    if (context.editor?.activeFile) {
-      parts.push(`- Currently Active Open File in Editor: ${context.editor.activeFile}`);
-    }
-    if (context.editor?.openFiles?.length) {
-      parts.push(`- Open Files: ${context.editor.openFiles.join(", ")}`);
-    }
-    if (context.editor?.activeContent) {
-      parts.push(`- Active File Code Preview (${context.editor.activeFile}):\n\`\`\`\n${context.editor.activeContent.slice(0, 2000)}\n\`\`\``);
-    }
-  }
-
-  if (parts.length > 0) {
-    contextBlock = `\n\n[LIVE IDE ENVIRONMENT & STRUCTURED TERMINAL CONTEXT]:\n${parts.join("\n")}\nAlways use this real-time terminal and editor context to diagnose errors, shell issues, and solve problems accurately!`;
-  }
+  // Build live environment & targeted context block via ContextSelector
+  const contextBlock = ContextSelector.selectContext({
+    userPrompt: message,
+    sessionId,
+    editorContext: context?.editor,
+  });
 
   // System prompt
   messages.push({
@@ -221,22 +180,47 @@ export async function runAgent({
     messages.push(msg);
   }
 
-  // User message
-  messages.push({ role: "user", content: message });
+  // User message (supports multimodal text + image payloads)
+  let userMessageContent = message;
+  if (images && Array.isArray(images) && images.length > 0) {
+    userMessageContent = [
+      { type: "text", text: message || "Analyze the attached visual asset / image." },
+      ...images.map((img) => ({
+        type: "image_url",
+        image_url: { url: img },
+      })),
+    ];
+  }
+  messages.push({ role: "user", content: userMessageContent });
 
-  // Filter to high-impact core tools to keep prompt schema token overhead minimal (~500 tokens)
+  // Complete core tool suite for autonomous development
   const coreToolNames = new Set([
     "read_file",
     "write_file",
     "edit_file",
+    "delete_file",
+    "rename_file",
     "list_files",
     "run_command",
     "web_search",
     "git_status",
+    "git_diff",
+    "git_log",
     "git_commit",
+    "git_push",
     "start_preview",
     "stop_preview",
     "get_preview_status",
+    "generate_image",
+    "analyze_image",
+    "create_plan",
+    "update_plan",
+    "diagnose_environment",
+    "detect_runtimes",
+    "repair_application",
+    "create_readme",
+    "generate_walkthrough",
+    "generate_architecture",
   ]);
 
   const allTools = getToolDefinitions();

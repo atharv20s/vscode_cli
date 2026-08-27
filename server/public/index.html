@@ -405,19 +405,27 @@
         <!-- Composer Input Area -->
         <div class="composer-container">
           <div class="composer-chips">
-            <button class="chip-cmd" onclick="app.insertCommand('/search ')">🔍 /search</button>
-            <button class="chip-cmd" onclick="app.insertCommand('/git ')">🐙 /git</button>
-            <button class="chip-cmd" onclick="app.insertCommand('/plan ')">📋 /plan</button>
-            <button class="chip-cmd" onclick="app.insertCommand('/edit ')">✏️ /edit</button>
+            <button class="chip-cmd" onclick="app.insertCommand('/search ')">/search</button>
+            <button class="chip-cmd" onclick="app.insertCommand('/git ')">/git</button>
+            <button class="chip-cmd" onclick="app.insertCommand('/plan ')">/plan</button>
+            <button class="chip-cmd" onclick="app.insertCommand('/edit ')">/edit</button>
+            <button class="chip-cmd" onclick="app.insertCommand('/image ')">/image</button>
           </div>
+          <div id="composer-image-previews" class="composer-image-previews" style="display:none;gap:6px;padding:6px 10px;flex-wrap:wrap;border-bottom:1px solid var(--border-subtle);"></div>
           <div class="composer-input-box">
             <textarea
               id="composer-input"
-              placeholder="Ask anything or prompt the agent... (Enter to send, Shift+Enter for newline)"
+              placeholder="Ask anything or paste images (Ctrl+V)... (Enter to send, Shift+Enter for newline)"
               rows="2"
             ></textarea>
             <div class="composer-footer">
-              <span class="token-count" id="session-token-count">0 tokens</span>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <input type="file" id="composer-image-input" accept="image/*" multiple style="display:none;" />
+                <button id="btn-attach-image" class="composer-action-btn" onclick="document.getElementById('composer-image-input').click()" title="Attach image / screenshot" style="background:rgba(255,255,255,0.05);border:1px solid var(--border-subtle);color:var(--text-muted);cursor:pointer;display:flex;align-items:center;padding:4px 6px;border-radius:6px;font-size:11px;gap:4px;">
+                  <i data-lucide="image" style="width:13px;height:13px;"></i> Attach
+                </button>
+                <span class="token-count" id="session-token-count">0 tokens</span>
+              </div>
               <div style="display:flex;gap:6px;align-items:center;">
                 <button id="btn-stop-agent" class="send-btn hidden" style="background:#ef4444;color:#fff;border:none;display:none;" title="Stop AI Generation">
                   <i data-lucide="square" style="width:13px;height:13px;fill:currentColor;"></i>
