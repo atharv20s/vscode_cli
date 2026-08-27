@@ -20,6 +20,7 @@ import helmet from "helmet";
 import { config, validateConfig } from "./config/env.js";
 import { logger } from "./config/logger.js";
 import { initDatabase, closeDatabase } from "./db/database.js";
+import { initPostgres } from "./db/postgres.js";
 import { initializeTools } from "./tools/index.js";
 import { initMcpServers, shutdownMcpServers, getMcpStatus } from "./mcp/mcpClient.js";
 import { initWebSocketServer } from "./websocket/wsServer.js";
@@ -152,9 +153,12 @@ async function startServer() {
     for (const w of warnings) logger.warn(w);
     for (const e of errors) logger.error(e);
 
-    // Initialize Database
+    // Initialize Database (Neon Cloud PostgreSQL if configured, plus SQLite local cache)
+    if (config.databaseUrl) {
+      await initPostgres(config.databaseUrl);
+    }
     initDatabase();
-    logger.info("SQLite database connected successfully");
+    logger.info("Database subsystem initialized successfully");
 
     // Initialize Built-in Agent Tools
     initializeTools();

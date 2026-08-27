@@ -221,7 +221,8 @@ export async function runAgent({
   ]);
 
   const allTools = getToolDefinitions();
-  const tools = allTools.filter((t) => coreToolNames.has(t.function.name));
+  // Include all core tools and dynamically registered MCP / database tools
+  const tools = allTools;
   let totalTokens = 0;
   let iteration = 0;
 

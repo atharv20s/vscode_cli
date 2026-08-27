@@ -20,6 +20,9 @@ export const config = {
   publicUrl: process.env.PUBLIC_URL || "",
   logLevel: process.env.LOG_LEVEL || "info",
 
+  // Database (PostgreSQL / Neon / Supabase or SQLite fallback)
+  databaseUrl: process.env.DATABASE_URL || "",
+
   // LLM Providers
   openrouterKey: process.env.OPENROUTER_API_KEY || "",
   openrouterBaseUrl: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
