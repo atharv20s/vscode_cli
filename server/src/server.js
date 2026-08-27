@@ -77,6 +77,43 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Direct LLM test endpoint — bypasses agent loop entirely
+app.get("/api/test-llm", async (req, res) => {
+  try {
+    const OpenAI = (await import("openai")).default;
+    const mistralKey = config.mistralKey || process.env.MISTRAL_API_KEY;
+    const openrouterKey = config.openrouterKey || process.env.OPENROUTER_API_KEY;
+
+    const useKey = mistralKey || openrouterKey;
+    const baseURL = mistralKey ? "https://api.mistral.ai/v1" : "https://openrouter.ai/api/v1";
+    const modelId = mistralKey ? "mistral-small-latest" : "openrouter/free";
+
+    if (!useKey) {
+      return res.json({ error: "No LLM API key found in env", mistralKey: !!mistralKey, openrouterKey: !!openrouterKey });
+    }
+
+    logger.info(`test-llm: Using ${mistralKey ? 'Mistral Direct' : 'OpenRouter'} with model ${modelId}`);
+
+    const client = new OpenAI({ apiKey: useKey, baseURL });
+    const response = await client.chat.completions.create({
+      model: modelId,
+      messages: [{ role: "user", content: "Say 'ATH IDE is alive!' in exactly 5 words." }],
+      max_tokens: 50,
+    });
+
+    res.json({
+      success: true,
+      provider: mistralKey ? "Mistral AI Direct" : "OpenRouter",
+      model: modelId,
+      response: response.choices[0]?.message?.content,
+      keyPrefix: useKey.slice(0, 8) + "...",
+    });
+  } catch (err) {
+    logger.error("test-llm FAILED", { error: err.message, status: err.status });
+    res.json({ success: false, error: err.message, status: err.status });
+  }
+});
+
 app.use("/api/auth", authRoutes);
 app.use("/api/agent", agentRoutes);
 app.use("/api/workspace", workspaceRoutes);
