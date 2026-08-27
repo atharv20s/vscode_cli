@@ -1,8 +1,8 @@
 /**
- * Multi-Provider LLM Service with Multimodal Vision Support
+ * Multi-Provider LLM Service with Multimodal Vision Support & Intelligent Failover
  *
  * Wraps the OpenAI SDK to support multiple LLM providers:
- * - Mistral AI (Codestral, Mistral Large, Pixtral Vision)
+ * - Mistral AI Direct (Codestral, Mistral Small/Large, Pixtral Vision)
  * - OpenRouter (proxies Claude, GPT-4o, Gemini, Llama)
  * - OpenAI Direct
  * - Ollama Local
@@ -17,40 +17,44 @@ import { logger } from "../config/logger.js";
 /** Available core models and Vision models */
 export const MODEL_PRESETS = {
   "devstral-low": {
-    id: "openrouter/free",
-    name: "Fast Free AI (Auto-Routed)",
+    id: "mistral-small-latest",
+    openrouterId: "openrouter/free",
+    name: "Mistral Small (Fast / Efficient)",
     tier: "low",
-    provider: "openrouter",
+    provider: "mistral",
     temperature: 0.2,
     maxTokens: 4096,
     supportsTools: true,
     multimodal: false,
   },
   devstral: {
-    id: "openrouter/free",
-    name: "OpenRouter Free (Coding & Chat)",
+    id: "codestral-latest",
+    openrouterId: "openrouter/free",
+    name: "Codestral AI (Full Agent & Coding)",
     tier: "medium",
-    provider: "openrouter",
-    temperature: 0.5,
+    provider: "mistral",
+    temperature: 0.3,
     maxTokens: 8192,
     supportsTools: true,
     multimodal: false,
   },
   "devstral-high": {
-    id: "openrouter/free",
-    name: "OpenRouter Free High (Reasoning)",
+    id: "mistral-large-latest",
+    openrouterId: "openrouter/free",
+    name: "Mistral Large (Deep Reasoning)",
     tier: "high",
-    provider: "openrouter",
-    temperature: 0.7,
+    provider: "mistral",
+    temperature: 0.5,
     maxTokens: 8192,
     supportsTools: true,
     multimodal: true,
   },
   vision: {
-    id: "openrouter/free",
-    name: "OpenRouter Vision (Multimodal)",
+    id: "pixtral-12b-2409",
+    openrouterId: "openrouter/free",
+    name: "Pixtral Vision (Multimodal)",
     tier: "medium",
-    provider: "openrouter",
+    provider: "mistral",
     temperature: 0.3,
     maxTokens: 4096,
     supportsTools: true,
@@ -63,74 +67,73 @@ export const MODEL_PRESETS = {
  * @param {string} provider - 'mistral', 'openrouter', 'openai', or 'ollama'
  * @returns {OpenAI}
  */
-function getClient(provider = "openrouter") {
-  // If provider is mistral but we have an OpenRouter key, use OpenRouter!
-  if (provider === "mistral" && config.mistralKey && !config.mistralKey.startsWith("sk-or-")) {
+function getClient(provider = "mistral") {
+  const mistralKey = config.mistralKey || process.env.MISTRAL_API_KEY;
+  const openrouterKey = config.openrouterKey || process.env.OPENROUTER_API_KEY;
+
+  if (provider === "mistral" && mistralKey) {
     return new OpenAI({
-      apiKey: config.mistralKey,
+      apiKey: mistralKey,
       baseURL: "https://api.mistral.ai/v1",
     });
   }
 
-  switch (provider) {
-    case "openai":
-      return new OpenAI({
-        apiKey: config.openaiKey,
-        baseURL: "https://api.openai.com/v1",
-      });
-    case "ollama":
-      return new OpenAI({
-        apiKey: "ollama",
-        baseURL: config.ollamaBaseUrl,
-      });
-    case "openrouter":
-    default:
-      return new OpenAI({
-        apiKey: config.openrouterKey || config.mistralKey,
-        baseURL: config.openrouterBaseUrl || "https://openrouter.ai/api/v1",
-        defaultHeaders: {
-          "HTTP-Referer": "https://github.com/atharv20s/vscode_cli",
-          "X-Title": "Agentic CLI",
-        },
-      });
+  if (provider === "openrouter" || (!mistralKey && openrouterKey)) {
+    return new OpenAI({
+      apiKey: openrouterKey,
+      baseURL: config.openrouterBaseUrl || "https://openrouter.ai/api/v1",
+      defaultHeaders: {
+        "HTTP-Referer": "https://github.com/atharv20s/vscode_cli",
+        "X-Title": "Agentic CLI",
+      },
+    });
   }
+
+  if (provider === "openai" && config.openaiKey) {
+    return new OpenAI({
+      apiKey: config.openaiKey,
+      baseURL: "https://api.openai.com/v1",
+    });
+  }
+
+  if (provider === "ollama") {
+    return new OpenAI({
+      apiKey: "ollama",
+      baseURL: config.ollamaBaseUrl,
+    });
+  }
+
+  // Fallback to whichever key exists
+  const activeKey = mistralKey || openrouterKey || config.openaiKey || "dev-key";
+  const baseUrl = mistralKey ? "https://api.mistral.ai/v1" : "https://openrouter.ai/api/v1";
+  return new OpenAI({ apiKey: activeKey, baseURL: baseUrl });
 }
 
 /**
  * Send a streaming chat completion request to the LLM.
- *
- * @param {object} options
- * @param {Array} options.messages - Conversation messages (can contain multimodal content arrays)
- * @param {Array} [options.tools] - Tool definitions
- * @param {string} [options.model] - Model preset name or raw model ID
- * @param {Function} options.onEvent - Callback for streaming events
- * @returns {Promise<void>}
  */
-export async function streamChatCompletion({ messages, tools, model, onEvent }) {
-  // Resolve model
-  let preset = MODEL_PRESETS[model];
+export async function streamChatCompletion({ messages, tools, model, onEvent, signal }) {
+  let preset = MODEL_PRESETS[model] || MODEL_PRESETS["devstral"];
 
-  // Auto-switch to vision model if any message contains image data and current model lacks vision
+  // Auto-switch to vision model if any message contains image data
   const hasImages = messages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url"));
   if (hasImages && preset && !preset.multimodal) {
-    logger.info("Multimodal images detected in request — switching to Vision-capable model");
+    logger.info("Multimodal images detected in request -- switching to Vision-capable model");
     preset = MODEL_PRESETS["vision"];
   }
 
-  let modelId = preset ? preset.id : model || config.openrouterModel || "openrouter/free";
-  if (modelId.includes("devstral-2512") || modelId.includes("codestral")) {
-    modelId = "openrouter/free";
-  }
+  const hasMistralKey = Boolean(config.mistralKey || process.env.MISTRAL_API_KEY);
+  let provider = hasMistralKey ? "mistral" : "openrouter";
+  let modelId = hasMistralKey ? preset.id : preset.openrouterId || "openrouter/free";
 
-  const provider = preset ? preset.provider : "openrouter";
-  const client = getClient(provider);
+  let client = getClient(provider);
 
   const kwargs = {
     model: modelId,
     messages,
     stream: true,
-    max_tokens: preset?.maxTokens || 1200,
-    temperature: preset?.temperature !== undefined ? preset.temperature : 0.5,
+    max_tokens: preset?.maxTokens || 4096,
+    temperature: preset?.temperature !== undefined ? preset.temperature : 0.4,
   };
 
   if (tools && tools.length > 0) {
@@ -138,21 +141,26 @@ export async function streamChatCompletion({ messages, tools, model, onEvent }) 
     kwargs.tool_choice = "auto";
   }
 
-  logger.debug("LLM request", { model: modelId, provider, messageCount: messages.length, hasImages });
+  logger.info("LLM request initiated", { model: modelId, provider, messageCount: messages.length });
 
   try {
     let response;
     try {
-      response = await client.chat.completions.create(kwargs);
+      response = await client.chat.completions.create(kwargs, { signal });
     } catch (createErr) {
-      if (createErr.status === 404 || createErr.status === 400 || createErr.message?.includes("No endpoints") || createErr.message?.includes("retired") || createErr.message?.includes("unavailable")) {
-        logger.warn(`Model ${modelId} failed with ${createErr.status} — falling back to 'openrouter/free'`);
+      if (signal?.aborted) return;
+      logger.warn(`Primary LLM (${modelId} via ${provider}) failed: ${createErr.message}. Attempting fallback...`);
+
+      // Fallback 1: If Codestral/Mistral Large fails, fallback to mistral-small-latest
+      if (provider === "mistral" && modelId !== "mistral-small-latest") {
+        kwargs.model = "mistral-small-latest";
+        response = await client.chat.completions.create(kwargs, { signal });
+      } else if (config.openrouterKey) {
+        // Fallback 2: Try OpenRouter
+        provider = "openrouter";
+        client = getClient("openrouter");
         kwargs.model = "openrouter/free";
-        response = await client.chat.completions.create(kwargs);
-      } else if (createErr.status === 402 || createErr.message?.includes("credits")) {
-        logger.warn("OpenRouter credit headroom tight — retrying with max_tokens: 300");
-        kwargs.max_tokens = 300;
-        response = await client.chat.completions.create(kwargs);
+        response = await client.chat.completions.create(kwargs, { signal });
       } else {
         throw createErr;
       }
@@ -162,6 +170,8 @@ export async function streamChatCompletion({ messages, tools, model, onEvent }) 
     const toolCallsAcc = {};
 
     for await (const chunk of response) {
+      if (signal?.aborted) break;
+
       if (chunk.usage) {
         onEvent({
           type: "usage",
@@ -178,46 +188,80 @@ export async function streamChatCompletion({ messages, tools, model, onEvent }) 
       const choice = chunk.choices[0];
       const delta = choice.delta;
 
-      // Text content
-      if (delta && delta.content) {
+      // Stream text content
+      if (delta.content) {
         fullContent += delta.content;
-        onEvent({ type: "text_delta", data: { content: delta.content } });
+        onEvent({
+          type: "text_delta",
+          data: { content: delta.content },
+        });
       }
 
-      // Tool calls (accumulate across chunks)
-      if (delta && delta.tool_calls) {
+      // Stream tool calls
+      if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
-          const idx = tc.index ?? 0;
+          const idx = tc.index;
           if (!toolCallsAcc[idx]) {
-            toolCallsAcc[idx] = { id: tc.id || `call_${Date.now()}_${idx}`, name: "", arguments: "" };
+            toolCallsAcc[idx] = {
+              id: tc.id || `call_${idx}_${Date.now()}`,
+              name: tc.function?.name || "",
+              arguments: "",
+            };
           }
           if (tc.id) toolCallsAcc[idx].id = tc.id;
-          if (tc.function?.name) toolCallsAcc[idx].name = tc.function.name;
+          if (tc.function?.name) toolCallsAcc[idx].name += tc.function.name;
           if (tc.function?.arguments) toolCallsAcc[idx].arguments += tc.function.arguments;
         }
       }
     }
 
-    // Emit accumulated tool calls or final text once after stream ends
-    const pendingToolCalls = Object.values(toolCallsAcc).filter((t) => t.name);
-    if (pendingToolCalls.length > 0) {
-      onEvent({ type: "tool_calls", data: { toolCalls: pendingToolCalls } });
-    } else if (fullContent) {
-      onEvent({ type: "text_complete", data: { content: fullContent } });
+    // Assemble tool calls
+    const completedToolCalls = Object.values(toolCallsAcc).map((tc) => {
+      let parsedArgs = {};
+      try {
+        parsedArgs = JSON.parse(tc.arguments);
+      } catch {
+        parsedArgs = { raw: tc.arguments };
+      }
+      return {
+        id: tc.id,
+        name: tc.name,
+        arguments: parsedArgs,
+      };
+    });
+
+    if (completedToolCalls.length > 0) {
+      onEvent({
+        type: "tool_calls",
+        data: { toolCalls: completedToolCalls },
+      });
+    } else {
+      onEvent({
+        type: "text_complete",
+        data: { content: fullContent },
+      });
     }
   } catch (err) {
-    logger.error("LLM error", { error: err.message, model: modelId });
-    onEvent({ type: "error", data: { message: err.message } });
+    if (signal?.aborted) return;
+    logger.error("LLM streaming error", { error: err.message, status: err.status });
+    onEvent({
+      type: "error",
+      data: { message: `AI Engine Error: ${err.message}`, status: err.status },
+    });
   }
 }
 
 /**
- * List all available models.
- * @returns {Array}
+ * Get the list of all available models with metadata.
  */
 export function getAvailableModels() {
   return Object.entries(MODEL_PRESETS).map(([key, preset]) => ({
     key,
-    ...preset,
+    id: preset.id,
+    name: preset.name,
+    tier: preset.tier,
+    provider: preset.provider,
+    multimodal: preset.multimodal,
+    free: true,
   }));
 }
