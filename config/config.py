@@ -65,6 +65,15 @@ class Config:
     session_id: Optional[str] = None
     checkpoint_enabled: bool = True
     
+    # Remote Sandbox (Oracle Cloud Infrastructure / SSH / Docker)
+    remote_enabled: bool = False
+    remote_host: str = ""
+    remote_user: str = "ubuntu"
+    remote_key_path: str = ""
+    remote_port: int = 22
+    remote_workspace: str = "/home/ubuntu/agent-workspace"
+    remote_docker_container: str = ""
+    
     def __post_init__(self):
         """Initialize after dataclass creation."""
         if isinstance(self.cwd, str):
@@ -75,6 +84,10 @@ class Config:
     @classmethod
     def from_env(cls) -> Config:
         """Create config from environment variables."""
+        # Support both OCI_* and REMOTE_* env vars
+        remote_enabled_env = os.getenv("OCI_REMOTE_ENABLED") or os.getenv("REMOTE_SANDBOX_ENABLED") or "false"
+        remote_enabled = remote_enabled_env.lower() in ("true", "1", "yes", "on")
+        
         return cls(
             cwd=Path(os.getenv("AGENTIC_CWD", os.getcwd())),
             model_name=os.getenv("AGENTIC_MODEL", "mistralai/devstral-2512:free"),
@@ -84,6 +97,13 @@ class Config:
             max_tokens=int(os.getenv("AGENTIC_MAX_TOKENS", "4096")),
             temperature=float(os.getenv("AGENTIC_TEMPERATURE", "0.7")),
             max_iterations=int(os.getenv("AGENTIC_MAX_ITERATIONS", "25")),
+            remote_enabled=remote_enabled,
+            remote_host=os.getenv("OCI_HOST") or os.getenv("REMOTE_HOST", ""),
+            remote_user=os.getenv("OCI_USER") or os.getenv("REMOTE_USER", "ubuntu"),
+            remote_key_path=os.getenv("OCI_SSH_KEY_PATH") or os.getenv("REMOTE_KEY_PATH", ""),
+            remote_port=int(os.getenv("OCI_PORT") or os.getenv("REMOTE_PORT", "22")),
+            remote_workspace=os.getenv("OCI_WORKSPACE") or os.getenv("REMOTE_WORKSPACE", "/home/ubuntu/agent-workspace"),
+            remote_docker_container=os.getenv("OCI_DOCKER_CONTAINER") or os.getenv("REMOTE_DOCKER_CONTAINER", ""),
         )
     
     def to_dict(self) -> dict[str, Any]:
@@ -102,6 +122,13 @@ class Config:
             "load_agents_md": self.load_agents_md,
             "session_id": self.session_id,
             "checkpoint_enabled": self.checkpoint_enabled,
+            "remote_enabled": self.remote_enabled,
+            "remote_host": self.remote_host,
+            "remote_user": self.remote_user,
+            "remote_key_path": self.remote_key_path,
+            "remote_port": self.remote_port,
+            "remote_workspace": self.remote_workspace,
+            "remote_docker_container": self.remote_docker_container,
         }
     
     def requires_approval(self, tool_kind: str) -> bool:

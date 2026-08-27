@@ -97,7 +97,44 @@ class ProcessSupervisor {
     let shellExecutable = "powershell.exe";
     let shellArgs = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command];
 
-    if (isWindows) {
+    // Check if remote Oracle Cloud (OCI) sandbox execution is enabled
+    if (config.remoteSandbox?.enabled && config.remoteSandbox?.host) {
+      const rs = config.remoteSandbox;
+      const remoteBase = (rs.workspace || "/home/ubuntu/agent-workspace").replace(/\/$/, "");
+      let remoteCwd = remoteBase;
+
+      if (cwd && cwd !== config.workspaceRoot) {
+        const rel = path.relative(config.workspaceRoot, cwd).replace(/\\/g, "/");
+        if (rel && !rel.startsWith("..")) {
+          remoteCwd = `${remoteBase}/${rel}`;
+        }
+      }
+
+      let remotePayload;
+      if (rs.dockerContainer) {
+        const escaped = command.replace(/"/g, '\\"').replace(/\$/g, '\\$');
+        remotePayload = `docker exec -i ${rs.dockerContainer} bash -c "mkdir -p '${remoteCwd}' && cd '${remoteCwd}' && ${escaped}"`;
+      } else {
+        remotePayload = `mkdir -p '${remoteCwd}' && cd '${remoteCwd}' && ${command}`;
+      }
+
+      shellExecutable = isWindows ? "ssh.exe" : "ssh";
+      shellArgs = [
+        "-p", String(rs.port || 22),
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "LogLevel=ERROR",
+        "-o", "ConnectTimeout=10",
+        "-o", "BatchMode=yes",
+      ];
+
+      if (rs.keyPath) {
+        shellArgs.push("-i", rs.keyPath);
+      }
+
+      shellArgs.push(`${rs.user || "ubuntu"}://${rs.host}`.replace("://", "@"), remotePayload);
+      logger.info(`ProcessSupervisor: Routing [${operationId}] to Oracle Cloud Sandbox (${rs.host}): ${command}`);
+    } else if (isWindows) {
       if (shell === "wsl") {
         const winPath = cwd.replace(/\\/g, "/");
         const driveMatch = winPath.match(/^([A-Za-z]):\/(.*)/);

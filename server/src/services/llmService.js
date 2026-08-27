@@ -17,40 +17,40 @@ import { logger } from "../config/logger.js";
 /** Available core models and Vision models */
 export const MODEL_PRESETS = {
   "devstral-low": {
-    id: "codestral-latest",
+    id: "mistralai/devstral-2512:free",
     name: "Codestral 2501 (Fast Mode)",
     tier: "low",
-    provider: "mistral",
+    provider: "openrouter",
     temperature: 0.2,
     maxTokens: 4096,
     supportsTools: true,
     multimodal: false,
   },
   devstral: {
-    id: "codestral-latest",
+    id: "mistralai/devstral-2512:free",
     name: "Devstral / Codestral (Code Generation)",
     tier: "medium",
-    provider: "mistral",
+    provider: "openrouter",
     temperature: 0.5,
     maxTokens: 8192,
     supportsTools: true,
     multimodal: false,
   },
   "devstral-high": {
-    id: "mistral-large-latest",
-    name: "Mistral Large (Deep Reasoning & Architecture)",
+    id: "mistralai/devstral-2512:free",
+    name: "Devstral High (Deep Reasoning & Architecture)",
     tier: "high",
-    provider: "mistral",
+    provider: "openrouter",
     temperature: 0.7,
     maxTokens: 8192,
     supportsTools: true,
     multimodal: true,
   },
   vision: {
-    id: "pixtral-12b-2409",
-    name: "Pixtral Vision (Multimodal Image Analysis)",
+    id: "google/gemini-2.0-flash-exp:free",
+    name: "Gemini 2.0 Flash (Multimodal Vision)",
     tier: "medium",
-    provider: "mistral",
+    provider: "openrouter",
     temperature: 0.3,
     maxTokens: 4096,
     supportsTools: true,
@@ -63,13 +63,16 @@ export const MODEL_PRESETS = {
  * @param {string} provider - 'mistral', 'openrouter', 'openai', or 'ollama'
  * @returns {OpenAI}
  */
-function getClient(provider = "mistral") {
+function getClient(provider = "openrouter") {
+  // If provider is mistral but we have an OpenRouter key, use OpenRouter!
+  if (provider === "mistral" && config.mistralKey && !config.mistralKey.startsWith("sk-or-")) {
+    return new OpenAI({
+      apiKey: config.mistralKey,
+      baseURL: "https://api.mistral.ai/v1",
+    });
+  }
+
   switch (provider) {
-    case "mistral":
-      return new OpenAI({
-        apiKey: config.mistralKey || config.openrouterKey,
-        baseURL: "https://api.mistral.ai/v1",
-      });
     case "openai":
       return new OpenAI({
         apiKey: config.openaiKey,
@@ -83,8 +86,8 @@ function getClient(provider = "mistral") {
     case "openrouter":
     default:
       return new OpenAI({
-        apiKey: config.openrouterKey,
-        baseURL: config.openrouterBaseUrl,
+        apiKey: config.openrouterKey || config.mistralKey,
+        baseURL: config.openrouterBaseUrl || "https://openrouter.ai/api/v1",
         defaultHeaders: {
           "HTTP-Referer": "https://github.com/atharv20s/vscode_cli",
           "X-Title": "Agentic CLI",
@@ -110,11 +113,11 @@ export async function streamChatCompletion({ messages, tools, model, onEvent }) 
   // Auto-switch to vision model if any message contains image data and current model lacks vision
   const hasImages = messages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url"));
   if (hasImages && preset && !preset.multimodal) {
-    logger.info("Multimodal images detected in request — switching to Vision-capable model (pixtral-12b-2409)");
+    logger.info("Multimodal images detected in request — switching to Vision-capable model");
     preset = MODEL_PRESETS["vision"];
   }
 
-  const modelId = preset ? preset.id : model || config.openrouterModel;
+  const modelId = preset ? preset.id : model || config.openrouterModel || "mistralai/devstral-2512:free";
   const provider = preset ? preset.provider : "openrouter";
 
   const client = getClient(provider);

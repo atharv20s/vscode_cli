@@ -41,6 +41,17 @@ export const config = {
 
   // Workspace (where user files are sandboxed)
   workspaceRoot: process.env.WORKSPACE_ROOT || path.resolve(__dirname, "../../workspace"),
+
+  // Remote Sandbox (Oracle Cloud Infrastructure / SSH / Docker)
+  remoteSandbox: {
+    enabled: (process.env.OCI_REMOTE_ENABLED || process.env.REMOTE_SANDBOX_ENABLED || "false").toLowerCase() === "true",
+    host: process.env.OCI_HOST || process.env.REMOTE_HOST || "",
+    user: process.env.OCI_USER || process.env.REMOTE_USER || "ubuntu",
+    keyPath: process.env.OCI_SSH_KEY_PATH || process.env.REMOTE_KEY_PATH || "",
+    port: parseInt(process.env.OCI_PORT || process.env.REMOTE_PORT || "22", 10),
+    workspace: process.env.OCI_WORKSPACE || process.env.REMOTE_WORKSPACE || "/home/ubuntu/agent-workspace",
+    dockerContainer: process.env.OCI_DOCKER_CONTAINER || process.env.REMOTE_DOCKER_CONTAINER || "",
+  },
 };
 
 /**
