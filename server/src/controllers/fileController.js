@@ -6,16 +6,17 @@ import fs from "fs/promises";
 import path from "path";
 import { config } from "../config/env.js";
 import { eventBus } from "../websocket/eventBus.js";
+import { workspaceService } from "../services/workspaceService.js";
 
 /**
- * Resolve path safely within workspace.
+ * Resolve path safely within workspace using workspaceService.
  */
 function safePath(filePath) {
-  const resolved = path.resolve(config.workspaceRoot, filePath);
-  if (!resolved.startsWith(path.resolve(config.workspaceRoot))) {
+  const result = workspaceService.resolvePath(filePath);
+  if (!result.safe) {
     return null;
   }
-  return resolved;
+  return result.resolved;
 }
 
 /**
@@ -23,38 +24,13 @@ function safePath(filePath) {
  */
 export async function listFiles(req, res) {
   const dirPath = req.query.path || ".";
-  const resolved = safePath(dirPath);
-  if (!resolved) {
-    return res.status(403).json({ error: "Forbidden", message: "Path outside workspace" });
-  }
-
   try {
-    await fs.mkdir(resolved, { recursive: true });
-    const entries = await fs.readdir(resolved, { withFileTypes: true });
-    const items = await Promise.all(
-      entries
-        .filter((e) => !e.name.startsWith("."))
-        .map(async (entry) => {
-          const entryPath = path.join(resolved, entry.name);
-          const isDir = entry.isDirectory();
-          let size = 0;
-          if (!isDir) {
-            try {
-              const stat = await fs.stat(entryPath);
-              size = stat.size;
-            } catch {}
-          }
-          return {
-            name: entry.name,
-            isDirectory: isDir,
-            size,
-            path: path.relative(config.workspaceRoot, entryPath).replace(/\\/g, "/"),
-          };
-        })
-    );
-
-    res.json({ path: dirPath, entries: items });
+    const data = await workspaceService.listDirectory(dirPath);
+    res.json(data);
   } catch (err) {
+    if (err.message?.includes("Access denied")) {
+      return res.status(403).json({ error: "Forbidden", message: err.message });
+    }
     if (err.code === "ENOENT") {
       return res.status(404).json({ error: "NotFound", message: `Directory not found: ${dirPath}` });
     }
@@ -71,15 +47,13 @@ export async function readFile(req, res) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'path' query parameter" });
   }
 
-  const resolved = safePath(filePath);
-  if (!resolved) {
-    return res.status(403).json({ error: "Forbidden", message: "Path outside workspace" });
-  }
-
   try {
-    const content = await fs.readFile(resolved, "utf8");
-    res.json({ path: filePath, content, size: Buffer.byteLength(content) });
+    const result = await workspaceService.readFile(filePath);
+    res.json({ path: result.path, content: result.content, size: Buffer.byteLength(result.content) });
   } catch (err) {
+    if (err.message?.includes("Access denied")) {
+      return res.status(403).json({ error: "Forbidden", message: err.message });
+    }
     if (err.code === "ENOENT") {
       return res.status(404).json({ error: "NotFound", message: `File not found: ${filePath}` });
     }
@@ -96,27 +70,13 @@ export async function writeFile(req, res) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'path' or 'content'" });
   }
 
-  const resolved = safePath(filePath);
-  if (!resolved) {
-    return res.status(403).json({ error: "Forbidden", message: "Path outside workspace" });
-  }
-
   try {
-    await fs.mkdir(path.dirname(resolved), { recursive: true });
-    await fs.writeFile(resolved, content, "utf8");
-
-    // Emit lightweight metadata-only event
-    eventBus.publish("file.changed", {
-      path: filePath,
-      operation: "modify",
-      version: Date.now(),
-    }, {
-      source: "fs",
-      actor: "user",
-    });
-
-    res.json({ success: true, path: filePath, size: Buffer.byteLength(content) });
+    const result = await workspaceService.writeFile(filePath, content);
+    res.json({ success: true, path: result.path, size: Buffer.byteLength(content) });
   } catch (err) {
+    if (err.message?.includes("Access denied")) {
+      return res.status(403).json({ error: "Forbidden", message: err.message });
+    }
     res.status(500).json({ error: "InternalError", message: err.message });
   }
 }
@@ -130,25 +90,13 @@ export async function deleteFile(req, res) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'path' query parameter" });
   }
 
-  const resolved = safePath(filePath);
-  if (!resolved) {
-    return res.status(403).json({ error: "Forbidden", message: "Path outside workspace" });
-  }
-
   try {
-    await fs.rm(resolved, { recursive: true, force: true });
-
-    eventBus.publish("file.changed", {
-      path: filePath,
-      operation: "delete",
-      version: Date.now(),
-    }, {
-      source: "fs",
-      actor: "user",
-    });
-
-    res.json({ success: true, path: filePath });
+    const result = await workspaceService.deleteFile(filePath);
+    res.json({ success: true, path: result.path });
   } catch (err) {
+    if (err.message?.includes("Access denied")) {
+      return res.status(403).json({ error: "Forbidden", message: err.message });
+    }
     if (err.code === "ENOENT") {
       return res.status(404).json({ error: "NotFound", message: `File not found: ${filePath}` });
     }
@@ -238,7 +186,7 @@ export async function execCommand(req, res) {
     const result = await executionService.execute({
       command,
       shell,
-      cwd: config.workspaceRoot,
+      cwd: workspaceService.workspaceRoot,
       mode: "AGENT_BACKGROUND",
     });
 

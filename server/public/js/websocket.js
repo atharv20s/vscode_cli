@@ -10,7 +10,10 @@
 
 class WebSocketClient {
   constructor(url) {
-    this.url = url || `ws://${window.location.host}/ws`;
+    const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+    const protocol = isHttps ? "wss:" : "ws:";
+    const host = typeof window !== "undefined" ? window.location.host : "localhost:3001";
+    this.url = url || `${protocol}//${host}/ws`;
     this.ws = null;
     this.listeners = new Map();
     this.reconnectAttempts = 0;

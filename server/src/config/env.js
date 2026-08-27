@@ -42,7 +42,22 @@ export const config = {
   githubClientSecret: process.env.GITHUB_CLIENT_SECRET || "",
 
   // Workspace (where user files are sandboxed)
-  workspaceRoot: process.env.WORKSPACE_ROOT || path.resolve(__dirname, "../../workspace"),
+  workspaceRoot: (() => {
+    const raw = process.env.WORKSPACE_ROOT;
+    const defaultLocal = path.resolve(__dirname, "../../workspace");
+    if (!raw) return defaultLocal;
+    try {
+      const resolved = path.resolve(raw);
+      import("fs").then(fsMod => {
+        if (!fsMod.existsSync(resolved)) {
+          fsMod.mkdirSync(resolved, { recursive: true });
+        }
+      }).catch(() => {});
+      return resolved;
+    } catch {
+      return defaultLocal;
+    }
+  })(),
 
   // Remote Cloud Sandbox (Google Cloud / Oracle Cloud / AWS / any Linux host via SSH)
   remoteSandbox: {
