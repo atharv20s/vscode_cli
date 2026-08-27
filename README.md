@@ -11,38 +11,41 @@ The system architecture flow is described below:
 ```mermaid
 graph TD
     subgraph Client ["Browser IDE Client"]
-        UI["Explorer, Terminal, and Chat UI"]
+        UI["Explorer, Terminal (xterm.js), and Chat UI"]
         WSClient["WebSocket Client (app.js)"]
     end
 
     subgraph Server ["Node.js Backend Server"]
         Express["Express Server (server.js)"]
-        WSServer["WebSocket Server (wsServer.js)"]
-        TermMgr["Terminal Manager (terminalManager.js)"]
+        WSServer["WebSocket Gateway (wsServer.js)"]
+        EventBus["Central Event Bus (eventBus.js)"]
+        TermSession["Terminal Session Manager (terminalSessionManager.js)"]
+        TermContext["Terminal Context Service (terminalContextService.js)"]
+        ExecSvc["Execution Service (executionService.js)"]
         AgentSvc["Agent Service (agentService.js)"]
         FileCtrl["File Controller (fileController.js)"]
     end
 
-    subgraph System ["Local System & Environment"]
-        PtyProcess["Persistent Shell Process"]
-        PythonAgent["Python Agentic CLI (main.py)"]
-        LLM["LLM APIs (Mistral / OpenRouter)"]
+    subgraph Execution ["Execution Environments"]
+        UserPTY["Interactive PTY (USER_INTERACTIVE)"]
+        AgentProc["Background Process Runner (AGENT_BACKGROUND)"]
         Filesystem["Workspace Filesystem"]
+        LLM["LLM APIs (Mistral / OpenRouter)"]
     end
 
     UI -->|"HTTP Requests"| Express
-    UI -->|"Interactions"| WSClient
-    WSClient -->|"WebSockets (Ctrl+C, Stdout, Stdin)"| WSServer
-    WSServer -->|"WebSockets (Terminal Output)"| WSClient
+    UI -->|"User Keystrokes & Commands"| WSClient
+    WSClient <-->|"WebSocket Traffic"| WSServer
+    WSServer -->|"Route Events"| EventBus
+    EventBus <-->|"Session State"| TermSession
+    EventBus -->|"Structured Buffer"| TermContext
+    TermContext -->|"Context Ingestion"| AgentSvc
+    TermSession -->|"PTY Supervision"| UserPTY
+    AgentSvc -->|"Execute Tools"| ExecSvc
+    ExecSvc -->|"Dedicated Background Tasks"| AgentProc
     Express -->|"File Operations"| FileCtrl
     FileCtrl -->|"Read/Write Files"| Filesystem
-    WSServer -->|"Manage Terminal Pty"| TermMgr
-    TermMgr -->|"Terminal Process Control"| PtyProcess
-    PtyProcess -->|"Stdout/Stderr Streams"| TermMgr
-    TermMgr -->|"Pty Output Data"| WSServer
-    AgentSvc -->|"runAgent Loop"| PythonAgent
-    PythonAgent -->|"Tool Calls"| Filesystem
-    PythonAgent -->|"LLM Completions"| LLM
+    AgentSvc -->|"Completions"| LLM
 ```
 
 ### Directory Structure
