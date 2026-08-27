@@ -17,8 +17,8 @@ import { logger } from "../config/logger.js";
 /** Available core models and Vision models */
 export const MODEL_PRESETS = {
   "devstral-low": {
-    id: "mistralai/devstral-2512:free",
-    name: "Codestral 2501 (Fast Mode)",
+    id: "openrouter/free",
+    name: "Fast Free AI (Auto-Routed)",
     tier: "low",
     provider: "openrouter",
     temperature: 0.2,
@@ -27,8 +27,8 @@ export const MODEL_PRESETS = {
     multimodal: false,
   },
   devstral: {
-    id: "mistralai/devstral-2512:free",
-    name: "Devstral / Codestral (Code Generation)",
+    id: "openrouter/free",
+    name: "OpenRouter Free (Coding & Chat)",
     tier: "medium",
     provider: "openrouter",
     temperature: 0.5,
@@ -37,8 +37,8 @@ export const MODEL_PRESETS = {
     multimodal: false,
   },
   "devstral-high": {
-    id: "mistralai/devstral-2512:free",
-    name: "Devstral High (Deep Reasoning & Architecture)",
+    id: "openrouter/free",
+    name: "OpenRouter Free High (Reasoning)",
     tier: "high",
     provider: "openrouter",
     temperature: 0.7,
@@ -47,8 +47,8 @@ export const MODEL_PRESETS = {
     multimodal: true,
   },
   vision: {
-    id: "google/gemini-2.0-flash-exp:free",
-    name: "Gemini 2.0 Flash (Multimodal Vision)",
+    id: "openrouter/free",
+    name: "OpenRouter Vision (Multimodal)",
     tier: "medium",
     provider: "openrouter",
     temperature: 0.3,
@@ -117,9 +117,12 @@ export async function streamChatCompletion({ messages, tools, model, onEvent }) 
     preset = MODEL_PRESETS["vision"];
   }
 
-  const modelId = preset ? preset.id : model || config.openrouterModel || "mistralai/devstral-2512:free";
-  const provider = preset ? preset.provider : "openrouter";
+  let modelId = preset ? preset.id : model || config.openrouterModel || "openrouter/free";
+  if (modelId.includes("devstral-2512") || modelId.includes("codestral")) {
+    modelId = "openrouter/free";
+  }
 
+  const provider = preset ? preset.provider : "openrouter";
   const client = getClient(provider);
 
   const kwargs = {
@@ -142,7 +145,11 @@ export async function streamChatCompletion({ messages, tools, model, onEvent }) 
     try {
       response = await client.chat.completions.create(kwargs);
     } catch (createErr) {
-      if (createErr.status === 402 || createErr.message?.includes("credits")) {
+      if (createErr.status === 404 || createErr.status === 400 || createErr.message?.includes("No endpoints") || createErr.message?.includes("retired") || createErr.message?.includes("unavailable")) {
+        logger.warn(`Model ${modelId} failed with ${createErr.status} — falling back to 'openrouter/free'`);
+        kwargs.model = "openrouter/free";
+        response = await client.chat.completions.create(kwargs);
+      } else if (createErr.status === 402 || createErr.message?.includes("credits")) {
         logger.warn("OpenRouter credit headroom tight — retrying with max_tokens: 300");
         kwargs.max_tokens = 300;
         response = await client.chat.completions.create(kwargs);
