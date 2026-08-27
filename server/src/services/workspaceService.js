@@ -216,7 +216,16 @@ class WorkspaceService {
   _initWatcher() {
     try {
       if (!fs.existsSync(this.workspaceRoot)) {
-        fs.mkdirSync(this.workspaceRoot, { recursive: true });
+        try {
+          fs.mkdirSync(this.workspaceRoot, { recursive: true });
+        } catch (e) {
+          const fallback = path.resolve(process.cwd(), "workspace");
+          logger.warn(`WorkspaceService: Could not access '${this.workspaceRoot}' (${e.message}). Falling back to '${fallback}'`);
+          this.workspaceRoot = fallback;
+          if (!fs.existsSync(this.workspaceRoot)) {
+            fs.mkdirSync(this.workspaceRoot, { recursive: true });
+          }
+        }
       }
 
       let debounceTimer = null;
