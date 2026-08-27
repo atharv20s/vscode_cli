@@ -216,11 +216,18 @@ export function deleteConversation(id) {
   return getDatabase().prepare("DELETE FROM conversations WHERE id = ?").run(id);
 }
 
-export function listConversations(sessionId) {
-  if (sessionId) {
+export function listConversations(userIdOrSessionId) {
+  if (userIdOrSessionId) {
     return getDatabase()
-      .prepare("SELECT id, title, model, total_tokens, messages, created_at, updated_at FROM conversations WHERE session_id = ? ORDER BY updated_at DESC")
-      .all(sessionId);
+      .prepare(`
+        SELECT c.id, c.title, c.model, c.total_tokens, c.messages, c.created_at, c.updated_at
+        FROM conversations c
+        LEFT JOIN sessions s ON c.session_id = s.id
+        WHERE c.session_id = ? OR s.user_id = ? OR s.id = ?
+        ORDER BY c.updated_at DESC
+        LIMIT 100
+      `)
+      .all(userIdOrSessionId, userIdOrSessionId, userIdOrSessionId);
   }
   return getDatabase()
     .prepare("SELECT id, title, model, total_tokens, messages, created_at, updated_at FROM conversations ORDER BY updated_at DESC LIMIT 50")

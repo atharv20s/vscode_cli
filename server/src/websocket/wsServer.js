@@ -139,6 +139,9 @@ export function initWebSocketServer(httpServer) {
 
     if (token) {
       user = verifyToken(token);
+      if (user?.sessionId) {
+        ws.sessionId = user.sessionId;
+      }
     }
 
     if (!user && !config.isDev) {

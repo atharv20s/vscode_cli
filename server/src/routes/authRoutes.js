@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth.js";
 import {
   register,
   login,
+  guestAuth,
   connectGithubToken,
   tokenLogin,
   getMe,
@@ -14,6 +15,7 @@ const router = Router();
 
 router.post("/register", authLimiter, register);
 router.post("/login", authLimiter, login);
+router.post("/guest", authLimiter, guestAuth);
 router.post("/connect-github", authLimiter, requireAuth, connectGithubToken);
 router.post("/token-login", authLimiter, tokenLogin);
 router.get("/me", requireAuth, getMe);

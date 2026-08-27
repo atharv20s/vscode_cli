@@ -9,9 +9,77 @@ import {
   findUserByUsername,
   findUserByEmail,
   createUser,
+  createSession,
   updateUserToken,
   updateUserProfile,
 } from "../db/database.js";
+
+/**
+ * POST /api/auth/guest — Auto-provision or resume persistent guest user identity with JWT.
+ */
+export async function guestAuth(req, res) {
+  try {
+    let { guestId } = req.body || {};
+    if (!guestId || typeof guestId !== "string") {
+      guestId = `gst_${uuidv4().replace(/-/g, "").slice(0, 12)}`;
+    } else {
+      guestId = guestId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32);
+    }
+
+    const userId = `usr_${guestId}`;
+    const sessionId = `sess_${guestId}`;
+    const username = `guest_${guestId.slice(-4)}`;
+    const email = `${guestId}@local.studio`;
+
+    let user = findUserById(userId);
+    if (!user) {
+      createUser({
+        id: userId,
+        username,
+        email,
+        avatarUrl: `https://api.dicebear.com/7.x/identicon/svg?seed=${guestId}`,
+      });
+      user = findUserById(userId);
+    }
+
+    // Ensure session exists in SQLite
+    try {
+      createSession({
+        id: sessionId,
+        userId: user.id,
+        workspacePath: config.workspaceRoot,
+      });
+    } catch {}
+
+    const jwtToken = generateToken(
+      {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        avatarUrl: user.avatar_url,
+        sessionId,
+        isGuest: true,
+      },
+      "30d"
+    );
+
+    res.json({
+      success: true,
+      token: jwtToken,
+      guestId,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        avatarUrl: user.avatar_url,
+        isGuest: true,
+      },
+    });
+  } catch (err) {
+    logger.error("Guest auth error", { error: err.message });
+    res.status(500).json({ error: "AuthError", message: err.message });
+  }
+}
 
 /**
  * Hash password securely using scrypt with salt.
@@ -345,6 +413,7 @@ export function getMe(req, res) {
       id: req.user.id,
       username: req.user.username,
       avatarUrl: req.user.avatarUrl,
+      isGuest: Boolean(req.user.isGuest),
       hasGithub: Boolean(req.user.githubAccessToken),
     },
   });

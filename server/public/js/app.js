@@ -19,6 +19,7 @@ class App {
 
   async init() {
     this.handleUrlAuth();
+    await this.ensureUserToken();
     this.setupEventListeners();
     this.initResizers();
     this.initWebSocket();
@@ -27,6 +28,35 @@ class App {
     await this.loadWorkspaceFiles();
     await this.loadMcpServers();
     this.checkAuthStatus();
+  }
+
+  /**
+   * Auto-provisions or restores a persistent guest JWT token if not authenticated.
+   */
+  async ensureUserToken() {
+    let guestId = localStorage.getItem("ath_guest_id");
+    if (!guestId) {
+      guestId = "gst_" + Math.random().toString(36).slice(2, 12);
+      localStorage.setItem("ath_guest_id", guestId);
+    }
+
+    if (!this.token) {
+      try {
+        const res = await fetch("/api/auth/guest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ guestId }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          this.token = data.token;
+          localStorage.setItem("token", data.token);
+          this.guestUser = data.user;
+        }
+      } catch (e) {
+        console.warn("Guest identity auto-provisioning note:", e);
+      }
+    }
   }
 
   /**
@@ -1162,7 +1192,11 @@ class App {
       if (response.ok) {
         const data = await response.json();
         this.currentUser = data.user;
-        this.updateUserUI(data.user);
+        if (data.user?.isGuest) {
+          this.updateUserUI(null); // Keep Sign In / Sign Up chips active
+        } else {
+          this.updateUserUI(data.user);
+        }
         if (data.user?.hasGithub || localStorage.getItem("github_user_token")) {
           await this.loadGitHubRepos();
         }

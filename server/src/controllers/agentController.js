@@ -76,7 +76,8 @@ import { v4 as uuidv4 } from "uuid";
  */
 export function getConversations(req, res) {
   try {
-    const list = listConversations(req.user?.sessionId || null);
+    const userOrSession = req.user?.id || req.user?.sessionId || null;
+    const list = listConversations(userOrSession);
     res.json({ success: true, conversations: list });
   } catch (err) {
     res.status(500).json({ error: "DbError", message: err.message });
@@ -90,11 +91,12 @@ export function createNewConversation(req, res) {
   const { title, model } = req.body || {};
   const convId = `conv_${uuidv4().replace(/-/g, "").slice(0, 16)}`;
   const convTitle = title || "New Conversation";
+  const sid = req.user?.sessionId || "default_session";
 
   try {
     createConversation({
       id: convId,
-      sessionId: req.user?.sessionId || "default_session",
+      sessionId: sid,
       title: convTitle,
       model: model || config.openrouterModel,
     });
