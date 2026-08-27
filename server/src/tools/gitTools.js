@@ -220,4 +220,100 @@ export function registerGitTools() {
       }
     }
   );
+
+  // 7. github_list_repos
+  registerTool(
+    {
+      type: "function",
+      function: {
+        name: "github_list_repos",
+        description: "List repositories for the authenticated user or organization.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+    },
+    async (_args, ctx = {}) => {
+      const token = ctx.user?.githubAccessToken || process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+      if (!token) {
+        return {
+          success: false,
+          error: "GitHub token not found. Set GITHUB_PERSONAL_ACCESS_TOKEN in .env",
+        };
+      }
+      try {
+        const { listUserRepos } = await import("../services/githubService.js");
+        const repos = await listUserRepos(token);
+        const formatted = repos.slice(0, 15).map(r => `- ${r.fullName} (${r.language || "Unknown"}) - ${r.isPrivate ? "Private" : "Public"}\n  ${r.htmlUrl}`).join("\n");
+        return { success: true, count: repos.length, output: formatted, repos };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    }
+  );
+
+  // 8. github_create_pr
+  registerTool(
+    {
+      type: "function",
+      function: {
+        name: "github_create_pr",
+        description: "Create a GitHub Pull Request.",
+        parameters: {
+          type: "object",
+          properties: {
+            owner: { type: "string", description: "Repository owner" },
+            repo: { type: "string", description: "Repository name" },
+            title: { type: "string", description: "Pull request title" },
+            body: { type: "string", description: "Pull request description / body" },
+            head: { type: "string", description: "Branch containing changes (e.g. feature-branch)" },
+            base: { type: "string", description: "Target branch to merge into (default: main)" },
+          },
+          required: ["owner", "repo", "title", "head"],
+        },
+      },
+    },
+    async (args, ctx = {}) => {
+      const token = ctx.user?.githubAccessToken || process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+      if (!token) {
+        return {
+          success: false,
+          error: "GitHub token not found. Set GITHUB_PERSONAL_ACCESS_TOKEN in .env",
+        };
+      }
+
+      const perm = await permissionEngine.checkPermission({
+        resource: "github",
+        action: "create_pr",
+        payload: args,
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason };
+
+      try {
+        const { getOctokit } = await import("../services/githubService.js");
+        const octokit = getOctokit(token);
+        const { data } = await octokit.pulls.create({
+          owner: args.owner,
+          repo: args.repo,
+          title: args.title,
+          body: args.body || "",
+          head: args.head,
+          base: args.base || "main",
+        });
+        return {
+          success: true,
+          output: `Pull Request created successfully: #${data.number} - ${data.title}\nURL: ${data.html_url}`,
+          prNumber: data.number,
+          url: data.html_url,
+        };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    }
+  );
 }
+

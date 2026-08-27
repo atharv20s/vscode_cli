@@ -238,6 +238,21 @@ async function handleMessage(ws, msg, user) {
       sendMessage(ws, "terminal.shells", { shells: LocalBackend.detectAvailableShells() });
       break;
 
+    // Hybrid Workstation Bridge Handlers
+    case "bridge.register":
+      ws.isBridgeNode = true;
+      ws.bridgeInfo = payload;
+      logger.info(`WebSocket: Registered local workstation bridge node: ${payload?.name}`);
+      sendMessage(ws, "bridge.registered", { success: true, nodeId: payload?.nodeId });
+      break;
+
+    case "bridge.output":
+    case "bridge.completed":
+      if (payload?.operationId) {
+        eventBus.publish(`bridge.${payload.operationId}`, payload);
+      }
+      break;
+
     // Live Application Preview Controls
     case "preview.start":
     case "preview_start":
