@@ -16,6 +16,7 @@ import { streamChatCompletion } from "./llmService.js";
 import { getToolDefinitions, executeTool } from "../tools/index.js";
 import { logger } from "../config/logger.js";
 import { terminalContextService } from "./terminalContextService.js";
+import { worldStateService } from "./worldStateService.js";
 
 /** Default system prompt */
 const DEFAULT_SYSTEM_PROMPT = `You are ATH Agent — an expert autonomous AI pair programmer embedded inside the user's IDE.
@@ -163,19 +164,33 @@ export async function runAgent({
   let contextBlock = "";
   const parts = [];
 
-  // 1. Structured Terminal Context from central Context Service
-  const termCtx = terminalContextService.getStructuredContext(sessionId);
-  if (termCtx.cwd) {
-    parts.push(`- Current Working Directory: ${termCtx.cwd}`);
+  // 1. Unified World State from Central WorldStateService
+  const world = worldStateService.getWorldState(sessionId);
+  parts.push(`- Workspace: ${world.workspace.name} (${world.workspace.root})`);
+  if (world.terminal.shell) {
+    parts.push(`- Active Terminal: ${world.terminal.shell} [State: ${world.terminal.state}] in ${world.terminal.cwd}`);
   }
-  if (termCtx.last_command) {
-    parts.push(`- Last User Command Submitted in Terminal: "${termCtx.last_command}" (executed ${termCtx.last_command_timestamp})`);
-    if (termCtx.exit_code !== null) {
-      parts.push(`- Last Command Exit Code: ${termCtx.exit_code}`);
-    }
+  if (world.terminal.active_process) {
+    parts.push(`- Foreground Terminal Process: ${world.terminal.active_process}`);
   }
-  if (termCtx.recent_terminal_output_tail?.length > 0) {
-    parts.push(`- Recent Terminal Output Tail (Last ${termCtx.recent_terminal_output_tail.length} lines):\n\`\`\`\n${termCtx.recent_terminal_output_tail.join("\n")}\n\`\`\``);
+  if (world.terminal.detected_ports?.length > 0) {
+    parts.push(`- Detected Active Ports: ${world.terminal.detected_ports.join(", ")}`);
+  }
+  if (world.preview.status === "running") {
+    parts.push(`- Live Preview Server: RUNNING at ${world.preview.url} (Port: ${world.preview.port})`);
+  }
+  if (world.git.branch) {
+    parts.push(`- Git Branch: ${world.git.branch} (${world.git.dirty ? `${world.git.totalChanges} uncommitted changes` : "clean"})`);
+  }
+  if (world.terminal.last_command) {
+    parts.push(`- Last Command Submitted in Terminal: "${world.terminal.last_command}" (${world.terminal.last_command_time})`);
+    if (world.terminal.exit_code !== null) parts.push(`- Last Command Exit Code: ${world.terminal.exit_code}`);
+  }
+  if (world.terminal.recent_errors?.length > 0) {
+    parts.push(`- Recent Terminal Errors:\n\`\`\`\n${world.terminal.recent_errors.join("\n")}\n\`\`\``);
+  }
+  if (world.terminal.recent_output?.length > 0) {
+    parts.push(`- Recent Terminal Output Tail (Last ${world.terminal.recent_output.length} lines):\n\`\`\`\n${world.terminal.recent_output.join("\n")}\n\`\`\``);
   }
 
   // 2. Editor Context from Frontend Payload
@@ -219,6 +234,9 @@ export async function runAgent({
     "web_search",
     "git_status",
     "git_commit",
+    "start_preview",
+    "stop_preview",
+    "get_preview_status",
   ]);
 
   const allTools = getToolDefinitions();

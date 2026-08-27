@@ -261,11 +261,16 @@
           <!-- Live Web App Preview Browser Pane -->
           <div id="live-preview-view" class="live-preview-container" style="display:none;flex-direction:column;width:100%;height:100%;background:#0f172a;position:absolute;top:0;left:0;right:0;bottom:0;z-index:20;">
             <div class="preview-address-bar" style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:rgba(255,255,255,0.04);border-bottom:1px solid var(--border-subtle);">
+              <span id="preview-status-badge" style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#10b981;padding:2px 6px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);border-radius:4px;">
+                <span style="width:6px;height:6px;border-radius:50%;background:#10b981;"></span>
+                <span id="preview-status-text">Ready</span>
+              </span>
               <button id="btn-preview-refresh" class="icon-btn" title="Reload Preview" style="padding:4px;"><i data-lucide="rotate-cw" style="width:13px;height:13px;"></i></button>
               <div style="flex:1;display:flex;align-items:center;background:rgba(0,0,0,0.3);border:1px solid var(--border-subtle);border-radius:4px;padding:3px 8px;font-size:12px;color:var(--accent-light);">
                 <i data-lucide="globe" style="width:12px;height:12px;margin-right:6px;opacity:0.7;"></i>
-                <input type="text" id="preview-url-input" value="http://localhost:3001/preview/snake.html" style="flex:1;background:none;border:none;color:#f8fafc;font-size:12px;outline:none;" />
+                <input type="text" id="preview-url-input" value="http://localhost:3001/preview/" style="flex:1;background:none;border:none;color:#f8fafc;font-size:12px;outline:none;" />
               </div>
+              <button id="btn-preview-stop" class="icon-btn" title="Stop Preview Server" style="padding:4px;color:#fca5a5;"><i data-lucide="square" style="width:13px;height:13px;"></i></button>
               <button id="btn-preview-external" class="icon-btn" title="Open in New Tab" style="padding:4px;"><i data-lucide="external-link" style="width:13px;height:13px;"></i></button>
               <button id="btn-preview-close" class="icon-btn" title="Close Preview" style="padding:4px;"><i data-lucide="x" style="width:13px;height:13px;"></i></button>
             </div>

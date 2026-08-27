@@ -80,6 +80,7 @@ import { registerFileTools } from "./fileTools.js";
 import { registerSearchTools } from "./searchTools.js";
 import { registerShellTools } from "./shellTools.js";
 import { registerGitTools } from "./gitTools.js";
+import { registerPreviewTools } from "./previewTools.js";
 
 /**
  * Initialize all built-in tools.
@@ -90,4 +91,5 @@ export function initializeTools() {
   registerSearchTools();
   registerShellTools();
   registerGitTools();
+  registerPreviewTools();
 }

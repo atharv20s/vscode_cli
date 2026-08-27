@@ -1,29 +1,18 @@
 /**
- * Git & GitHub Tools — Version control & cloud repo operations.
+ * Git & GitHub Tools — Version Control & Cloud Operations
+ * 
+ * Routes operations through PermissionEngine for security policy checks
+ * and GitService for repository execution.
  */
 
-import { exec } from "child_process";
 import { registerTool } from "./index.js";
 import { config } from "../config/env.js";
+import { gitService } from "../services/gitService.js";
+import { permissionEngine } from "../services/permissionEngine.js";
 import { commitFilesToRepo } from "../services/githubService.js";
 
-/**
- * Run a git command and return the result.
- */
-function runGit(args, cwd) {
-  return new Promise((resolve) => {
-    exec(`git ${args}`, { cwd, timeout: 20000 }, (error, stdout, stderr) => {
-      if (error) {
-        resolve({ success: false, error: stderr || error.message });
-      } else {
-        resolve({ success: true, output: stdout.trim() || "(no output)" });
-      }
-    });
-  });
-}
-
 export function registerGitTools() {
-  // ---- git_status ----
+  // 1. git_status
   registerTool(
     {
       type: "function",
@@ -37,13 +26,18 @@ export function registerGitTools() {
         },
       },
     },
-    async (_args, ctx) => {
+    async (_args, ctx = {}) => {
       const cwd = ctx.workspaceDir || config.workspaceRoot;
-      return runGit("status --short --branch", cwd);
+      const status = await gitService.getStatus(cwd);
+      return {
+        success: true,
+        output: status.raw || `On branch ${status.branch} (clean)`,
+        status,
+      };
     }
   );
 
-  // ---- git_diff ----
+  // 2. git_diff
   registerTool(
     {
       type: "function",
@@ -59,14 +53,14 @@ export function registerGitTools() {
         },
       },
     },
-    async (args, ctx) => {
+    async (args, ctx = {}) => {
       const cwd = ctx.workspaceDir || config.workspaceRoot;
-      const flag = args.staged ? "--staged" : "";
-      return runGit(`diff ${flag}`, cwd);
+      const result = await gitService.getDiff(args.staged, cwd);
+      return { success: result.success, output: result.diff || "(no changes)" };
     }
   );
 
-  // ---- git_log ----
+  // 3. git_log
   registerTool(
     {
       type: "function",
@@ -82,14 +76,14 @@ export function registerGitTools() {
         },
       },
     },
-    async (args, ctx) => {
+    async (args, ctx = {}) => {
       const cwd = ctx.workspaceDir || config.workspaceRoot;
-      const n = args.count || 10;
-      return runGit(`log --oneline --graph -n ${n}`, cwd);
+      const result = await gitService.getLog(args.count || 10, cwd);
+      return { success: result.success, output: result.log };
     }
   );
 
-  // ---- git_commit ----
+  // 4. git_commit
   registerTool(
     {
       type: "function",
@@ -105,18 +99,24 @@ export function registerGitTools() {
         },
       },
     },
-    async (args, ctx) => {
+    async (args, ctx = {}) => {
+      // Permission Check
+      const perm = await permissionEngine.checkPermission({
+        resource: "git",
+        action: "commit",
+        payload: args,
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason };
+
       const cwd = ctx.workspaceDir || config.workspaceRoot;
-
-      const stageResult = await runGit("add -A", cwd);
-      if (!stageResult.success) return stageResult;
-
-      const safeMessage = args.message.replace(/"/g, '\\"');
-      return runGit(`commit -m "${safeMessage}"`, cwd);
+      const result = await gitService.commit(args.message, cwd);
+      return { success: result.success, output: result.output };
     }
   );
 
-  // ---- git_push ----
+  // 5. git_push
   registerTool(
     {
       type: "function",
@@ -133,15 +133,24 @@ export function registerGitTools() {
         },
       },
     },
-    async (args, ctx) => {
+    async (args, ctx = {}) => {
+      // Permission Check (Requires ASK by default)
+      const perm = await permissionEngine.checkPermission({
+        resource: "git",
+        action: "push",
+        payload: args,
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason };
+
       const cwd = ctx.workspaceDir || config.workspaceRoot;
-      const remote = args.remote || "origin";
-      const branch = args.branch || "main";
-      return runGit(`push ${remote} ${branch}`, cwd);
+      const result = await gitService.push(args.remote || "origin", args.branch || null, cwd);
+      return { success: result.success, output: result.output };
     }
   );
 
-  // ---- github_cloud_commit ----
+  // 6. github_cloud_commit
   registerTool(
     {
       type: "function",
@@ -174,7 +183,7 @@ export function registerGitTools() {
         },
       },
     },
-    async (args, ctx) => {
+    async (args, ctx = {}) => {
       const token = ctx.user?.githubAccessToken || process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
       if (!token) {
         return {
@@ -182,6 +191,16 @@ export function registerGitTools() {
           error: "GitHub token not found. Connect GitHub in the topbar or set GITHUB_PERSONAL_ACCESS_TOKEN in .env",
         };
       }
+
+      // Permission Check
+      const perm = await permissionEngine.checkPermission({
+        resource: "github",
+        action: "push",
+        payload: { owner: args.owner, repo: args.repo, branch: args.branch },
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason };
 
       try {
         const result = await commitFilesToRepo(token, {
@@ -194,7 +213,7 @@ export function registerGitTools() {
 
         return {
           success: true,
-          output: `✅ Successfully committed to GitHub!\nCommit SHA: ${result.commitSha}\nURL: ${result.url}`,
+          output: `Successfully committed to GitHub!\nCommit SHA: ${result.commitSha}\nURL: ${result.url}`,
         };
       } catch (err) {
         return { success: false, error: err.message };

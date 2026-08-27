@@ -22,6 +22,7 @@ class App {
     this.setupEventListeners();
     this.initResizers();
     this.initWebSocket();
+    this.initPreviewUI();
     this.restoreChatFromCache();
     await this.loadWorkspaceFiles();
     await this.loadMcpServers();
@@ -2012,6 +2013,100 @@ class App {
         }
       });
     }
+  }
+
+  initPreviewUI() {
+    const previewContainer = document.getElementById("live-preview-view");
+    const previewIframe = document.getElementById("live-preview-iframe");
+    const previewInput = document.getElementById("preview-url-input");
+    const refreshBtn = document.getElementById("btn-preview-refresh");
+    const closeBtn = document.getElementById("btn-preview-close");
+    const externalBtn = document.getElementById("btn-preview-external");
+    const stopBtn = document.getElementById("btn-preview-stop");
+    const statusBadge = document.getElementById("preview-status-badge");
+    const statusText = document.getElementById("preview-status-text");
+
+    if (refreshBtn && previewIframe) {
+      refreshBtn.addEventListener("click", () => {
+        const url = previewInput?.value || previewIframe.src;
+        if (url && url !== "about:blank") {
+          previewIframe.src = url;
+        }
+      });
+    }
+
+    if (closeBtn && previewContainer) {
+      closeBtn.addEventListener("click", () => {
+        previewContainer.style.display = "none";
+      });
+    }
+
+    if (externalBtn && previewInput) {
+      externalBtn.addEventListener("click", () => {
+        const url = previewInput.value;
+        if (url && url !== "about:blank") {
+          window.open(url, "_blank");
+        }
+      });
+    }
+
+    if (stopBtn) {
+      stopBtn.addEventListener("click", () => {
+        if (window.wsClient.isConnected) {
+          window.wsClient.send("preview.stop", {});
+        }
+      });
+    }
+
+    if (previewInput) {
+      previewInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && previewIframe) {
+          previewIframe.src = previewInput.value;
+        }
+      });
+    }
+
+    // Live preview event listeners
+    window.wsClient.on("preview.started", () => {
+      if (statusText) statusText.textContent = "Starting...";
+      if (statusBadge) {
+        statusBadge.style.color = "#f59e0b";
+        statusBadge.style.borderColor = "rgba(245,158,11,0.3)";
+        statusBadge.style.background = "rgba(245,158,11,0.1)";
+      }
+    });
+
+    window.wsClient.on("preview.ready", (data) => {
+      if (!data?.url) return;
+      if (previewContainer) previewContainer.style.display = "flex";
+      if (previewIframe) previewIframe.src = data.url;
+      if (previewInput) previewInput.value = data.url;
+      if (statusText) statusText.textContent = `Running (Port ${data.port || 3000})`;
+      if (statusBadge) {
+        statusBadge.style.color = "#10b981";
+        statusBadge.style.borderColor = "rgba(16,185,129,0.3)";
+        statusBadge.style.background = "rgba(16,185,129,0.1)";
+      }
+    });
+
+    window.wsClient.on("preview.stopped", () => {
+      if (statusText) statusText.textContent = "Stopped";
+      if (statusBadge) {
+        statusBadge.style.color = "#94a3b8";
+        statusBadge.style.borderColor = "rgba(148,163,184,0.3)";
+        statusBadge.style.background = "rgba(148,163,184,0.1)";
+      }
+    });
+
+    window.wsClient.on("preview.failed", (data) => {
+      if (statusText) statusText.textContent = "Failed";
+      if (statusBadge) {
+        statusBadge.style.color = "#ef4444";
+        statusBadge.style.borderColor = "rgba(239,68,68,0.3)";
+        statusBadge.style.background = "rgba(239,68,68,0.1)";
+      }
+      this.logTerminal(`[Preview Error] ${data?.error || "Preview failed to start"}`, "error");
+    });
   }
 
   escapeHtml(str) {

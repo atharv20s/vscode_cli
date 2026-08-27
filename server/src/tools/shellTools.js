@@ -1,40 +1,15 @@
 /**
  * Shell Tools — Sandboxed Command Execution
  * 
- * Executes shell commands within the user's workspace using ExecutionService in
- * dedicated AGENT_BACKGROUND mode (isolated from the user's interactive PTY).
+ * Routes through PermissionEngine for security policy checks and executes
+ * in isolated AGENT_BACKGROUND mode via ExecutionService & ProcessSupervisor.
  */
 
 import path from "path";
 import { registerTool } from "./index.js";
 import { config } from "../config/env.js";
 import { executionService } from "../services/executionService.js";
-
-/** Patterns that are blocked for safety. */
-const BLOCKED_PATTERNS = [
-  /rm\s+-rf\s+\//i,
-  /format\s+[a-z]:/i,
-  /del\s+\/s\s+\/q\s+[a-z]:\\/i,
-  /mkfs/i,
-  /dd\s+if=/i,
-  /:(){ :|:& };:/,
-  /shutdown/i,
-  /reboot/i,
-];
-
-/**
- * Check if a command contains dangerous patterns.
- * @param {string} command
- * @returns {string | null} Block reason, or null if safe
- */
-function checkCommandSafety(command) {
-  for (const pattern of BLOCKED_PATTERNS) {
-    if (pattern.test(command)) {
-      return `Command blocked: matches dangerous pattern ${pattern}`;
-    }
-  }
-  return null;
-}
+import { permissionEngine } from "../services/permissionEngine.js";
 
 export function registerShellTools() {
   registerTool(
@@ -44,9 +19,7 @@ export function registerShellTools() {
         name: "run_command",
         description:
           "Execute a shell command in the workspace directory and return its output. " +
-          "Runs isolated in the background without interrupting the user's active terminal session. " +
-          "Use for running scripts, installing packages, running tests, checking git, etc. " +
-          "Dangerous commands (rm -rf /, format, etc.) are blocked.",
+          "Runs isolated in the background without interrupting the user's active terminal session.",
         parameters: {
           type: "object",
           properties: {
@@ -57,8 +30,8 @@ export function registerShellTools() {
             },
             shell: {
               type: "string",
-              description: "Shell environment to use: 'wsl' (Linux bash), 'powershell', or 'cmd'",
-              enum: ["wsl", "powershell", "cmd"],
+              description: "Shell environment: 'powershell', 'pwsh', 'cmd', 'git-bash', 'wsl'",
+              enum: ["powershell", "pwsh", "cmd", "git-bash", "wsl"],
             },
           },
           required: ["command"],
@@ -66,10 +39,17 @@ export function registerShellTools() {
       },
     },
     async (args, ctx = {}) => {
-      // 1. Safety pattern check
-      const blockReason = checkCommandSafety(args.command);
-      if (blockReason) {
-        return { success: false, error: blockReason };
+      // 1. Permission Engine Evaluation (DENY > ASK > ALLOW)
+      const perm = await permissionEngine.checkPermission({
+        resource: "command",
+        action: "execute",
+        payload: { command: args.command, working_dir: args.working_dir, shell: args.shell },
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+
+      if (!perm.granted) {
+        return { success: false, error: perm.reason || "Execution blocked by permission policy." };
       }
 
       // 2. Resolve working directory

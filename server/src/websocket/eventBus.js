@@ -3,11 +3,53 @@
  * 
  * Provides publish/subscribe mechanisms across UI panels, PTY processes,
  * file system operations, and AI agent execution streams with standardized
- * event envelopes and correlation IDs.
+ * event envelopes, correlation IDs, and formalized event topics.
  */
 
 import { EventEmitter } from "events";
 import { logger } from "../config/logger.js";
+
+/**
+ * Formalized Event Taxonomy Topics
+ */
+export const EVENT_TOPICS = {
+  // Terminal
+  TERMINAL_SESSION_CREATED: "terminal.session.created",
+  TERMINAL_SESSION_STATE: "terminal.session.state",
+  TERMINAL_INPUT: "terminal.input",
+  TERMINAL_KEYSTROKE: "terminal.keystroke",
+  TERMINAL_PASTE: "terminal.paste",
+  TERMINAL_COMMAND_SUBMITTED: "terminal.command.submitted",
+  TERMINAL_OUTPUT: "terminal.output",
+  TERMINAL_RESIZE: "terminal.resize",
+  TERMINAL_SIGNAL: "terminal.signal",
+  TERMINAL_EXIT: "terminal.exit",
+
+  // Agent
+  AGENT_COMMAND_REQUESTED: "agent.command.requested",
+  AGENT_COMMAND_STARTED: "agent.command.started",
+  AGENT_COMMAND_OUTPUT: "agent.command.output",
+  AGENT_COMMAND_COMPLETED: "agent.command.completed",
+  AGENT_COMMAND_FAILED: "agent.command.failed",
+  AGENT_STATUS: "agent.status",
+
+  // Filesystem
+  FILE_CREATED: "file.created",
+  FILE_CHANGED: "file.changed",
+  FILE_DELETED: "file.deleted",
+  FILE_RENAMED: "file.renamed",
+
+  // Preview
+  PREVIEW_STARTED: "preview.started",
+  PREVIEW_READY: "preview.ready",
+  PREVIEW_OUTPUT: "preview.output",
+  PREVIEW_FAILED: "preview.failed",
+  PREVIEW_STOPPED: "preview.stopped",
+
+  // Permissions
+  PERMISSION_REQUESTED: "permission.requested",
+  PERMISSION_RESOLVED: "permission.resolved",
+};
 
 /**
  * Creates a standardized event envelope.
@@ -18,7 +60,7 @@ import { logger } from "../config/logger.js";
  * @param {string} [params.sessionId=null] - Active session identifier
  * @param {string} [params.turnId=null] - Agent turn correlation identifier
  * @param {string} [params.operationId=null] - Discrete operation correlation identifier
- * @param {string} [params.source='system'] - Source component ('pty', 'agent', 'fs', 'ui', 'system')
+ * @param {string} [params.source='system'] - Source component ('pty', 'agent', 'fs', 'preview', 'ui', 'system')
  * @param {string} [params.actor='system'] - Actor performing action ('user', 'agent', 'system')
  * @param {object} [params.payload={}] - Event-specific data
  * @returns {object} Standardized event envelope
@@ -50,7 +92,7 @@ export function createEventEnvelope({
 class EventBus extends EventEmitter {
   constructor() {
     super();
-    this.setMaxListeners(150);
+    this.setMaxListeners(200);
   }
 
   /**

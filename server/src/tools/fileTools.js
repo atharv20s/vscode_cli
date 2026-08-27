@@ -1,98 +1,60 @@
 /**
- * File Tools — Read, write, edit, and list files in the workspace.
- *
- * All paths are sandboxed to the workspace directory.
- * Path traversal attacks are blocked.
+ * File Tools — Centralized Workspace File System Interface
+ * 
+ * Routes through PermissionEngine for security checks and WorkspaceService
+ * for path policy enforcement and lightweight mutation event publishing.
  */
 
-import fs from "fs/promises";
-import path from "path";
 import { registerTool } from "./index.js";
-import { config } from "../config/env.js";
-import { eventBus } from "../websocket/eventBus.js";
-
-/**
- * Resolve a path safely within the workspace.
- * @param {string} filePath - Relative or absolute file path
- * @param {string} [workspaceDir] - Override workspace root
- * @returns {{ safe: boolean, resolved: string }}
- */
-function safePath(filePath, workspaceDir) {
-  const root = workspaceDir || config.workspaceRoot;
-  const resolved = path.resolve(root, filePath);
-
-  // Block path traversal
-  if (!resolved.startsWith(path.resolve(root))) {
-    return { safe: false, resolved };
-  }
-
-  return { safe: true, resolved };
-}
+import { workspaceService } from "../services/workspaceService.js";
+import { permissionEngine } from "../services/permissionEngine.js";
 
 export function registerFileTools() {
-  // ---- read_file ----
+  // 1. read_file
   registerTool(
     {
       type: "function",
       function: {
         name: "read_file",
-        description:
-          "Read the contents of a file. Supports optional line range for large files.",
+        description: "Read the contents of a file in the workspace. Supports optional line range.",
         parameters: {
           type: "object",
           properties: {
             path: { type: "string", description: "Relative path to the file" },
-            start_line: {
-              type: "integer",
-              description: "Optional start line (1-based)",
-            },
-            end_line: {
-              type: "integer",
-              description: "Optional end line (1-based, inclusive)",
-            },
+            start_line: { type: "integer", description: "Optional start line (1-based)" },
+            end_line: { type: "integer", description: "Optional end line (1-based, inclusive)" },
           },
           required: ["path"],
         },
       },
     },
-    async (args, ctx) => {
-      const { safe, resolved } = safePath(args.path, ctx.workspaceDir);
-      if (!safe) return { success: false, error: "Access denied: path outside workspace" };
+    async (args, ctx = {}) => {
+      // Permission Check
+      const perm = await permissionEngine.checkPermission({
+        resource: "file",
+        action: "read",
+        payload: args,
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason };
 
       try {
-        const content = await fs.readFile(resolved, "utf8");
-
-        if (args.start_line || args.end_line) {
-          const lines = content.split("\n");
-          const start = Math.max(1, args.start_line || 1) - 1;
-          const end = Math.min(lines.length, args.end_line || lines.length);
-          const slice = lines.slice(start, end);
-          return {
-            success: true,
-            output: slice
-              .map((line, i) => `${start + i + 1}: ${line}`)
-              .join("\n"),
-          };
-        }
-
-        return { success: true, output: content };
+        const result = await workspaceService.readFile(args.path, args.start_line, args.end_line);
+        return { success: true, output: result.content };
       } catch (err) {
-        if (err.code === "ENOENT") {
-          return { success: false, error: `File not found: ${args.path}` };
-        }
         return { success: false, error: err.message };
       }
     }
   );
 
-  // ---- write_file ----
+  // 2. write_file
   registerTool(
     {
       type: "function",
       function: {
         name: "write_file",
-        description:
-          "Create or overwrite a file in the workspace. Creates parent directories automatically.",
+        description: "Create or overwrite a file in the workspace.",
         parameters: {
           type: "object",
           properties: {
@@ -103,31 +65,27 @@ export function registerFileTools() {
         },
       },
     },
-    async (args, ctx) => {
-      const { safe, resolved } = safePath(args.path, ctx.workspaceDir);
-      if (!safe) return { success: false, error: "Access denied: path outside workspace" };
+    async (args, ctx = {}) => {
+      // Permission Check
+      const perm = await permissionEngine.checkPermission({
+        resource: "file",
+        action: "write",
+        payload: args,
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason };
 
       try {
-        await fs.mkdir(path.dirname(resolved), { recursive: true });
-        await fs.writeFile(resolved, args.content, "utf8");
-
-        // Emit lightweight metadata event on EventBus
-        eventBus.publish("file.changed", {
-          path: args.path,
-          operation: "modify",
-          version: Date.now(),
-        }, {
+        const result = await workspaceService.writeFile(args.path, args.content, {
           source: "agent",
           actor: "agent",
           turnId: ctx.turnId,
           operationId: ctx.operationId,
-          sessionId: ctx.sessionId,
-          workspaceId: ctx.workspaceId || "default",
         });
-
         return {
           success: true,
-          output: `Successfully written to ${args.path} (${args.content.length} bytes)`,
+          output: `Successfully written to ${result.path} (${result.size} bytes)`,
         };
       } catch (err) {
         return { success: false, error: err.message };
@@ -135,14 +93,13 @@ export function registerFileTools() {
     }
   );
 
-  // ---- edit_file ----
+  // 3. edit_file
   registerTool(
     {
       type: "function",
       function: {
         name: "edit_file",
-        description:
-          "Edit a file by searching for a string and replacing it. Shows a diff of changes.",
+        description: "Edit a file by searching for an exact string and replacing it with new content.",
         parameters: {
           type: "object",
           properties: {
@@ -154,35 +111,29 @@ export function registerFileTools() {
         },
       },
     },
-    async (args, ctx) => {
-      const { safe, resolved } = safePath(args.path, ctx.workspaceDir);
-      if (!safe) return { success: false, error: "Access denied: path outside workspace" };
+    async (args, ctx = {}) => {
+      // Permission Check
+      const perm = await permissionEngine.checkPermission({
+        resource: "file",
+        action: "edit",
+        payload: args,
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason };
 
       try {
-        const original = await fs.readFile(resolved, "utf8");
-
-        if (!original.includes(args.search)) {
-          return {
-            success: false,
-            error: `Search string not found in ${args.path}`,
-          };
+        const file = await workspaceService.readFile(args.path);
+        if (!file.content.includes(args.search)) {
+          return { success: false, error: `Search string not found in ${args.path}` };
         }
 
-        const updated = original.replace(args.search, args.replace);
-        await fs.writeFile(resolved, updated, "utf8");
-
-        // Emit lightweight metadata event on EventBus
-        eventBus.publish("file.changed", {
-          path: args.path,
-          operation: "modify",
-          version: Date.now(),
-        }, {
+        const updated = file.content.replace(args.search, args.replace);
+        await workspaceService.writeFile(args.path, updated, {
           source: "agent",
           actor: "agent",
           turnId: ctx.turnId,
           operationId: ctx.operationId,
-          sessionId: ctx.sessionId,
-          workspaceId: ctx.workspaceId || "default",
         });
 
         return {
@@ -190,69 +141,37 @@ export function registerFileTools() {
           output: `Edited ${args.path}\n\n--- Before ---\n${args.search}\n\n+++ After +++\n${args.replace}`,
         };
       } catch (err) {
-        if (err.code === "ENOENT") {
-          return { success: false, error: `File not found: ${args.path}` };
-        }
         return { success: false, error: err.message };
       }
     }
   );
 
-  // ---- list_dir ----
+  // 4. list_files / list_dir
   registerTool(
     {
       type: "function",
       function: {
-        name: "list_dir",
-        description:
-          "List files and subdirectories in a directory with metadata.",
+        name: "list_files",
+        description: "List files and subdirectories in a workspace directory.",
         parameters: {
           type: "object",
           properties: {
-            path: {
-              type: "string",
-              description: "Relative path to the directory (default: '.')",
-            },
+            path: { type: "string", description: "Relative directory path (default: '.')" },
           },
           required: [],
         },
       },
     },
-    async (args, ctx) => {
+    async (args, ctx = {}) => {
       const dirPath = args.path || ".";
-      const { safe, resolved } = safePath(dirPath, ctx.workspaceDir);
-      if (!safe) return { success: false, error: "Access denied: path outside workspace" };
-
       try {
-        const entries = await fs.readdir(resolved, { withFileTypes: true });
-        const items = await Promise.all(
-          entries
-            .filter((e) => !e.name.startsWith("."))
-            .map(async (entry) => {
-              const entryPath = path.join(resolved, entry.name);
-              if (entry.isDirectory()) {
-                return `${entry.name}/`;
-              }
-              try {
-                const stat = await fs.stat(entryPath);
-                const sizeKb = (stat.size / 1024).toFixed(1);
-                return `${entry.name} (${sizeKb} KB)`;
-              } catch {
-                return `${entry.name}`;
-              }
-            })
-        );
-
+        const result = await workspaceService.listDirectory(dirPath);
+        const formatted = result.entries.map((e) => (e.isDirectory ? `${e.name}/` : `${e.name} (${(e.size / 1024).toFixed(1)} KB)`));
         return {
           success: true,
-          output: items.length > 0
-            ? `Contents of ${dirPath}/:\n${items.join("\n")}`
-            : `Empty directory: ${dirPath}/`,
+          output: formatted.length > 0 ? `Contents of ${dirPath}/:\n${formatted.join("\n")}` : `Empty directory: ${dirPath}/`,
         };
       } catch (err) {
-        if (err.code === "ENOENT") {
-          return { success: false, error: `Directory not found: ${dirPath}` };
-        }
         return { success: false, error: err.message };
       }
     }

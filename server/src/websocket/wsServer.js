@@ -2,7 +2,7 @@
  * WebSocket Gateway — Central Routing Layer
  * 
  * Bridges client WebSockets to the central Event Bus and backend services
- * (TerminalSessionManager, ExecutionService, FileSystem, Agent).
+ * (TerminalSessionManager, ProcessSupervisor, PreviewService, FileSystem, Agent).
  */
 
 import fs from "fs/promises";
@@ -21,7 +21,10 @@ import {
   disconnectIdle,
 } from "./connectionManager.js";
 import { executionService } from "../services/executionService.js";
-import { eventBus } from "./eventBus.js";
+import { previewService } from "../services/previewService.js";
+import { permissionEngine } from "../services/permissionEngine.js";
+import { LocalBackend } from "../services/backends/localBackend.js";
+import { eventBus, EVENT_TOPICS } from "./eventBus.js";
 import { createConversation, updateConversationMessages } from "../db/database.js";
 
 /** Heartbeat interval in ms */
@@ -62,12 +65,13 @@ export function initWebSocketServer(httpServer) {
     clearInterval(idleCleanupInterval);
   });
 
-  // Forward EventBus events to connected clients
-  eventBus.subscribe("file.changed", (envelope) => {
+  // 1. Filesystem Events
+  eventBus.subscribe(EVENT_TOPICS.FILE_CHANGED, (envelope) => {
     broadcastAll("file.changed", envelope.payload);
   });
 
-  eventBus.subscribe("agent.command.started", (envelope) => {
+  // 2. Agent Background Command Lifecycle
+  eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_STARTED, (envelope) => {
     broadcastAll("agent.command.started", {
       ...envelope.payload,
       operationId: envelope.operationId,
@@ -75,19 +79,53 @@ export function initWebSocketServer(httpServer) {
     });
   });
 
-  eventBus.subscribe("agent.command.output", (envelope) => {
+  eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_OUTPUT, (envelope) => {
     broadcastAll("agent.command.output", {
       ...envelope.payload,
       operationId: envelope.operationId,
     });
   });
 
-  eventBus.subscribe("agent.command.completed", (envelope) => {
+  eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_COMPLETED, (envelope) => {
     broadcastAll("agent.command.completed", {
       ...envelope.payload,
       operationId: envelope.operationId,
       turnId: envelope.turnId,
     });
+  });
+
+  eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_FAILED, (envelope) => {
+    broadcastAll("agent.command.failed", {
+      ...envelope.payload,
+      operationId: envelope.operationId,
+      turnId: envelope.turnId,
+    });
+  });
+
+  // 3. Live Preview Events
+  eventBus.subscribe(EVENT_TOPICS.PREVIEW_STARTED, (envelope) => {
+    broadcastAll("preview.started", envelope.payload);
+  });
+
+  eventBus.subscribe(EVENT_TOPICS.PREVIEW_READY, (envelope) => {
+    broadcastAll("preview.ready", envelope.payload);
+  });
+
+  eventBus.subscribe(EVENT_TOPICS.PREVIEW_OUTPUT, (envelope) => {
+    broadcastAll("preview.output", envelope.payload);
+  });
+
+  eventBus.subscribe(EVENT_TOPICS.PREVIEW_STOPPED, (envelope) => {
+    broadcastAll("preview.stopped", envelope.payload);
+  });
+
+  // 4. Permissions Events
+  eventBus.subscribe(EVENT_TOPICS.PERMISSION_REQUESTED, (envelope) => {
+    broadcastAll("permission.requested", envelope.payload);
+  });
+
+  eventBus.subscribe(EVENT_TOPICS.PERMISSION_RESOLVED, (envelope) => {
+    broadcastAll("permission.resolved", envelope.payload);
   });
 
   wss.on("connection", (ws, req) => {
@@ -150,6 +188,7 @@ export function initWebSocketServer(httpServer) {
       user: user ? { id: user.id, username: user.username } : null,
       sessionId: ws.sessionId,
       workspace: path.basename(config.workspaceRoot),
+      previewState: previewService.getPreviewState(),
     });
   });
 
@@ -181,8 +220,43 @@ async function handleMessage(ws, msg, user) {
 
     case "agent.command.stop":
       if (payload?.operationId) {
-        executionService.stopBackgroundTask(payload.operationId);
+        await executionService.stopBackgroundTask(payload.operationId);
       }
+      break;
+
+    // Permission Resolution
+    case "permission.resolve":
+    case "permission_resolve":
+      if (payload?.permissionId) {
+        permissionEngine.resolvePermission(payload.permissionId, payload.granted, payload.reason);
+      }
+      break;
+
+    // Shell Providers Query
+    case "shells.list":
+    case "terminal_shells":
+      sendMessage(ws, "terminal.shells", { shells: LocalBackend.detectAvailableShells() });
+      break;
+
+    // Live Application Preview Controls
+    case "preview.start":
+    case "preview_start":
+      await previewService.startPreview(payload);
+      break;
+
+    case "preview.stop":
+    case "preview_stop":
+      await previewService.stopPreview();
+      break;
+
+    case "preview.restart":
+    case "preview_restart":
+      await previewService.restartPreview();
+      break;
+
+    case "preview.status":
+    case "preview_status":
+      sendMessage(ws, "preview.status", previewService.getPreviewState());
       break;
 
     case "file_read":
@@ -210,12 +284,17 @@ async function handleMessage(ws, msg, user) {
     case "terminal_input":
     case "terminal.input":
     case "terminal.keystroke":
+      eventBus.publish(EVENT_TOPICS.TERMINAL_INPUT, {}, {
+        sessionId: ws.sessionId,
+        source: "ui",
+        actor: "user",
+      });
       executionService.writeInteractive(ws.sessionId, payload?.data ?? payload?.command ?? "");
       break;
 
     // Submitted Command (Enter pressed)
     case "terminal.command.submitted":
-      eventBus.publish("terminal.command.submitted", {
+      eventBus.publish(EVENT_TOPICS.TERMINAL_COMMAND_SUBMITTED, {
         command: payload?.command || "",
         cwd: payload?.cwd || config.workspaceRoot,
       }, {
@@ -227,7 +306,7 @@ async function handleMessage(ws, msg, user) {
 
     // Clipboard Paste into Terminal
     case "terminal.paste":
-      eventBus.publish("terminal.paste", {
+      eventBus.publish(EVENT_TOPICS.TERMINAL_PASTE, {
         text: payload?.text || "",
       }, {
         sessionId: ws.sessionId,
@@ -240,7 +319,7 @@ async function handleMessage(ws, msg, user) {
     // Terminal Dimensions Resize
     case "terminal_resize":
     case "terminal.resize":
-      eventBus.publish("terminal.resize", {
+      eventBus.publish(EVENT_TOPICS.TERMINAL_RESIZE, {
         cols: payload?.cols,
         rows: payload?.rows,
       }, {
@@ -372,7 +451,7 @@ async function handleFileSave(ws, payload) {
     await fs.writeFile(resolved, content, "utf8");
 
     // Emit lightweight metadata event
-    eventBus.publish("file.changed", {
+    eventBus.publish(EVENT_TOPICS.FILE_CHANGED, {
       path: filePath,
       operation: "modify",
       version: Date.now(),

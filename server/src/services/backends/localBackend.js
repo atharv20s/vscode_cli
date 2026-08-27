@@ -1,19 +1,130 @@
 /**
- * Local Execution Backend
+ * Local Execution Backend & Shell Provider
  * 
  * Spawns real interactive shells on the host machine using node-pty,
- * streaming outputs wrapped in standardized event envelopes.
+ * dynamically discovers installed shells (PowerShell 7, Windows PowerShell, CMD, Git Bash, WSL),
+ * and streams outputs wrapped in standardized event envelopes.
  */
 
+import fs from "fs";
+import path from "path";
 import pty from "node-pty";
 import { config } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
 import { sendMessage } from "../../websocket/connectionManager.js";
-import { eventBus } from "../../websocket/eventBus.js";
+import { eventBus, EVENT_TOPICS } from "../../websocket/eventBus.js";
+
+/**
+ * @typedef {Object} ShellProvider
+ * @property {string} id
+ * @property {string} name
+ * @property {string} executable
+ * @property {string[]} args
+ * @property {string} platform
+ */
 
 export class LocalBackend {
   constructor() {
     this.ptyProcess = null;
+  }
+
+  /**
+   * Dynamically detect available shells on the current operating system.
+   * 
+   * @returns {ShellProvider[]}
+   */
+  static detectAvailableShells() {
+    const isWindows = process.platform === "win32";
+    const shells = [];
+
+    if (isWindows) {
+      // 1. Windows PowerShell (always available on Windows)
+      shells.push({
+        id: "powershell",
+        name: "Windows PowerShell",
+        executable: "powershell.exe",
+        args: ["-NoProfile", "-ExecutionPolicy", "Bypass"],
+        platform: "win32",
+      });
+
+      // 2. Command Prompt
+      shells.push({
+        id: "cmd",
+        name: "Command Prompt",
+        executable: "cmd.exe",
+        args: [],
+        platform: "win32",
+      });
+
+      // 3. PowerShell 7 (pwsh.exe)
+      const pwshPaths = [
+        "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+        "C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe",
+      ];
+      for (const p of pwshPaths) {
+        if (fs.existsSync(p)) {
+          shells.push({
+            id: "pwsh",
+            name: "PowerShell 7",
+            executable: p,
+            args: ["-NoProfile", "-ExecutionPolicy", "Bypass"],
+            platform: "win32",
+          });
+          break;
+        }
+      }
+
+      // 4. Git Bash
+      const gitBashPaths = [
+        "C:\\Program Files\\Git\\bin\\bash.exe",
+        "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+        path.join(process.env.LOCALAPPDATA || "", "Programs\\Git\\bin\\bash.exe"),
+      ];
+      for (const p of gitBashPaths) {
+        if (fs.existsSync(p)) {
+          shells.push({
+            id: "git-bash",
+            name: "Git Bash",
+            executable: p,
+            args: ["--login", "-i"],
+            platform: "win32",
+          });
+          break;
+        }
+      }
+
+      // 5. WSL (Windows Subsystem for Linux)
+      const wslPath = "C:\\Windows\\System32\\wsl.exe";
+      if (fs.existsSync(wslPath)) {
+        shells.push({
+          id: "wsl",
+          name: "WSL (Linux)",
+          executable: wslPath,
+          args: [],
+          platform: "win32",
+        });
+      }
+    } else {
+      // POSIX (Linux / macOS)
+      const posixShells = [
+        { id: "bash", name: "Bash", path: "/bin/bash" },
+        { id: "zsh", name: "Zsh", path: "/bin/zsh" },
+        { id: "sh", name: "Sh", path: "/bin/sh" },
+      ];
+      for (const s of posixShells) {
+        if (fs.existsSync(s.path)) {
+          shells.push({
+            id: s.id,
+            name: s.name,
+            executable: s.path,
+            args: ["-l"],
+            platform: process.platform,
+          });
+        }
+      }
+    }
+
+    return shells;
   }
 
   /**
@@ -22,7 +133,7 @@ export class LocalBackend {
    * @param {object} params
    * @param {string} params.sessionId
    * @param {string} [params.workspaceId='default']
-   * @param {string} [params.shellType='powershell'] - "powershell" | "cmd" | "wsl"
+   * @param {string} [params.shellType='powershell'] - Shell identifier
    * @param {number} [params.cols=80]
    * @param {number} [params.rows=24]
    * @param {string} [params.cwd]
@@ -33,24 +144,17 @@ export class LocalBackend {
   async spawnShell({ sessionId, workspaceId = "default", shellType = "powershell", cols = 80, rows = 24, cwd, ws, onExit }) {
     const isWindows = process.platform === "win32";
     const sessionCwd = cwd || config.workspaceRoot;
-    let shellCmd = "";
-    let shellArgs = [];
+    const available = LocalBackend.detectAvailableShells();
+    const matchedShell = available.find((s) => s.id === shellType) || available[0];
 
-    if (isWindows) {
-      if (shellType === "wsl") {
-        shellCmd = "wsl.exe";
-        const winPath = sessionCwd.replace(/\\/g, "/");
-        const driveMatch = winPath.match(/^([A-Za-z]):\/(.*)/);
-        const wslPath = driveMatch ? `/mnt/${driveMatch[1].toLowerCase()}/${driveMatch[2]}` : winPath;
-        shellArgs = ["--cd", wslPath];
-      } else if (shellType === "cmd") {
-        shellCmd = "cmd.exe";
-      } else {
-        shellCmd = "powershell.exe";
-        shellArgs = ["-NoProfile", "-ExecutionPolicy", "Bypass"];
-      }
-    } else {
-      shellCmd = "bash";
+    let shellCmd = matchedShell.executable;
+    let shellArgs = [...matchedShell.args];
+
+    if (isWindows && shellType === "wsl") {
+      const winPath = sessionCwd.replace(/\\/g, "/");
+      const driveMatch = winPath.match(/^([A-Za-z]):\/(.*)/);
+      const wslPath = driveMatch ? `/mnt/${driveMatch[1].toLowerCase()}/${driveMatch[2]}` : winPath;
+      shellArgs = ["--cd", wslPath];
     }
 
     logger.info(`LocalBackend: Spawning node-pty process for session ${sessionId}: ${shellCmd} in ${sessionCwd}`);
@@ -61,13 +165,12 @@ export class LocalBackend {
         cols: cols || 80,
         rows: rows || 24,
         cwd: sessionCwd,
-        env: { ...process.env, TERM: "xterm-256color" }
+        env: { ...process.env, TERM: "xterm-256color" },
       });
 
       // Stream PTY output to the EventBus and WebSocket
       this.ptyProcess.onData((data) => {
-        // Publish event to the EventBus with full envelope
-        eventBus.publish("terminal.output", {
+        eventBus.publish(EVENT_TOPICS.TERMINAL_OUTPUT, {
           data,
           sessionId,
           workspaceId,
@@ -78,17 +181,16 @@ export class LocalBackend {
           actor: "user",
         });
 
-        // Forward to the connected client UI
         if (ws) {
           sendMessage(ws, "terminal.output", { text: data, sessionId });
-          sendMessage(ws, "terminal_output", { text: data, sessionId }); // Fallback compatibility
+          sendMessage(ws, "terminal_output", { text: data, sessionId });
         }
       });
 
       this.ptyProcess.onExit(({ exitCode, signal }) => {
         logger.info(`LocalBackend: PTY process exited for session ${sessionId} (Code: ${exitCode})`);
-        
-        eventBus.publish("terminal.exit", {
+
+        eventBus.publish(EVENT_TOPICS.TERMINAL_EXIT, {
           code: exitCode,
           signal,
           sessionId,
@@ -112,8 +214,8 @@ export class LocalBackend {
 
       // Initial confirmation message
       if (ws) {
-        sendMessage(ws, "terminal.output", { 
-          text: `[System] Interactive terminal session started (${shellType.toUpperCase()})\r\n`,
+        sendMessage(ws, "terminal.output", {
+          text: `[System] Interactive terminal session started (${matchedShell.name})\r\n`,
           sessionId,
         });
       }
@@ -122,7 +224,7 @@ export class LocalBackend {
     } catch (err) {
       logger.error(`LocalBackend spawn error: ${err.message}`);
       if (ws) {
-        sendMessage(ws, "terminal.output", { 
+        sendMessage(ws, "terminal.output", {
           text: `Failed to spawn shell: ${err.message}\r\n`,
           sessionId,
         });
@@ -132,7 +234,7 @@ export class LocalBackend {
   }
 
   /**
-   * Write input commands/keystrokes to the shell's stdin.
+   * Write input data/keystrokes to the shell's stdin.
    */
   write(sessionId, data) {
     if (this.ptyProcess) {
