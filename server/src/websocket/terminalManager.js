@@ -2,15 +2,15 @@
  * Terminal Manager
  * 
  * Manages persistent terminal/shell processes associated with active WebSocket connections.
- * Allows executing interactive commands (e.g., cd, pip, python) by piping stdin/stdout.
+ * Uses node-pty to spawn real pseudo-terminals for interactive terminal emulators like Xterm.js.
  */
 
-import { spawn } from "child_process";
+import pty from "node-pty";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { sendMessage } from "./connectionManager.js";
 
-/** @type {Map<import('ws').WebSocket, import('child_process').ChildProcess>} */
+/** @type {Map<import('ws').WebSocket, any>} */
 const activeShells = new Map();
 
 /**
@@ -19,8 +19,10 @@ const activeShells = new Map();
  * 
  * @param {import('ws').WebSocket} ws
  * @param {string} shellType - "powershell" | "cmd" | "wsl"
+ * @param {number} cols - Terminal columns count
+ * @param {number} rows - Terminal rows count
  */
-export function initTerminal(ws, shellType = "powershell") {
+export function initTerminal(ws, shellType = "powershell", cols = 80, rows = 24) {
   // 1. Clean up existing process if any
   killTerminal(ws);
 
@@ -48,47 +50,40 @@ export function initTerminal(ws, shellType = "powershell") {
     shellCmd = "bash";
   }
 
-  logger.info(`Spawning interactive shell: ${shellCmd} ${shellArgs.join(" ")} in ${config.workspaceRoot}`);
+  logger.info(`Spawning node-pty shell: ${shellCmd} ${shellArgs.join(" ")} in ${config.workspaceRoot}`);
 
   try {
-    const shellProcess = spawn(shellCmd, shellArgs, {
+    const ptyProcess = pty.spawn(shellCmd, shellArgs, {
+      name: "xterm-color",
+      cols: cols || 80,
+      rows: rows || 24,
       cwd: config.workspaceRoot,
-      env: { ...process.env, TERM: "xterm-color" },
-      shell: true, // Use shell execution for best compatibility
+      env: { ...process.env, TERM: "xterm-color" }
     });
 
-    activeShells.set(ws, shellProcess);
+    activeShells.set(ws, ptyProcess);
 
     // 2. Stream output back to WebSocket
-    shellProcess.stdout.on("data", (data) => {
-      sendMessage(ws, "terminal_output", { text: data.toString("utf8") });
+    ptyProcess.onData((data) => {
+      sendMessage(ws, "terminal_output", { text: data });
     });
 
-    shellProcess.stderr.on("data", (data) => {
-      sendMessage(ws, "terminal_output", { text: data.toString("utf8") });
-    });
-
-    shellProcess.on("close", (code) => {
-      logger.info(`Terminal process closed with code ${code}`);
-      sendMessage(ws, "terminal_exit", { code });
-      if (activeShells.get(ws) === shellProcess) {
+    ptyProcess.onExit(({ exitCode, signal }) => {
+      logger.info(`PTY process exited with code ${exitCode}, signal ${signal}`);
+      sendMessage(ws, "terminal_exit", { code: exitCode });
+      if (activeShells.get(ws) === ptyProcess) {
         activeShells.delete(ws);
       }
     });
 
-    shellProcess.on("error", (err) => {
-      logger.error(`Terminal spawn error: ${err.message}`);
-      sendMessage(ws, "terminal_output", { text: `Terminal Error: ${err.message}\n` });
-    });
-
-    // Provide initial welcoming hint
+    // Provide initial system acknowledgement
     sendMessage(ws, "terminal_output", { 
-      text: `[System] Interactive terminal session started (${shellType.toUpperCase()})\n` 
+      text: `[System] Interactive terminal session started (${shellType.toUpperCase()})\r\n` 
     });
 
   } catch (err) {
-    logger.error(`Failed to start terminal: ${err.message}`);
-    sendMessage(ws, "terminal_output", { text: `Failed to start terminal: ${err.message}\n` });
+    logger.error(`Failed to start PTY terminal: ${err.message}`);
+    sendMessage(ws, "terminal_output", { text: `Failed to start terminal: ${err.message}\r\n` });
   }
 }
 
@@ -99,11 +94,29 @@ export function initTerminal(ws, shellType = "powershell") {
  * @param {string} input - Text input from terminal (typically command + newline)
  */
 export function handleTerminalInput(ws, input) {
-  const proc = activeShells.get(ws);
-  if (proc && proc.stdin && proc.stdin.writable) {
-    proc.stdin.write(input);
+  const ptyProcess = activeShells.get(ws);
+  if (ptyProcess) {
+    ptyProcess.write(input);
   } else {
-    sendMessage(ws, "terminal_output", { text: "Error: No active terminal process.\n" });
+    sendMessage(ws, "terminal_output", { text: "Error: No active terminal process.\r\n" });
+  }
+}
+
+/**
+ * Resize the terminal dimensions.
+ * 
+ * @param {import('ws').WebSocket} ws
+ * @param {number} cols
+ * @param {number} rows
+ */
+export function resizeTerminal(ws, cols, rows) {
+  const ptyProcess = activeShells.get(ws);
+  if (ptyProcess && typeof ptyProcess.resize === "function") {
+    try {
+      ptyProcess.resize(cols || 80, rows || 24);
+    } catch (err) {
+      logger.error(`Failed to resize terminal: ${err.message}`);
+    }
   }
 }
 
@@ -113,16 +126,10 @@ export function handleTerminalInput(ws, input) {
  * @param {import('ws').WebSocket} ws
  */
 export function killTerminal(ws) {
-  const proc = activeShells.get(ws);
-  if (proc) {
+  const ptyProcess = activeShells.get(ws);
+  if (ptyProcess) {
     try {
-      proc.kill("SIGTERM");
-      // Hard kill if still alive in 2 seconds
-      setTimeout(() => {
-        try {
-          proc.kill("SIGKILL");
-        } catch {}
-      }, 2000);
+      ptyProcess.kill();
     } catch {}
     activeShells.delete(ws);
   }

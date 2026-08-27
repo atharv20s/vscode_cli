@@ -132,21 +132,31 @@ class App {
 
     // Interactive Terminal Socket Handlers
     window.wsClient.on("open", () => {
-      window.wsClient.send("terminal_init", { shell: this.currentShell || "powershell" });
+      window.wsClient.send("terminal_init", {
+        shell: this.currentShell || "powershell",
+        cols: this.term ? this.term.cols : 80,
+        rows: this.term ? this.term.rows : 24
+      });
     });
 
     if (window.wsClient.isConnected) {
-      window.wsClient.send("terminal_init", { shell: this.currentShell || "powershell" });
+      window.wsClient.send("terminal_init", {
+        shell: this.currentShell || "powershell",
+        cols: this.term ? this.term.cols : 80,
+        rows: this.term ? this.term.rows : 24
+      });
     }
 
     window.wsClient.on("terminal_output", (data) => {
-      if (data && data.text) {
-        this.logTerminal(data.text, "normal");
+      if (data && data.text && this.term) {
+        this.term.write(data.text);
       }
     });
 
     window.wsClient.on("terminal_exit", (data) => {
-      this.logTerminal(`[System] Terminal session exited with code ${data.code}.\n`, "info");
+      if (this.term) {
+        this.term.write(`\r\n[System] Terminal session exited with code ${data.code}.\r\n`);
+      }
     });
   }
 
@@ -632,145 +642,13 @@ class App {
     }
 
     // Terminal Input & Right-Click to Paste
-    const termInput = document.getElementById("terminal-input");
-    const termPanel = document.getElementById("panel-terminal");
-
-    this.cmdHistory = [];
-    this.historyIndex = -1;
-
-    // Right-Click on Terminal to Paste from Clipboard
-    if (termPanel) {
-      termPanel.addEventListener("contextmenu", async (e) => {
-        e.preventDefault();
-        try {
-          const text = await navigator.clipboard.readText();
-          if (text && termInput) {
-            termInput.value += text;
-            termInput.focus();
-            this.logTerminal(`[Terminal] Pasted from clipboard`, "info");
-          }
-        } catch (err) {
-          console.warn("Clipboard read permission:", err);
-        }
-      });
-    }
-
-    const clearTermBtn = document.getElementById("btn-clear-terminal");
-    const pasteTermBtn = document.getElementById("btn-paste-terminal");
-
-    if (clearTermBtn) {
-      clearTermBtn.addEventListener("click", () => {
-        const outputEl = document.getElementById("terminal-output-logs");
-        if (outputEl) {
-          outputEl.innerHTML = `<div class="term-line info">[System] Terminal output cleared.</div>`;
-        }
-      });
-    }
-
-    if (pasteTermBtn) {
-      pasteTermBtn.addEventListener("click", async () => {
-        try {
-          const text = await navigator.clipboard.readText();
-          if (text && termInput) {
-            // Split pasted text by newlines and run each command sequentially
-            const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
-            if (lines.length > 1) {
-              this.logTerminal(`[Terminal] Pasted ${lines.length} commands from clipboard`, "info");
-              for (const line of lines) {
-                await this.executeTerminalCommand(line);
-              }
-            } else if (lines.length === 1) {
-              termInput.value = lines[0];
-              termInput.focus();
-              this.logTerminal(`[Terminal] Pasted from clipboard`, "info");
-            }
-          }
-        } catch (err) {
-          console.warn("Paste error:", err);
-        }
-      });
-    }
-
-    if (termInput) {
-      // Handle paste directly into input (Ctrl+V) — same multi-line splitting
-      termInput.addEventListener("paste", (e) => {
-        const text = e.clipboardData?.getData("text") || "";
-        const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
-        if (lines.length > 1) {
-          e.preventDefault();
-          this.logTerminal(`[Terminal] Pasted ${lines.length} commands`, "info");
-          (async () => {
-            for (const line of lines) {
-              await this.executeTerminalCommand(line);
-            }
-          })();
-        }
-        // If single line, let default paste behavior work normally
-      });
-
-      termInput.addEventListener("keydown", async (e) => {
-        // Ctrl+C: Send interrupt signal (\x03) to terminal
-        if (e.ctrlKey && e.key.toLowerCase() === "c") {
-          e.preventDefault();
-          window.wsClient.send("terminal_input", { command: "\x03" });
-          return;
-        }
-
-        // Up Arrow: Previous Command History
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          if (this.cmdHistory.length > 0) {
-            if (this.historyIndex === -1) {
-              this.historyIndex = this.cmdHistory.length - 1;
-            } else if (this.historyIndex > 0) {
-              this.historyIndex--;
-            }
-            termInput.value = this.cmdHistory[this.historyIndex] || "";
-          }
-          return;
-        }
-
-        // Down Arrow: Next Command History
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          if (this.historyIndex !== -1) {
-            if (this.historyIndex < this.cmdHistory.length - 1) {
-              this.historyIndex++;
-              termInput.value = this.cmdHistory[this.historyIndex] || "";
-            } else {
-              this.historyIndex = -1;
-              termInput.value = "";
-            }
-          }
-          return;
-        }
-
-        // Enter: Execute Command
-        if (e.key === "Enter" && termInput.value.trim()) {
-          const cmd = termInput.value.trim();
-          termInput.value = "";
-          await this.executeTerminalCommand(cmd);
-        }
-      });
-    }
+    this.initTerminalUI();
   }
 
   async executeTerminalCommand(cmd) {
-    if (!cmd || !cmd.trim()) return;
-    cmd = cmd.trim();
-
-    this.cmdHistory.push(cmd);
-    this.historyIndex = -1;
-
-    // Send input directly to running interactive shell stdin via WebSocket
+    if (!cmd) return;
     if (window.wsClient.isConnected) {
-      window.wsClient.send("terminal_input", { command: cmd + "\n" });
-    } else {
-      this.logTerminal(`[System] WebSocket disconnected. Reconnecting terminal...`, "info");
-      window.wsClient.connect(this.token);
-      setTimeout(() => {
-        window.wsClient.send("terminal_input", { command: cmd + "\n" });
-      }, 1000);
+      window.wsClient.send("terminal_input", { command: cmd + "\r" });
     }
   }
 
@@ -1948,6 +1826,85 @@ class App {
     }
 
     termLogs.scrollTop = termLogs.scrollHeight;
+  }
+
+  initTerminalUI() {
+    const container = document.getElementById("terminal-container");
+    if (!container) return;
+
+    const term = new Terminal({
+      theme: {
+        background: '#0d0e12',
+        foreground: '#e2e8f0',
+        cursor: '#6366f1',
+        black: '#000000',
+        red: '#ef4444',
+        green: '#10b981',
+        yellow: '#f59e0b',
+        blue: '#6366f1',
+        magenta: '#a855f7',
+        cyan: '#06b6d4',
+        white: '#cbd5e1'
+      },
+      fontFamily: 'var(--font-mono)',
+      fontSize: 12,
+      cursorBlink: true,
+      scrollback: 1000
+    });
+
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(container);
+    fitAddon.fit();
+
+    this.term = term;
+    this.fitAddon = fitAddon;
+
+    term.onData((data) => {
+      if (window.wsClient.isConnected) {
+        window.wsClient.send("terminal_input", { command: data });
+      }
+    });
+
+    const handleResize = () => {
+      try {
+        fitAddon.fit();
+        if (window.wsClient.isConnected) {
+          window.wsClient.send("terminal_resize", { cols: term.cols, rows: term.rows });
+        }
+      } catch (err) {
+        console.warn("Resize error:", err);
+      }
+    };
+
+    setTimeout(handleResize, 100);
+    window.addEventListener("resize", handleResize);
+
+    const resizeObserver = new ResizeObserver(() => {
+      handleResize();
+    });
+    resizeObserver.observe(container);
+
+    const clearTermBtn = document.getElementById("btn-clear-terminal");
+    if (clearTermBtn) {
+      clearTermBtn.addEventListener("click", () => {
+        term.clear();
+      });
+    }
+
+    const pasteTermBtn = document.getElementById("btn-paste-terminal");
+    if (pasteTermBtn) {
+      pasteTermBtn.addEventListener("click", async () => {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text && window.wsClient.isConnected) {
+            window.wsClient.send("terminal_input", { command: text });
+          }
+        } catch (err) {
+          console.warn("Paste error:", err);
+        }
+      });
+    }
   }
 
   escapeHtml(str) {

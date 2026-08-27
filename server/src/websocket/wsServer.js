@@ -26,7 +26,7 @@ import {
   sendMessage,
   disconnectIdle,
 } from "./connectionManager.js";
-import { initTerminal, handleTerminalInput, killTerminal } from "./terminalManager.js";
+import { initTerminal, handleTerminalInput, killTerminal, resizeTerminal } from "./terminalManager.js";
 
 /** Heartbeat interval in ms */
 const HEARTBEAT_INTERVAL = 30000;
@@ -168,11 +168,15 @@ async function handleMessage(ws, msg, user) {
       break;
 
     case "terminal_init":
-      initTerminal(ws, payload?.shell || "powershell");
+      initTerminal(ws, payload?.shell || "powershell", payload?.cols, payload?.rows);
       break;
 
     case "terminal_input":
       handleTerminalInput(ws, payload?.command || "");
+      break;
+
+    case "terminal_resize":
+      resizeTerminal(ws, payload?.cols, payload?.rows);
       break;
 
     default:
