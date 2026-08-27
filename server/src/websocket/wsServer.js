@@ -391,26 +391,29 @@ async function handleChat(ws, payload, user) {
       },
     });
 
-    if (user?.id && user.id !== "anonymous") {
-      try {
-        let convId = conversationId;
-        if (!convId) {
-          const newConv = createConversation(
-            user.id,
-            message.slice(0, 50) + (message.length > 50 ? "..." : "")
-          );
-          convId = newConv.id;
-        }
-
-        if (result?.messages?.length) {
-          updateConversationMessages(convId, result.messages);
-        }
-
-        sendMessage(ws, "conversation_updated", {
-          conversationId: convId,
-          messageCount: result.messages.length,
+    // Persist conversation and messages to SQLite database for all sessions (including local guest)
+    try {
+      let convId = conversationId || `conv_${Date.now()}`;
+      const existing = getConversation(convId);
+      if (!existing) {
+        createConversation({
+          id: convId,
+          sessionId: ws.sessionId || "default_session",
+          title: message.slice(0, 50) + (message.length > 50 ? "..." : ""),
+          model: model || "codestral-latest",
         });
-      } catch {}
+      }
+
+      if (result?.messages?.length) {
+        updateConversationMessages(convId, result.messages, result.totalTokens || 0);
+      }
+
+      sendMessage(ws, "conversation_updated", {
+        conversationId: convId,
+        messageCount: result?.messages?.length || 0,
+      });
+    } catch (dbErr) {
+      logger.warn(`Failed to persist conversation: ${dbErr.message}`);
     }
   } catch (err) {
     if (!abortController.signal.aborted) {
