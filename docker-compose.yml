@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # 1. Main Agentic AI Studio Backend & Web IDE
+  studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-studio-app
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - JWT_SECRET=${JWT_SECRET:-production-super-secret-jwt-key}
+      - REDIS_URL=redis://redis:6379
+      - DB_TYPE=mysql
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=secret
+      - MYSQL_DATABASE=agentic_db
+    volumes:
+      - studio-data:/app/data
+      - studio-workspace:/app/workspace
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - agentic-network
+
+  # 2. MySQL 8 Database
+  mysql:
+    image: mysql:8
+    container_name: agentic-studio-mysql
+    restart: unless-stopped
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_DATABASE: agentic_db
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-psecret"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentic-network
+
+  # 3. Redis High-Speed Cache
+  redis:
+    image: redis:7-alpine
+    container_name: agentic-studio-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - agentic-network
+
+volumes:
+  studio-data:
+  studio-workspace:
+  mysql-data:
+  redis-data:
+
+networks:
+  agentic-network:
+    driver: bridge

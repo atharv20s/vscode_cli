@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+server/node_modules
+npm-debug.log
+.git
+.gitignore
+.env
+.env.local
+server/data/*.db*
+server/workspace/*
+.venv
+__pycache__
+*.pyc
+.DS_Store

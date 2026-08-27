@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ath-ide
+  labels:
+    name: ath-ide
+    app.kubernetes.io/name: ath-ide
+    app.kubernetes.io/part-of: ath-ai-studio

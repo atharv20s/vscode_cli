@@ -10,6 +10,7 @@ import { logger } from "../config/logger.js";
 import { config } from "../config/env.js";
 import { eventBus } from "../websocket/eventBus.js";
 import { LocalBackend } from "./backends/localBackend.js";
+import { RemoteSSHBackend } from "./backends/remoteSSHBackend.js";
 
 /**
  * Terminal Lifecycle States
@@ -20,7 +21,7 @@ import { LocalBackend } from "./backends/localBackend.js";
  * @typedef {Object} TerminalSession
  * @property {string} sessionId
  * @property {string} workspaceId
- * @property {'local' | 'kubernetes'} backend
+ * @property {'local' | 'remote_ssh' | 'kubernetes'} backend
  * @property {string} cwd
  * @property {string} shell
  * @property {number} cols
@@ -44,6 +45,11 @@ class TerminalSessionManager {
    * @param {string} sessionId - Unique session ID
    * @param {object} options
    * @param {string} [options.shellType='powershell']
+   * @param {string} [options.backendType='local'] - 'local' | 'remote_ssh'
+   * @param {string} [options.remoteHost] - Remote VM host/IP if backendType === 'remote_ssh'
+   * @param {number} [options.remotePort=22] - Remote VM SSH port
+   * @param {string} [options.remoteUser='ubuntu'] - Remote SSH user
+   * @param {string} [options.remoteKeyPath] - Path to private key
    * @param {number} [options.cols=80]
    * @param {number} [options.rows=24]
    * @param {string} [options.workspaceId='default']
@@ -59,11 +65,12 @@ class TerminalSessionManager {
     const cols = options.cols || 80;
     const rows = options.rows || 24;
     const workspaceId = options.workspaceId || "default";
+    const backendType = options.backendType || (options.remoteHost ? "remote_ssh" : "local");
 
     const session = {
       sessionId,
       workspaceId,
-      backend: "local",
+      backend: backendType,
       cwd,
       shell,
       cols,
@@ -78,6 +85,27 @@ class TerminalSessionManager {
     this._emitStateChange(session, "connecting");
 
     try {
+      if (backendType === "remote_ssh" && options.remoteHost) {
+        const backend = new RemoteSSHBackend();
+        session.backendInstance = backend;
+
+        const ptyProcess = backend.spawn({
+          sessionId,
+          host: options.remoteHost,
+          port: options.remotePort || 22,
+          username: options.remoteUser || "ubuntu",
+          keyPath: options.remoteKeyPath || null,
+          cols,
+          rows,
+        });
+
+        session.pid = ptyProcess?.pid || null;
+        session.state = "ready";
+        this._emitStateChange(session, "ready");
+        logger.info(`TerminalSessionManager: Remote SSH Session ${sessionId} connected to ${options.remoteHost}`);
+        return session;
+      }
+
       const backend = new LocalBackend();
       session.backendInstance = backend;
 

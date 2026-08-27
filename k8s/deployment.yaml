@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ath-ide-core
+  namespace: ath-ide
+  labels:
+    app: ath-ide-core
+    tier: backend
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: ath-ide-core
+  template:
+    metadata:
+      labels:
+        app: ath-ide-core
+    spec:
+      serviceAccountName: ath-ide-sa
+      containers:
+        - name: ath-ide-server
+          image: ath-ide:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: ath-ide-config
+            - secretRef:
+                name: ath-ide-secrets
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3001
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3001
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: workspaces-volume
+              mountPath: /workspace
+      volumes:
+        - name: workspaces-volume
+          persistentVolumeClaim:
+            claimName: ath-ide-workspaces-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ath-ide-service
+  namespace: ath-ide
+  labels:
+    app: ath-ide-core
+spec:
+  type: ClusterIP
+  selector:
+    app: ath-ide-core
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3001
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ath-ide-ingress
+  namespace: ath-ide
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+    traefik.ingress.kubernetes.io/router.entrypoints: "web,websecure"
+    # WebSocket support annotations
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: "ath-ide-service"
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ath-ide-service
+                port:
+                  number: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ath-ide-hpa
+  namespace: ath-ide
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ath-ide-core
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

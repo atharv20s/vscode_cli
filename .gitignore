@@ -22,11 +22,18 @@
 server/node_modules/
 server/workspace/
 server/data/
+server/.env
 !cli.py
 !setup.py
 !hooks/
 !safety/
 !utils/
+!cloud/
+!k8s/
+!Dockerfile
+!docker-compose.yml
+!.env.example
+!.dockerignore
 
 # Python virtual environment
 pyvenv.cfg

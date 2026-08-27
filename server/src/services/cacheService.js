@@ -21,22 +21,29 @@ const localCache = new NodeCache({
 
 // Redis client (optional)
 let redisClient = null;
-const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+if (process.env.REDIS_URL && process.env.REDIS_URL !== "redis://localhost:6379") {
+  try {
+    redisClient = new Redis(redisUrl, {
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+      retryStrategy: () => null, // Don't spam retries if redis is not running
+      enableOfflineQueue: false,
+    });
 
-try {
-  redisClient = new Redis(redisUrl, {
-    lazyConnect: true,
-    maxRetriesPerRequest: 1,
-    retryStrategy: () => null, // Don't spam retries if redis is not running
-  });
-
-  redisClient
-    .connect()
-    .then(() => logger.info("⚡ Connected to Redis Cache on " + redisUrl))
-    .catch(() => {
+    redisClient.on("error", () => {
       redisClient = null;
     });
-} catch {
+
+    redisClient
+      .connect()
+      .then(() => logger.info("⚡ Connected to Redis Cache on " + redisUrl))
+      .catch(() => {
+        redisClient = null;
+      });
+  } catch {
+    redisClient = null;
+  }
+} else {
   redisClient = null;
 }
 
