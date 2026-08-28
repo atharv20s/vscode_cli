@@ -11,6 +11,7 @@ import { logger } from "../config/logger.js";
 import { config } from "../config/env.js";
 import { terminalSessionManager } from "./terminalSessionManager.js";
 import { processSupervisor } from "./processSupervisor.js";
+import { executionQueue } from "./executionQueue.js";
 
 /**
  * @typedef {'USER_INTERACTIVE' | 'AGENT_BACKGROUND' | 'AGENT_INTERACTIVE'} ExecutionMode
@@ -82,18 +83,26 @@ class ExecutionService {
       return { success: true, output: `Command sent to user interactive terminal.`, exitCode: 0, operationId };
     }
 
-    // Mode 2: AGENT_BACKGROUND (Delegate to ProcessSupervisor)
-    logger.debug(`ExecutionService: Delegating [${operationId}] to ProcessSupervisor: ${command}`);
-    return processSupervisor.execute({
-      command,
-      cwd,
-      shell,
+    // Mode 2: AGENT_BACKGROUND (Delegate through ExecutionQueue to ProcessSupervisor)
+    logger.debug(`ExecutionService: Enqueueing [${operationId}] in ExecutionQueue: ${command}`);
+    return executionQueue.enqueue({
+      userId: sessionId || "global",
+      priority: turnId ? "normal" : "high",
       timeout,
-      signal,
-      operationId,
-      turnId,
-      sessionId,
-      workspaceId,
+      metadata: { command, cwd, shell, operationId, turnId, sessionId },
+      taskFn: ({ signal: queueSignal }) => {
+        return processSupervisor.execute({
+          command,
+          cwd,
+          shell,
+          timeout,
+          signal: signal || queueSignal,
+          operationId,
+          turnId,
+          sessionId,
+          workspaceId,
+        });
+      },
     });
   }
 

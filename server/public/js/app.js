@@ -2338,6 +2338,32 @@ class App {
       }
       this.logTerminal(`[Preview Error] ${data?.error || "Preview failed to start"}`, "error");
     });
+
+    // Live Server Health & Execution/Compilation Queue Monitor
+    window.wsClient.on("system.health", (metrics) => {
+      const healthDot = document.getElementById("health-pulse-dot");
+      const healthText = document.getElementById("status-server-text");
+      const queueText = document.getElementById("status-queue-text");
+
+      if (healthText) {
+        healthText.textContent = `Host: ${metrics.status.toUpperCase()} (${metrics.cpuPercent}% CPU | ${metrics.processRssMB || metrics.memoryUsedMB}MB)`;
+      }
+      if (healthDot) {
+        if (metrics.status === "healthy") healthDot.style.background = "#10b981";
+        else if (metrics.status === "degraded") healthDot.style.background = "#f59e0b";
+        else healthDot.style.background = "#ef4444";
+      }
+      if (queueText) {
+        queueText.textContent = `Queue: ${metrics.queue?.running || 0} active / ${metrics.queue?.queued || 0} waiting`;
+      }
+    });
+
+    window.wsClient.on("queue.job_enqueued", (data) => {
+      const queueText = document.getElementById("status-queue-text");
+      if (queueText) {
+        queueText.textContent = `Queue: #${data.position} in queue`;
+      }
+    });
   }
 
   /**

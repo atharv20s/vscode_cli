@@ -446,6 +446,14 @@
         <span style="display:flex; align-items:center; gap:4px;"><i data-lucide="file" style="width:12px; height:12px;"></i> <span id="status-active-file">No file open</span></span>
       </div>
       <div class="statusbar-right" style="display:flex; align-items:center; gap:12px;">
+        <span id="status-server-health" style="display:flex; align-items:center; gap:4px; color:#10b981;" title="Real-time Server CPU, RAM & Compiler Queue">
+          <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#10b981;" id="health-pulse-dot"></span>
+          <span id="status-server-text">Host: Healthy</span>
+        </span>
+        <span id="status-queue-count" style="display:flex; align-items:center; gap:4px;" title="Asynchronous Execution & Compiler Queue">
+          <i data-lucide="zap" style="width:11px; height:11px; color:#f59e0b;"></i>
+          <span id="status-queue-text">Queue: 0</span>
+        </span>
         <span id="status-turn-count">Turn: 0/15</span>
         <span id="status-workspace-path">WS: workspace</span>
       </div>

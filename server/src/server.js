@@ -78,6 +78,18 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Live System Health Metrics endpoint (CPU, RAM, Queue)
+app.get("/api/health/metrics", async (req, res) => {
+  const { systemHealthService } = await import("./services/systemHealthService.js");
+  res.json(systemHealthService.getMetrics());
+});
+
+// Compilation & Execution Queue Status endpoint
+app.get("/api/queue/status", async (req, res) => {
+  const { executionQueue } = await import("./services/executionQueue.js");
+  res.json(executionQueue.getStatus());
+});
+
 // Direct LLM test endpoint — bypasses agent loop entirely
 app.get("/api/test-llm", async (req, res) => {
   try {
@@ -173,6 +185,10 @@ async function startServer() {
 
     // Initialize External MCP Servers in background
     initMcpServers().catch((err) => logger.warn("MCP init background error", { error: err.message }));
+
+    // Start System Health Monitoring & Load Balancing Service
+    const { systemHealthService } = await import("./services/systemHealthService.js");
+    systemHealthService.start(3000);
 
     // Start HTTP Server
     server.listen(config.port, () => {
