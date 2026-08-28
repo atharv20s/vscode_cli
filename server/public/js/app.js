@@ -205,12 +205,6 @@ class App {
       }
     });
 
-    window.wsClient.on("terminal_output", (data) => {
-      if (data && data.text && this.term) {
-        this.term.write(data.text);
-      }
-    });
-
     window.wsClient.on("terminal.state", (data) => {
       if (!data) return;
       const dot = document.getElementById("term-status-dot");

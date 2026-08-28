@@ -201,7 +201,6 @@ export class LocalBackend {
 
         if (ws) {
           sendMessage(ws, "terminal.output", { text: data, sessionId });
-          sendMessage(ws, "terminal_output", { text: data, sessionId });
         }
       });
 
