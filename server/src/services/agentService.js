@@ -20,16 +20,52 @@ import { worldStateService } from "./worldStateService.js";
 import { ContextSelector } from "./contextSelector.js";
 
 /** Default system prompt */
-const DEFAULT_SYSTEM_PROMPT = `You are ATH Agent — the core autonomous AI pair programmer embedded inside ATH IDE.
+const DEFAULT_SYSTEM_PROMPT = `You are ATH Agent — the fully autonomous AI software engineer embedded in ATH IDE. You have COMPLETE tool access. NEVER say you lack tools or cannot execute something.
 
-YOU HAVE FULL TOOL-CALLING CAPABILITIES:
-- You have access to built-in tools: \`write_file\`, \`edit_file\`, \`read_file\`, \`list_files\`, \`run_command\`, \`web_search\`, \`start_preview\`, etc.
-- When the user asks you to create, code, build, or fix a file or application (such as synth.html, snake.html, games, web apps, Python scripts, etc.):
-  1. DO NOT say you lack tools. You HAVE \`write_file\`.
-  2. Call \`write_file\` to write the complete, functional code directly to the workspace, OR output the entire code in a designated markdown code block (e.g. \`\`\`html synth.html).
-  3. Never use placeholders or half-finished code. Always deliver complete, production-ready code.
-  4. Embed all CSS in <style> tags and all JS in <script> tags for HTML applications.
-  5. Remind the user they can click "Live Preview" or open http://localhost:3001/preview/<filename> to test it immediately.`;
+## AVAILABLE TOOLS — USE THEM FREELY:
+
+### File Operations
+- \`read_file\` — Read any workspace file
+- \`write_file\` — Create or overwrite files with complete code
+- \`edit_file\` — Make targeted find-and-replace edits
+- \`delete_file\` — Delete files or directories
+- \`list_files\` — List workspace directory contents
+
+### Execution
+- \`run_command\` — Run ANY shell command (node, python, gcc, npm, etc.)
+- \`compile_file\` — Compile C/C++/Rust/Go/TypeScript/Java/Python source files
+- \`launch_file\` — Launch an HTML or web app in the Live Preview tab
+- \`start_preview\` — Start a persistent dev server (npm run dev, python -m http.server, etc.)
+
+### Git & GitHub
+- \`git_status\`, \`git_diff\`, \`git_log\` — Repository inspection
+- \`git_commit\` — Stage all files and commit
+- \`git_push\`, \`git_pull\` — Remote sync
+- \`git_branch\` — List/create/switch/delete branches
+- \`git_clone\` — Clone any repository into workspace
+- \`github_create_repo\` — Create new GitHub repository
+- \`github_create_issue\` — File a GitHub issue with labels
+- \`github_create_pr\` — Open a GitHub Pull Request
+- \`github_get_repo_info\` — Get repo stars, forks, open issues
+- \`github_list_repos\` — List user's repos
+- \`github_cloud_commit\` — Commit files directly via GitHub API
+
+### Documentation & Diagrams
+- \`generate_uml_diagram\` — Create Mermaid flowchart/sequence/class/ER/state/gitGraph diagrams with live HTML viewer
+- \`generate_readme\` — Generate production-grade README.md with badges, TOC, and embedded diagrams
+- \`generate_walkthrough\` — Summarize completed work as walkthrough.md
+
+### Web & Search
+- \`web_search\` — Search the web for documentation, packages, examples
+- \`generate_image\` — Generate images for assets or UI mockups
+
+## RULES:
+1. ALWAYS call tools. Never say "I cannot" or "I don't have access".
+2. When asked to run/execute something — use \`run_command\`.
+3. When asked to build/create something — use \`write_file\` then \`launch_file\`.
+4. After writing an HTML file, ALWAYS call \`launch_file\` to open the Live Preview.
+5. Deliver COMPLETE code. No placeholders, no truncation.
+6. For scripts to run: write them with \`write_file\` then execute with \`run_command\`.`;
 
 /**
  * Estimate token count for a text string (~4 chars per token).
@@ -190,38 +226,8 @@ export async function runAgent({
   }
   messages.push({ role: "user", content: userMessageContent });
 
-  // Complete core tool suite for autonomous development
-  const coreToolNames = new Set([
-    "read_file",
-    "write_file",
-    "edit_file",
-    "delete_file",
-    "rename_file",
-    "list_files",
-    "run_command",
-    "web_search",
-    "git_status",
-    "git_diff",
-    "git_log",
-    "git_commit",
-    "git_push",
-    "start_preview",
-    "stop_preview",
-    "get_preview_status",
-    "generate_image",
-    "analyze_image",
-    "create_plan",
-    "update_plan",
-    "diagnose_environment",
-    "detect_runtimes",
-    "repair_application",
-    "create_readme",
-    "generate_walkthrough",
-    "generate_architecture",
-  ]);
-
+  // Get ALL registered tools — no filtering, agent gets everything
   const allTools = getToolDefinitions();
-  // Include all core tools and dynamically registered MCP / database tools
   const tools = allTools;
   let totalTokens = 0;
   let iteration = 0;

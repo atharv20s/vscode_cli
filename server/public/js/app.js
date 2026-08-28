@@ -1484,6 +1484,52 @@ class App {
       const images = this.pendingImages ? [...this.pendingImages] : [];
       if (!text && images.length === 0) return;
 
+      // ── Slash Command Interceptor ─────────────────────────────────────
+      if (text.startsWith("/")) {
+        const [rawCmd, ...restParts] = text.split(" ");
+        const cmd = rawCmd.toLowerCase();
+        const args = restParts.join(" ").trim();
+
+        const SLASH_EXPANSIONS = {
+          "/search":  `Search the web for: ${args || "..."}`,
+          "/git":     args ? `Run git ${args} in the workspace and show the output` : "Show git status and recent git log for the workspace",
+          "/plan":    args ? `Create a detailed implementation plan for: ${args}` : "Create an implementation plan for the current task",
+          "/edit":    args ? `Edit the file ${args} — open it, read it, and then ask what changes to make` : "Read the currently active file and suggest improvements",
+          "/image":   args ? `Generate an image of: ${args}` : "Generate a UI mockup image for this project",
+          "/run":     args ? `Run this command in the workspace terminal and show the output: ${args}` : "Run the main project file",
+          "/compile": args ? `Compile the file ${args} and report any errors` : "Compile the main source file in the workspace",
+          "/readme":  args ? `Generate a professional README.md for: ${args}` : "Generate a professional README.md for this project based on the workspace files",
+          "/diagram": args ? `Generate a UML diagram for: ${args}` : "Generate a system architecture UML diagram for this project",
+          "/ls":      "List all files in the workspace",
+          "/clear":   null, // special case
+          "/help":    null, // special case
+        };
+
+        if (cmd === "/clear") {
+          this.clearChatHistory();
+          composerInput.value = "";
+          return;
+        }
+
+        if (cmd === "/help") {
+          composerInput.value = "";
+          this.renderSystemMessage(`**Available Slash Commands:**\n\n\`/search <query>\` — Web search\n\`/git [command]\` — Git operations (status, log, push, etc.)\n\`/plan <task>\` — Generate implementation plan\n\`/edit [file]\` — Edit a file\n\`/image <description>\` — Generate an image\n\`/run <command>\` — Execute a shell command\n\`/compile <file>\` — Compile source code\n\`/readme [project]\` — Generate README.md\n\`/diagram [description]\` — Generate UML diagram\n\`/ls\` — List workspace files\n\`/clear\` — Clear chat\n\`/help\` — Show this help`);
+          return;
+        }
+
+        const expanded = SLASH_EXPANSIONS[cmd];
+        if (expanded) {
+          composerInput.value = expanded;
+          // Don't send yet — let user see the expanded text and optionally modify it
+          composerInput.focus();
+          composerInput.setSelectionRange(expanded.length, expanded.length);
+          return;
+        }
+
+        // Unknown slash command — treat as plain text (fall through)
+      }
+      // ── End Slash Command Interceptor ────────────────────────────────
+
       if (!this.currentConversationId) {
         this.currentConversationId = `conv_${Date.now()}`;
         localStorage.setItem("ath_current_conv_id", this.currentConversationId);
@@ -1539,6 +1585,21 @@ class App {
       this.setGeneratingState(false);
       this.renderError(err.message);
     }
+  }
+
+  /**
+   * Render a system/info message in the chat timeline
+   */
+  renderSystemMessage(markdown) {
+    const timeline = document.getElementById("chat-timeline");
+    if (!timeline) return;
+    const el = document.createElement("div");
+    el.className = "message-bubble system-message";
+    el.style.cssText = "background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.2); border-radius: 10px; padding: 12px 16px; margin: 8px 0; font-size: 13px; color: #94a3b8; white-space: pre-wrap;";
+    // Simple markdown bold
+    el.innerHTML = markdown.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`(.+?)`/g, "<code style='background:#1e293b;padding:1px 5px;border-radius:3px;color:#38bdf8'>$1</code>").replace(/\n/g, "<br>");
+    timeline.appendChild(el);
+    timeline.scrollTop = timeline.scrollHeight;
   }
 
   /**
