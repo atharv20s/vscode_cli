@@ -2696,9 +2696,9 @@ class App {
     const statusBadge = document.getElementById("preview-status-badge");
     const statusText = document.getElementById("preview-status-text");
 
-    let url = target || "index.html";
+    let url = (target || "index.html").trim();
     if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      const cleanPath = url.startsWith("/") ? url.slice(1) : url;
+      const cleanPath = url.replace(/^\/+/, "").replace(/^preview\//, "");
       url = `/preview/${cleanPath}`;
     }
 

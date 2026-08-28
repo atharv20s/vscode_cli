@@ -58,10 +58,13 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// 3. Static Files for Browser IDE UI & Live Workspace Preview
+// 3. Static Files for Live Workspace Preview & Browser IDE UI
+app.use("/preview", express.static(config.workspaceRoot));
+app.use("/preview", (req, res) => {
+  res.status(404).send(`<!DOCTYPE html><html><body style="background:#0f172a;color:#f8fafc;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div style="text-align:center;"><h2>Preview File Not Found</h2><p style="color:#94a3b8;">${req.path} was not found in the workspace root.</p></div></body></html>`);
+});
 const publicDir = path.resolve(__dirname, "../public");
 app.use(express.static(publicDir));
-app.use("/preview", express.static(config.workspaceRoot));
 
 // 4. API Routes
 app.use("/api", generalLimiter);

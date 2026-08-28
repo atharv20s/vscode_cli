@@ -300,7 +300,8 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
-      const filePath = (args.path || args.file || args.filename || "index.html").replace(/^\/+/, "");
+      const raw = (args.path || args.file || args.filename || "index.html").trim();
+      const filePath = raw.replace(/^\/+/, "").replace(/^preview\//, "");
       const { previewService } = await import("../services/previewService.js");
       
       const previewUrl = `/preview/${filePath}`;
