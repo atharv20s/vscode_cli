@@ -206,24 +206,34 @@ async function startServer() {
 }
 
 // Graceful shutdown handling
-process.on("SIGINT", async () => {
-  logger.info("Gracefully shutting down...");
-  await shutdownMcpServers();
-  closeDatabase();
-  server.close(() => {
-    logger.info("Server terminated.");
-    process.exit(0);
-  });
-});
+async function handleShutdown(signal) {
+  logger.info(`Gracefully shutting down on ${signal}...`);
+  try {
+    const { systemHealthService } = await import("./services/systemHealthService.js");
+    systemHealthService.stop();
+  } catch {}
 
-process.on("SIGTERM", async () => {
-  logger.info("Gracefully terminating...");
-  await shutdownMcpServers();
-  closeDatabase();
+  try {
+    await shutdownMcpServers();
+  } catch {}
+
+  try {
+    closeDatabase();
+  } catch {}
+
+  // Force exit after 300ms if sockets take too long to close
+  const forceTimer = setTimeout(() => {
+    process.exit(0);
+  }, 300);
+
   server.close(() => {
+    clearTimeout(forceTimer);
     logger.info("Server terminated.");
     process.exit(0);
   });
-});
+}
+
+process.on("SIGINT", () => handleShutdown("SIGINT"));
+process.on("SIGTERM", () => handleShutdown("SIGTERM"));
 
 startServer();
