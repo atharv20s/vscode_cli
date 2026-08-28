@@ -1668,9 +1668,7 @@ class App {
 
     try {
       const userId = this.currentUser?.id || this.currentUser?.username || localStorage.getItem("ath_guest_id") || "guest";
-      const headers = {
-        "x-user-id": userId,
-      };
+      const headers = {};
       if (this.token && this.token !== "null" && this.token !== "undefined") {
         headers["Authorization"] = `Bearer ${this.token}`;
       }
@@ -1679,7 +1677,7 @@ class App {
       try {
         res = await fetch(`/api/agent/conversations?userId=${encodeURIComponent(userId)}`, { headers });
       } catch {
-        res = await fetch(`${window.location.origin}/api/agent/conversations?userId=${encodeURIComponent(userId)}`, { headers });
+        res = await fetch(`/api/agent/conversations`);
       }
 
       if (!res.ok) {
@@ -1688,9 +1686,11 @@ class App {
           localStorage.removeItem("token");
           res = await fetch("/api/agent/conversations");
         }
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        }
+      }
+
+      if (!res || !res.ok) {
+        listEl.innerHTML = '<div class="empty-hint" style="padding:6px;font-size:12px;color:var(--text-dim);">No saved threads yet.</div>';
+        return;
       }
 
       const data = await res.json();
