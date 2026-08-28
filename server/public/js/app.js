@@ -825,7 +825,26 @@ class App {
         headers["Authorization"] = `Bearer ${this.token}`;
       }
 
-      const response = await fetch("/api/workspace/files", { headers });
+      let response;
+      try {
+        response = await fetch("/api/workspace/files", { headers });
+      } catch (networkErr) {
+        // Fallback fetch with explicit full origin if needed
+        response = await fetch(window.location.origin + "/api/workspace/files");
+      }
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          // Token expired, clear token and retry anonymously
+          this.token = null;
+          localStorage.removeItem("token");
+          response = await fetch("/api/workspace/files");
+        }
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+      }
+
       const data = await response.json();
 
       if (data.entries && data.entries.length > 0) {
@@ -879,14 +898,6 @@ class App {
         fileTree.innerHTML = `<div class="empty-hint" style="padding:14px;color:var(--text-dim);">Workspace is empty. Click + above to create files.</div>`;
       }
     } catch (err) {
-      // Auto-retry once after 1.5s in case server was starting up
-      if (!this._fileRetryCount) {
-        this._fileRetryCount = 1;
-        setTimeout(() => {
-          this._fileRetryCount = 0;
-          this.loadWorkspaceFiles();
-        }, 1500);
-      }
       fileTree.innerHTML = `
         <div style="padding:14px;color:#ef4444;font-size:12px;">
           Failed to load files: ${this.escapeHtml(err.message)}
