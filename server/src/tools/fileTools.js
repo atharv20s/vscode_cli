@@ -66,18 +66,21 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const filePath = args.path || args.filePath || args.file || args.filename || "index.html";
+      const fileContent = args.content !== undefined ? args.content : (args.data !== undefined ? args.data : (args.code !== undefined ? args.code : (args.text !== undefined ? args.text : "")));
+
       // Permission Check
       const perm = await permissionEngine.checkPermission({
         resource: "file",
         action: "write",
-        payload: args,
+        payload: { path: filePath, content: fileContent },
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
       try {
-        const result = await workspaceService.writeFile(args.path, args.content, {
+        const result = await workspaceService.writeFile(filePath, fileContent, {
           source: "agent",
           actor: "agent",
           turnId: ctx.turnId,

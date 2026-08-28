@@ -344,17 +344,24 @@ export async function runAgent({
         tool_calls: pendingToolCalls.map((tc) => ({
           id: tc.id,
           type: "function",
-          function: { name: tc.name, arguments: tc.arguments },
+          function: {
+            name: tc.name,
+            arguments: tc.rawArguments || (typeof tc.arguments === "string" ? tc.arguments : JSON.stringify(tc.arguments || {})),
+          },
         })),
       });
 
       // Execute each tool
       for (const tc of pendingToolCalls) {
         let args = {};
-        try {
-          args = JSON.parse(tc.arguments || "{}");
-        } catch {
-          args = {};
+        if (typeof tc.arguments === "object" && tc.arguments !== null) {
+          args = tc.arguments;
+        } else if (typeof tc.arguments === "string") {
+          try {
+            args = JSON.parse(tc.arguments || "{}");
+          } catch {
+            args = { raw: tc.arguments };
+          }
         }
 
         onEvent({

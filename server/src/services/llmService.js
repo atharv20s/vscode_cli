@@ -193,24 +193,37 @@ export async function streamChatCompletion({ messages, tools, model, onEvent, si
         fullContent += delta.content;
         onEvent({
           type: "text_delta",
-          data: { content: delta.content },
+          data: { content: delta.content, text: delta.content },
         });
       }
 
       // Stream tool calls
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
-          const idx = tc.index;
+          const idx = tc.index !== undefined ? tc.index : 0;
           if (!toolCallsAcc[idx]) {
             toolCallsAcc[idx] = {
               id: tc.id || `call_${idx}_${Date.now()}`,
-              name: tc.function?.name || "",
+              name: "",
               arguments: "",
             };
           }
           if (tc.id) toolCallsAcc[idx].id = tc.id;
-          if (tc.function?.name) toolCallsAcc[idx].name += tc.function.name;
-          if (tc.function?.arguments) toolCallsAcc[idx].arguments += tc.function.arguments;
+          if (tc.function?.name) {
+            const chunkName = tc.function.name;
+            if (!toolCallsAcc[idx].name) {
+              toolCallsAcc[idx].name = chunkName;
+            } else if (chunkName === toolCallsAcc[idx].name) {
+              // Full name repeated in chunk, keep as is
+            } else if (chunkName.startsWith(toolCallsAcc[idx].name)) {
+              toolCallsAcc[idx].name = chunkName;
+            } else if (!toolCallsAcc[idx].name.includes(chunkName)) {
+              toolCallsAcc[idx].name += chunkName;
+            }
+          }
+          if (tc.function?.arguments) {
+            toolCallsAcc[idx].arguments += tc.function.arguments;
+          }
         }
       }
     }
@@ -219,14 +232,15 @@ export async function streamChatCompletion({ messages, tools, model, onEvent, si
     const completedToolCalls = Object.values(toolCallsAcc).map((tc) => {
       let parsedArgs = {};
       try {
-        parsedArgs = JSON.parse(tc.arguments);
+        parsedArgs = typeof tc.arguments === "string" ? JSON.parse(tc.arguments) : tc.arguments;
       } catch {
         parsedArgs = { raw: tc.arguments };
       }
       return {
         id: tc.id,
-        name: tc.name,
+        name: tc.name.trim(),
         arguments: parsedArgs,
+        rawArguments: typeof tc.arguments === "string" ? tc.arguments : JSON.stringify(tc.arguments || {}),
       };
     });
 
