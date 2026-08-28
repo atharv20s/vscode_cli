@@ -1592,9 +1592,29 @@ class App {
     listEl.innerHTML = '<div class="empty-hint" style="padding:6px;font-size:12px;">Loading threads...</div>';
 
     try {
-      const res = await fetch("/api/agent/conversations", {
-        headers: { Authorization: `Bearer ${this.token || ""}` },
-      });
+      const headers = {};
+      if (this.token && this.token !== "null" && this.token !== "undefined") {
+        headers["Authorization"] = `Bearer ${this.token}`;
+      }
+
+      let res;
+      try {
+        res = await fetch("/api/agent/conversations", { headers });
+      } catch {
+        res = await fetch(window.location.origin + "/api/agent/conversations");
+      }
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          this.token = null;
+          localStorage.removeItem("token");
+          res = await fetch("/api/agent/conversations");
+        }
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+      }
+
       const data = await res.json();
       if (!data.conversations || data.conversations.length === 0) {
         listEl.innerHTML = '<div class="empty-hint" style="padding:6px;font-size:12px;color:var(--text-dim);">No saved threads yet.</div>';
