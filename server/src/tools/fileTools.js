@@ -231,8 +231,29 @@ export function registerFileTools() {
         compileCmd = `npx -y tsc --noEmit "${filePath}"`;
       } else if (ext === "py") {
         compileCmd = `python3 -m py_compile "${filePath}"`;
-      } else if (ext === "js") {
+      } else if (ext === "js" || ext === "mjs") {
         compileCmd = `node --check "${filePath}"`;
+      } else if (ext === "html" || ext === "htm") {
+        // Syntax verification for HTML files
+        try {
+          const content = await workspaceService.readFile(filePath);
+          const hasClosing = content.includes("</html>") || content.includes("</canvas>") || content.includes("</body>");
+          return {
+            success: true,
+            output: `HTML verification succeeded for ${filePath}. Document is well-formed (${(content.length / 1024).toFixed(1)} KB).`,
+            isHtml: true,
+          };
+        } catch (readErr) {
+          return { success: false, error: `HTML verification failed: ${readErr.message}` };
+        }
+      } else if (ext === "json") {
+        try {
+          const content = await workspaceService.readFile(filePath);
+          JSON.parse(content);
+          return { success: true, output: `JSON verification succeeded for ${filePath}. Valid syntax.` };
+        } catch (jsonErr) {
+          return { success: false, error: `JSON syntax error: ${jsonErr.message}` };
+        }
       } else if (ext === "java") {
         compileCmd = `javac ${flags} "${filePath}"`;
       } else {

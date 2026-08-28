@@ -266,6 +266,28 @@ class PreviewService {
   }
 
   /**
+   * Directly mark static file or custom URL ready and broadcast to frontend.
+   */
+  setReady(url, port = 3001) {
+    this.state.status = "running";
+    this.state.url = url;
+    this.state.port = port;
+    this.state.error = null;
+
+    eventBus.publish(EVENT_TOPICS.PREVIEW_READY, {
+      url,
+      port,
+      timestamp: Date.now(),
+    }, {
+      source: "preview",
+      actor: "agent",
+    });
+
+    logger.info(`PreviewService: Static file preview ready at ${url}`);
+    return { success: true, url, port };
+  }
+
+  /**
    * Get current preview state.
    */
   getPreviewState() {

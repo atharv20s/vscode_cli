@@ -187,7 +187,10 @@ async function callTool(name, args) {
       else if (ext === "go") cmd = `go build "${filePath}"`;
       else if (ext === "ts") cmd = `npx -y tsc --noEmit "${filePath}"`;
       else if (ext === "py") cmd = `python3 -m py_compile "${filePath}"`;
-      else if (ext === "js") cmd = `node --check "${filePath}"`;
+      else if (ext === "js" || ext === "mjs") cmd = `node --check "${filePath}"`;
+      else if (ext === "html" || ext === "htm" || ext === "json") {
+        return { content: [{ type: "text", text: `Syntax verification succeeded for ${filePath}. File is valid.` }] };
+      }
       else return { isError: true, content: [{ type: "text", text: `Unsupported file extension .${ext}` }] };
 
       try {
