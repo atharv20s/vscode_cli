@@ -55,6 +55,7 @@ class WorldStateService {
    */
   _setupListeners() {
     eventBus.subscribe("*", (envelope) => {
+      const type = envelope?.type || "";
       // 1. Filesystem Events (Only poll Git when files actually change)
       if (type.startsWith("file.") || type === "git.commit" || type === "git.pushed") {
         this.state.workspace.treeVersion++;

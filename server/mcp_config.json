@@ -4,11 +4,6 @@
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "./workspace"],
       "transport": "stdio"
-    },
-    "neon-postgres": {
-      "command": "npx",
-      "args": ["-y", "@neondatabase/mcp-server-neon", "postgresql://neondb_owner:npg_ZbYDmQOneP29@ep-wispy-paper-azo8fw46-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"],
-      "transport": "stdio"
     }
   }
 }
