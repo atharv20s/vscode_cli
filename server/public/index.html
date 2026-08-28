@@ -404,12 +404,15 @@
 
         <!-- Composer Input Area -->
         <div class="composer-container">
-          <div class="composer-chips">
-            <button class="chip-cmd" onclick="app.insertCommand('/search ')">/search</button>
-            <button class="chip-cmd" onclick="app.insertCommand('/git ')">/git</button>
-            <button class="chip-cmd" onclick="app.insertCommand('/plan ')">/plan</button>
-            <button class="chip-cmd" onclick="app.insertCommand('/edit ')">/edit</button>
-            <button class="chip-cmd" onclick="app.insertCommand('/image ')">/image</button>
+          <div class="composer-chips" style="display:flex;gap:5px;overflow-x:auto;padding:6px 10px;scrollbar-width:none;">
+            <button class="chip-cmd" onclick="app.executeOneTouch('run')" style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.35);color:#34d399;" title="Run current script in terminal">⚡ Run</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('compile')" style="background:rgba(56,189,248,0.15);border:1px solid rgba(56,189,248,0.35);color:#38bdf8;" title="Compile active file">🔨 Compile</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('preview')" style="background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.35);color:#c084fc;" title="Open Live Preview">🌐 Preview</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('diagram')" title="Generate UML Diagram">📐 UML</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('git')" title="Check Git Status">🌿 Git</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('readme')" title="Generate README">📝 Readme</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('search')" title="Web Search">🔍 Search</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('health')" title="System Health Metrics">📊 Metrics</button>
           </div>
           <div id="composer-image-previews" class="composer-image-previews" style="display:none;gap:6px;padding:6px 10px;flex-wrap:wrap;border-bottom:1px solid var(--border-subtle);"></div>
           <div class="composer-input-box">

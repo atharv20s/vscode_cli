@@ -2081,12 +2081,14 @@ class App {
         }
       }
 
-      // 2. Highlight any code blocks in final message
+      // 2. Highlight and attach 1-touch execution toolbars to all code blocks
       if (window.hljs) {
         this.currentAssistantMessageEl.querySelectorAll("pre code").forEach((el) => {
           hljs.highlightElement(el);
         });
       }
+      this.attachCodeBlockActionToolbars(this.currentAssistantMessageEl);
+
       if (this.currentAssistantContent) {
         this.chatHistory.push({ role: "assistant", content: this.currentAssistantContent, timestamp: Date.now() });
         this.saveChatToCache();
@@ -2128,40 +2130,183 @@ class App {
   }
 
   /**
-   * Attach 1-click Copy button to all markdown code blocks.
+   * One-Touch Execution Controller
+   * Immediately runs, compiles, previews, or checks system tasks with 1 tap/click!
    */
-  attachCopyButtons(container) {
+  async executeOneTouch(action) {
+    const activeFile = window.editorManager?.activeTab || null;
+
+    switch (action) {
+      case "run": {
+        if (activeFile) {
+          const ext = activeFile.split(".").pop().toLowerCase();
+          if (ext === "js" || ext === "mjs") {
+            this.sendTerminalCommand(`node "${activeFile}"`);
+          } else if (ext === "py") {
+            this.sendTerminalCommand(`python3 "${activeFile}"`);
+          } else if (ext === "html") {
+            this.openPreview(activeFile);
+          } else if (ext === "c" || ext === "cpp" || ext === "rs" || ext === "go") {
+            this.suggestPrompt(`/compile ${activeFile}`, true);
+          } else {
+            this.sendTerminalCommand(`cat "${activeFile}"`);
+          }
+        } else {
+          this.suggestPrompt("Check workspace files and run the main entry point", true);
+        }
+        break;
+      }
+
+      case "compile": {
+        if (activeFile) {
+          this.suggestPrompt(`/compile ${activeFile}`, true);
+        } else {
+          this.suggestPrompt("Compile the main source file in the workspace", true);
+        }
+        break;
+      }
+
+      case "preview": {
+        const target = activeFile && activeFile.endsWith(".html") ? activeFile : "index.html";
+        this.openPreview(target);
+        break;
+      }
+
+      case "diagram": {
+        this.suggestPrompt("/diagram", true);
+        break;
+      }
+
+      case "git": {
+        this.suggestPrompt("/git", true);
+        break;
+      }
+
+      case "readme": {
+        this.suggestPrompt("/readme", true);
+        break;
+      }
+
+      case "search": {
+        const composerInput = document.getElementById("composer-input");
+        if (composerInput) {
+          composerInput.value = "/search ";
+          composerInput.focus();
+        }
+        break;
+      }
+
+      case "health": {
+        try {
+          const res = await fetch("/api/health/metrics");
+          const data = await res.json();
+          this.renderSystemMessage(`📊 **System Health Metrics**\n\n• **Memory:** ${data.memory?.heapUsedMB || 0} MB used / ${data.memory?.rssMB || 0} MB RSS\n• **CPU Usage:** ${data.cpu?.userSeconds || 0}s user time\n• **Uptime:** ${data.uptime || 0}s\n• **Queue Jobs:** ${data.queue?.active || 0} active / ${data.queue?.queued || 0} queued`);
+        } catch {
+          this.suggestPrompt("Show system health metrics", true);
+        }
+        break;
+      }
+    }
+  }
+
+  /**
+   * Send a command directly to the active interactive terminal session
+   */
+  sendTerminalCommand(cmd) {
+    if (window.wsClient && window.wsClient.isConnected) {
+      window.wsClient.send("terminal.input", { data: cmd + "\r\n" });
+      this.logTerminal(`[Run] Sent: ${cmd}`, "info");
+      // Switch bottom panel to terminal
+      const termTab = document.querySelector('.panel-tab[data-panel="terminal"]');
+      if (termTab) termTab.click();
+    }
+  }
+
+  /**
+   * Attach Interactive 1-Touch Action Toolbars to all Code Blocks
+   * Provides: ▶ Run in Terminal, 📋 Copy, 🌐 Live Preview
+   */
+  attachCodeBlockActionToolbars(container) {
     if (!container) return;
     container.querySelectorAll("pre").forEach((pre) => {
-      if (pre.querySelector(".copy-code-btn")) return;
+      if (pre.querySelector(".code-action-toolbar")) return;
 
-      const btn = document.createElement("button");
-      btn.className = "copy-code-btn";
-      btn.innerHTML = `<i data-lucide="copy"></i> Copy`;
-
-      btn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const codeEl = pre.querySelector("code");
-        const textToCopy = codeEl ? codeEl.innerText : pre.innerText;
-
-        try {
-          await navigator.clipboard.writeText(textToCopy);
-          btn.innerHTML = `<i data-lucide="check"></i> Copied!`;
-          btn.classList.add("copied");
-          setTimeout(() => {
-            btn.innerHTML = `<i data-lucide="copy"></i> Copy`;
-            btn.classList.remove("copied");
-            lucide.createIcons();
-          }, 2000);
-        } catch (err) {
-          console.warn("Copy failed:", err);
-        }
-      });
+      const codeEl = pre.querySelector("code");
+      const rawText = codeEl ? codeEl.innerText : pre.innerText;
+      const langClass = codeEl ? Array.from(codeEl.classList).find(c => c.startsWith("language-")) : "";
+      const lang = langClass ? langClass.replace("language-", "").toLowerCase() : "";
 
       pre.style.position = "relative";
-      pre.appendChild(btn);
+      pre.style.paddingTop = "32px";
+
+      const toolbar = document.createElement("div");
+      toolbar.className = "code-action-toolbar";
+      toolbar.style.cssText = "position:absolute;top:0;left:0;right:0;height:28px;background:rgba(15,23,42,0.85);border-bottom:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:space-between;padding:0 8px;font-size:11px;color:#94a3b8;border-top-left-radius:6px;border-top-right-radius:6px;z-index:5;";
+
+      const leftTag = document.createElement("span");
+      leftTag.style.cssText = "font-family:var(--font-mono);font-weight:600;font-size:10px;text-transform:uppercase;color:#38bdf8;";
+      leftTag.textContent = lang || "code";
+
+      const rightBtns = document.createElement("div");
+      rightBtns.style.cssText = "display:flex;align-items:center;gap:6px;";
+
+      // 1. Run in Terminal Button (for shell, node, python, etc.)
+      const isRunnable = ["bash", "sh", "shell", "powershell", "js", "javascript", "python", "py", "node"].includes(lang) || rawText.includes("node ") || rawText.includes("python ") || rawText.includes("npm ");
+      if (isRunnable) {
+        const runBtn = document.createElement("button");
+        runBtn.style.cssText = "background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);color:#34d399;border-radius:3px;padding:2px 6px;font-size:10px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:3px;transition:all 0.15s;";
+        runBtn.innerHTML = "▶ <span>Run</span>";
+        runBtn.onmouseenter = () => { runBtn.style.background = "#10b981"; runBtn.style.color = "#fff"; };
+        runBtn.onmouseleave = () => { runBtn.style.background = "rgba(16,185,129,0.15)"; runBtn.style.color = "#34d399"; };
+        runBtn.onclick = (e) => {
+          e.stopPropagation();
+          this.sendTerminalCommand(rawText.trim());
+        };
+        rightBtns.appendChild(runBtn);
+      }
+
+      // 2. HTML Preview Button
+      if (lang === "html" || rawText.includes("<!DOCTYPE html>") || rawText.includes("<html")) {
+        const previewBtn = document.createElement("button");
+        previewBtn.style.cssText = "background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.4);color:#c084fc;border-radius:3px;padding:2px 6px;font-size:10px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:3px;";
+        previewBtn.innerHTML = "🌐 <span>Preview</span>";
+        previewBtn.onclick = (e) => {
+          e.stopPropagation();
+          const target = this.detectTargetFile() || "index.html";
+          this.openPreview(target);
+        };
+        rightBtns.appendChild(previewBtn);
+      }
+
+      // 3. Copy Button
+      const copyBtn = document.createElement("button");
+      copyBtn.style.cssText = "background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);color:#cbd5e1;border-radius:3px;padding:2px 6px;font-size:10px;cursor:pointer;display:flex;align-items:center;gap:3px;";
+      copyBtn.innerHTML = "📋 <span>Copy</span>";
+      copyBtn.onclick = async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(rawText);
+          copyBtn.innerHTML = "✓ <span>Copied!</span>";
+          copyBtn.style.color = "#34d399";
+          setTimeout(() => {
+            copyBtn.innerHTML = "📋 <span>Copy</span>";
+            copyBtn.style.color = "#cbd5e1";
+          }, 2000);
+        } catch {}
+      };
+      rightBtns.appendChild(copyBtn);
+
+      toolbar.appendChild(leftTag);
+      toolbar.appendChild(rightBtns);
+      pre.insertBefore(toolbar, pre.firstChild);
     });
-    lucide.createIcons();
+  }
+
+  /**
+   * Attach 1-click Copy button to all markdown code blocks (backward compat).
+   */
+  attachCopyButtons(container) {
+    this.attachCodeBlockActionToolbars(container);
   }
 
   /**
