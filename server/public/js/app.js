@@ -1913,11 +1913,39 @@ class App {
           hljs.highlightElement(el);
         });
       }
-      this.attachCopyButtons(this.currentAssistantMessageEl);
-
       if (this.currentAssistantContent) {
         this.chatHistory.push({ role: "assistant", content: this.currentAssistantContent, timestamp: Date.now() });
         this.saveChatToCache();
+
+        // 3. Auto-detect HTML / Web App files to render interactive Preview Card & Auto-Launch
+        const htmlMatch = this.currentAssistantContent.match(/(?:[a-zA-Z0-9_\-./]+)\.html/i) || (this.activeStreamingFile?.endsWith(".html") ? [this.activeStreamingFile] : null);
+        if (htmlMatch && htmlMatch[0]) {
+          const targetFile = htmlMatch[0].replace(/[`"']/g, "");
+          const previewCard = document.createElement("div");
+          previewCard.className = "live-preview-action-card";
+          previewCard.style.cssText = "margin-top:12px;padding:10px 14px;background:rgba(168,85,247,0.12);border:1px solid rgba(168,85,247,0.35);border-radius:6px;display:flex;align-items:center;justify-content:space-between;gap:12px;";
+          previewCard.innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px;">
+              <i data-lucide="globe" style="width:20px;height:20px;color:#c084fc;flex-shrink:0;"></i>
+              <div>
+                <div style="font-size:12px;font-weight:600;color:#f8fafc;">Live Web Preview Ready</div>
+                <div style="font-size:11px;color:#cbd5e1;font-family:var(--font-mono);">${this.escapeHtml(targetFile)}</div>
+              </div>
+            </div>
+            <button onclick="app.openPreview('${targetFile}')" class="btn btn-primary" style="background:#a855f7;color:#fff;border:none;padding:6px 14px;font-size:11px;font-weight:600;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:5px;box-shadow:0 2px 8px rgba(168,85,247,0.4);">
+              <i data-lucide="play" style="width:12px;height:12px;"></i>
+              <span>Launch Live Preview</span>
+            </button>
+          `;
+          this.currentAssistantMessageEl.appendChild(previewCard);
+          if (window.lucide) window.lucide.createIcons();
+
+          // If prompt contains start / run / play / preview / launch, auto-open immediately
+          const lastUserPrompt = this.chatHistory.filter(m => m.role === "user").slice(-1)[0]?.content || "";
+          if (/start|run|play|preview|launch|open|show/i.test(lastUserPrompt)) {
+            this.openPreview(targetFile);
+          }
+        }
       }
     }
     this.currentAssistantMessageEl = null;
@@ -2260,6 +2288,15 @@ class App {
       });
     }
 
+    // Tab bar Live Preview Button
+    const livePreviewBtn = document.getElementById("btn-live-preview");
+    if (livePreviewBtn) {
+      livePreviewBtn.addEventListener("click", () => {
+        const activeFile = window.editorManager?.activeFile || "index.html";
+        this.openPreview(activeFile);
+      });
+    }
+
     // Live preview event listeners
     window.wsClient.on("preview.started", () => {
       if (statusText) statusText.textContent = "Starting...";
@@ -2301,6 +2338,34 @@ class App {
       }
       this.logTerminal(`[Preview Error] ${data?.error || "Preview failed to start"}`, "error");
     });
+  }
+
+  /**
+   * Opens any file or URL in the embedded Live Web Preview pane.
+   * @param {string} target - file path (e.g. 'synth.html') or full URL
+   */
+  openPreview(target = "index.html") {
+    const previewContainer = document.getElementById("live-preview-view");
+    const previewIframe = document.getElementById("live-preview-iframe");
+    const previewInput = document.getElementById("preview-url-input");
+    const statusBadge = document.getElementById("preview-status-badge");
+    const statusText = document.getElementById("preview-status-text");
+
+    let url = target || "index.html";
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      const cleanPath = url.startsWith("/") ? url.slice(1) : url;
+      url = `/preview/${cleanPath}`;
+    }
+
+    if (previewIframe) previewIframe.src = url;
+    if (previewInput) previewInput.value = url;
+    if (previewContainer) previewContainer.style.display = "flex";
+    if (statusText) statusText.textContent = "Live Web App (Ready)";
+    if (statusBadge) {
+      statusBadge.style.color = "#10b981";
+      statusBadge.style.borderColor = "rgba(16,185,129,0.3)";
+      statusBadge.style.background = "rgba(16,185,129,0.1)";
+    }
   }
 
   escapeHtml(str) {

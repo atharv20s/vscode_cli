@@ -1,0 +1,16 @@
+{
+  "name": "ath-bridge",
+  "version": "1.0.0",
+  "description": "ATH IDE Hybrid Workstation Bridge Daemon for local Windows/Mac PC to Cloud IDE connection",
+  "main": "ath-bridge.js",
+  "bin": {
+    "ath-bridge": "./ath-bridge.js"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "node ath-bridge.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

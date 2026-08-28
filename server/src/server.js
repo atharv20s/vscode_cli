@@ -155,7 +155,11 @@ async function startServer() {
 
     // Initialize Database (Neon Cloud PostgreSQL if configured, plus SQLite local cache)
     if (config.databaseUrl) {
-      await initPostgres(config.databaseUrl);
+      try {
+        await initPostgres(config.databaseUrl);
+      } catch (pgErr) {
+        logger.warn(`Postgres initial connect failed: ${pgErr.message}. Falling back to local SQLite database.`);
+      }
     }
     initDatabase();
     logger.info("Database subsystem initialized successfully");
