@@ -25,7 +25,7 @@ import { previewService } from "../services/previewService.js";
 import { permissionEngine } from "../services/permissionEngine.js";
 import { LocalBackend } from "../services/backends/localBackend.js";
 import { eventBus, EVENT_TOPICS } from "./eventBus.js";
-import { createConversation, updateConversationMessages } from "../db/database.js";
+import { createConversation, updateConversationMessages, getConversation, listConversations, findOrCreateUserSession } from "../db/database.js";
 
 /** Heartbeat interval in ms */
 const HEARTBEAT_INTERVAL = 30000;
@@ -357,7 +357,7 @@ async function handleMessage(ws, msg, user) {
  * Handle agent chat messages — streams agent events back over WS.
  */
 async function handleChat(ws, payload, user) {
-  const { message, images, conversationId, model, systemPrompt, context } = payload || {};
+  const { message, images, conversationId, model, systemPrompt, context, conversationHistory } = payload || {};
 
   if (!message && (!images || images.length === 0)) {
     sendMessage(ws, "error", { message: "Missing 'message' or 'images' in chat payload" });
@@ -367,24 +367,38 @@ async function handleChat(ws, payload, user) {
   const abortController = new AbortController();
   activeAborts.set(ws, abortController);
 
+  // Resolve the session ID tied to this user (so conversations are scoped per-user)
+  const userId = user?.id || user?.sessionId || ws.userId || null;
+  const sessionId = ws.sessionId || `sess_guest_${Date.now()}`;
+
   logger.info("Agent chat started", {
     user: user?.username || "anonymous",
+    userId,
+    sessionId,
     messageLength: message?.length || 0,
     imageCount: images?.length || 0,
     model,
     hasContext: Boolean(context),
   });
 
+  // Build the conversation history from the client payload (trimmed to last 40 turns to stay within context)
+  const sanitizedHistory = Array.isArray(conversationHistory)
+    ? conversationHistory
+        .filter((m) => m.role && m.content)
+        .slice(-40)
+        .map((m) => ({ role: m.role, content: typeof m.content === "string" ? m.content : JSON.stringify(m.content) }))
+    : [];
+
   try {
     const result = await runAgent({
       message: message || "",
       images: images || [],
       context,
-      conversationHistory: [],
+      conversationHistory: sanitizedHistory,
       model: model || undefined,
       systemPrompt: systemPrompt || undefined,
       workspaceDir: config.workspaceRoot,
-      sessionId: ws.sessionId,
+      sessionId,
       signal: abortController.signal,
       onEvent: (event) => {
         sendMessage(ws, event.type, {
@@ -394,16 +408,19 @@ async function handleChat(ws, payload, user) {
       },
     });
 
-    // Persist conversation and messages to SQLite database for all sessions (including local guest)
+    // Persist conversation and messages to SQLite scoped by user identity
     try {
       let convId = conversationId || `conv_${Date.now()}`;
       const existing = getConversation(convId);
+      const convTitle = (message || "").slice(0, 60) + ((message || "").length > 60 ? "..." : "");
+
       if (!existing) {
         createConversation({
           id: convId,
-          sessionId: ws.sessionId || "default_session",
-          title: message.slice(0, 50) + (message.length > 50 ? "..." : ""),
-          model: model || "codestral-latest",
+          sessionId,
+          userId,           // store user identity directly
+          title: convTitle,
+          model: model || "devstral",
         });
       }
 
@@ -413,6 +430,7 @@ async function handleChat(ws, payload, user) {
 
       sendMessage(ws, "conversation_updated", {
         conversationId: convId,
+        title: convTitle,
         messageCount: result?.messages?.length || 0,
       });
     } catch (dbErr) {

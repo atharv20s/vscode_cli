@@ -76,7 +76,7 @@ import { v4 as uuidv4 } from "uuid";
  */
 export function getConversations(req, res) {
   try {
-    const userOrSession = req.user?.id || req.user?.sessionId || null;
+    const userOrSession = req.user?.id || req.user?.username || req.headers["x-user-id"] || req.query.userId || null;
     const list = listConversations(userOrSession);
     res.json({ success: true, conversations: list });
   } catch (err) {
@@ -88,15 +88,17 @@ export function getConversations(req, res) {
  * POST /api/agent/conversations — Create a new conversation.
  */
 export function createNewConversation(req, res) {
-  const { title, model } = req.body || {};
+  const { title, model, userId } = req.body || {};
   const convId = `conv_${uuidv4().replace(/-/g, "").slice(0, 16)}`;
   const convTitle = title || "New Conversation";
   const sid = req.user?.sessionId || "default_session";
+  const uid = req.user?.id || req.user?.username || userId || req.headers["x-user-id"] || null;
 
   try {
     createConversation({
       id: convId,
       sessionId: sid,
+      userId: uid,
       title: convTitle,
       model: model || config.openrouterModel,
     });

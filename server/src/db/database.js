@@ -59,6 +59,7 @@ export function initDatabase() {
     CREATE TABLE IF NOT EXISTS conversations (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
+      user_id TEXT,
       title TEXT,
       messages TEXT DEFAULT '[]',
       model TEXT,
@@ -80,9 +81,15 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_cache_created ON cache_entries(created_at);
   `);
 
-  try {
-    db.exec("ALTER TABLE users ADD COLUMN password_hash TEXT;");
-  } catch {}
+  // Run safe migrations (ignore errors on already-existing columns)
+  const migrations = [
+    "ALTER TABLE users ADD COLUMN password_hash TEXT;",
+    "ALTER TABLE conversations ADD COLUMN user_id TEXT;",
+    "CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);",
+  ];
+  for (const migration of migrations) {
+    try { db.exec(migration); } catch {}
+  }
 
   return db;
 }
@@ -175,23 +182,45 @@ export function touchSession(sessionId) {
 // Conversation queries
 // ============================================
 
-export function createConversation({ id, sessionId, title, model }) {
+/**
+ * Find or create a session for a given user (needed for WS connections).
+ */
+export function findOrCreateUserSession(sessionId, userId) {
+  const sid = sessionId || `sess_${Date.now()}`;
+  try {
+    const existing = getDatabase().prepare("SELECT id FROM sessions WHERE id = ?").get(sid);
+    if (!existing) {
+      // Ensure user record exists
+      const uid = userId || "usr_default_guest";
+      getDatabase()
+        .prepare("INSERT OR IGNORE INTO users (id, username, email) VALUES (?, ?, ?)")
+        .run(uid, uid.startsWith("usr_") ? uid : "guest", null);
+      getDatabase()
+        .prepare("INSERT OR IGNORE INTO sessions (id, user_id) VALUES (?, ?)")
+        .run(sid, uid);
+    }
+    return sid;
+  } catch {
+    return sid;
+  }
+}
+
+export function createConversation({ id, sessionId, userId, title, model }) {
   const sid = sessionId || "default_session";
 
   // Ensure default user and session exist so foreign key never fails
   try {
     const existingSession = getDatabase().prepare("SELECT id FROM sessions WHERE id = ?").get(sid);
     if (!existingSession) {
-      const defaultUser = getDatabase().prepare("SELECT id FROM users LIMIT 1").get();
-      const userId = defaultUser ? defaultUser.id : "usr_default_guest";
-      getDatabase().prepare("INSERT OR IGNORE INTO users (id, username, email) VALUES (?, ?, ?)").run(userId, "guest", "guest@local.studio");
-      getDatabase().prepare("INSERT OR IGNORE INTO sessions (id, user_id) VALUES (?, ?)").run(sid, userId);
+      const uid = userId || "usr_default_guest";
+      getDatabase().prepare("INSERT OR IGNORE INTO users (id, username, email) VALUES (?, ?, ?)").run(uid, "guest", "guest@local.studio");
+      getDatabase().prepare("INSERT OR IGNORE INTO sessions (id, user_id) VALUES (?, ?)").run(sid, uid);
     }
   } catch {}
 
   return getDatabase()
-    .prepare("INSERT INTO conversations (id, session_id, title, model) VALUES (?, ?, ?, ?)")
-    .run(id, sid, title, model);
+    .prepare("INSERT INTO conversations (id, session_id, user_id, title, model) VALUES (?, ?, ?, ?, ?)")
+    .run(id, sid, userId || null, title, model);
 }
 
 export function getConversation(id) {
@@ -223,11 +252,14 @@ export function listConversations(userIdOrSessionId) {
         SELECT c.id, c.title, c.model, c.total_tokens, c.messages, c.created_at, c.updated_at
         FROM conversations c
         LEFT JOIN sessions s ON c.session_id = s.id
-        WHERE c.session_id = ? OR s.user_id = ? OR s.id = ?
+        WHERE c.user_id = ?
+           OR c.session_id = ?
+           OR s.user_id = ?
+           OR s.id = ?
         ORDER BY c.updated_at DESC
         LIMIT 100
       `)
-      .all(userIdOrSessionId, userIdOrSessionId, userIdOrSessionId);
+      .all(userIdOrSessionId, userIdOrSessionId, userIdOrSessionId, userIdOrSessionId);
   }
   return getDatabase()
     .prepare("SELECT id, title, model, total_tokens, messages, created_at, updated_at FROM conversations ORDER BY updated_at DESC LIMIT 50")

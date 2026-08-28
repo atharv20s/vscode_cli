@@ -175,11 +175,22 @@ class App {
       if (agentStateEl) agentStateEl.textContent = "Agent: Stopped/Error";
     });
 
+    window.wsClient.on("conversation_updated", (data) => {
+      this.loadInlineThreads();
+      if (data?.title) {
+        const titleEl = document.getElementById("current-thread-title");
+        if (titleEl && (!titleEl.textContent || titleEl.textContent === "New Thread")) {
+          titleEl.textContent = data.title;
+        }
+      }
+    });
+
     window.wsClient.on("connected", (data) => {
       if (data && data.workspace) {
         const workspacePathEl = document.getElementById("status-workspace-path");
         if (workspacePathEl) workspacePathEl.textContent = `WS: ${data.workspace}`;
       }
+      this.loadInlineThreads();
     });
 
     // Terminal State & Output Listeners
@@ -1560,11 +1571,14 @@ class App {
       const activeFile = window.editorManager?.activeTab || null;
       const openFiles = Array.from(window.editorManager?.openTabs?.keys() || []);
       const activeContent = activeFile ? window.editorManager?.openTabs?.get(activeFile)?.content?.slice(0, 3000) : null;
+      const userId = this.currentUser?.id || this.currentUser?.username || localStorage.getItem("ath_guest_id") || "guest";
 
       window.wsClient.send("chat", {
         message: text,
         images,
         conversationId: this.currentConversationId,
+        conversationHistory: this.chatHistory.slice(-40),
+        userId,
         model: this.currentModel || "devstral",
         mode: this.currentMode || "agent",
         context: {
@@ -1653,16 +1667,19 @@ class App {
     listEl.innerHTML = '<div class="empty-hint" style="padding:6px;font-size:12px;">Loading threads...</div>';
 
     try {
-      const headers = {};
+      const userId = this.currentUser?.id || this.currentUser?.username || localStorage.getItem("ath_guest_id") || "guest";
+      const headers = {
+        "x-user-id": userId,
+      };
       if (this.token && this.token !== "null" && this.token !== "undefined") {
         headers["Authorization"] = `Bearer ${this.token}`;
       }
 
       let res;
       try {
-        res = await fetch("/api/agent/conversations", { headers });
+        res = await fetch(`/api/agent/conversations?userId=${encodeURIComponent(userId)}`, { headers });
       } catch {
-        res = await fetch(window.location.origin + "/api/agent/conversations");
+        res = await fetch(`${window.location.origin}/api/agent/conversations?userId=${encodeURIComponent(userId)}`, { headers });
       }
 
       if (!res.ok) {
@@ -1748,10 +1765,29 @@ class App {
     if (timeline) {
       timeline.innerHTML = "";
       try {
-        const msgs = typeof conv.messages === "string" ? JSON.parse(conv.messages) : (conv.messages || []);
-        this.chatHistory = msgs;
+        let msgs = typeof conv.messages === "string" ? JSON.parse(conv.messages) : (conv.messages || []);
+        // If raw messages array from LLM, convert to display format
+        if (Array.isArray(msgs)) {
+          this.chatHistory = msgs.filter(m => m.role === "user" || m.role === "assistant");
+          this.chatHistory.forEach((msg) => {
+            if (msg.role === "user") {
+              const msgEl = document.createElement("div");
+              msgEl.className = "chat-msg user";
+              msgEl.innerHTML = `<div class="chat-bubble"><span>${this.escapeHtml(msg.content)}</span></div>`;
+              timeline.appendChild(msgEl);
+            } else if (msg.role === "assistant" && msg.content) {
+              const msgEl = document.createElement("div");
+              msgEl.className = "chat-msg agent";
+              const bubble = document.createElement("div");
+              bubble.className = "chat-bubble";
+              bubble.innerHTML = window.marked ? marked.parse(msg.content) : this.escapeHtml(msg.content);
+              msgEl.appendChild(bubble);
+              timeline.appendChild(msgEl);
+            }
+          });
+          timeline.scrollTop = timeline.scrollHeight;
+        }
         this.saveChatToCache();
-        this.restoreChatFromCache();
       } catch {
         this.clearChatHistory();
       }
