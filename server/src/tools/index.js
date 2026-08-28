@@ -34,6 +34,28 @@ export function listTools() {
   return Array.from(tools.keys());
 }
 
+const TOOL_ALIASES = {
+  execute_command: "run_command",
+  exec_command: "run_command",
+  shell: "run_command",
+  terminal: "run_command",
+  bash: "run_command",
+  readFile: "read_file",
+  writeFile: "write_file",
+  editFile: "edit_file",
+  deleteFile: "delete_file",
+  listFiles: "list_files",
+  list_dir: "list_files",
+  listDirectory: "list_files",
+  compile: "compile_file",
+  compileCode: "compile_file",
+  compile_code: "compile_file",
+  launch: "launch_file",
+  preview: "launch_file",
+  launch_preview: "launch_file",
+  startPreview: "start_preview",
+};
+
 /**
  * Execute a tool by name.
  * @param {string} name - Tool name
@@ -42,7 +64,8 @@ export function listTools() {
  * @returns {Promise<{ success: boolean, output?: string, error?: string }>}
  */
 export async function executeTool(name, args, context = {}) {
-  const tool = tools.get(name);
+  const resolvedName = TOOL_ALIASES[name] || name;
+  const tool = tools.get(resolvedName) || tools.get(name);
   if (!tool) {
     return { success: false, error: `Unknown tool: ${name}` };
   }

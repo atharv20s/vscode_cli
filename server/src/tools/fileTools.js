@@ -149,7 +149,151 @@ export function registerFileTools() {
     }
   );
 
-  // 4. list_files / list_dir
+  // 4. delete_file
+  registerTool(
+    {
+      type: "function",
+      function: {
+        name: "delete_file",
+        description: "Delete a file or directory from the workspace.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Relative path to the file or folder to delete" },
+          },
+          required: ["path"],
+        },
+      },
+    },
+    async (args, ctx = {}) => {
+      const targetPath = args.path || args.file || args.filename || args.filePath;
+      if (!targetPath) return { success: false, error: "Missing required 'path' parameter." };
+
+      const perm = await permissionEngine.checkPermission({
+        resource: "file",
+        action: "delete",
+        payload: { path: targetPath },
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason };
+
+      try {
+        const result = await workspaceService.deleteFile(targetPath, {
+          source: "agent",
+          actor: "agent",
+          turnId: ctx.turnId,
+          operationId: ctx.operationId,
+        });
+        return { success: true, output: `Successfully deleted ${result.path}` };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    }
+  );
+
+  // 5. compile_file
+  registerTool(
+    {
+      type: "function",
+      function: {
+        name: "compile_file",
+        description: "Compile or syntax-check a source code file (C, C++, Rust, Go, TypeScript, Java, Python, JavaScript) and report compile errors or generate binaries.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Relative path to the source file to compile" },
+            output_binary: { type: "string", description: "Optional output binary name (e.g. 'game.out', 'main')" },
+            flags: { type: "string", description: "Optional additional compiler flags (e.g. '-O3 -Wall -pthread')" },
+          },
+          required: ["path"],
+        },
+      },
+    },
+    async (args, ctx = {}) => {
+      const filePath = args.path || args.file || args.filename || args.filePath;
+      if (!filePath) return { success: false, error: "Missing 'path' parameter for compilation." };
+
+      const ext = filePath.split(".").pop().toLowerCase();
+      const outName = args.output_binary || filePath.replace(/\.[^/.]+$/, "");
+      const flags = args.flags || "";
+
+      let compileCmd = "";
+      if (ext === "c") {
+        compileCmd = `gcc ${flags} "${filePath}" -o "${outName}" -lm`;
+      } else if (ext === "cpp" || ext === "cc" || ext === "cxx") {
+        compileCmd = `g++ -std=c++20 ${flags} "${filePath}" -o "${outName}" -lm`;
+      } else if (ext === "rs") {
+        compileCmd = `rustc ${flags} "${filePath}" -o "${outName}"`;
+      } else if (ext === "go") {
+        compileCmd = `go build ${flags} -o "${outName}" "${filePath}"`;
+      } else if (ext === "ts" || ext === "tsx") {
+        compileCmd = `npx -y tsc --noEmit "${filePath}"`;
+      } else if (ext === "py") {
+        compileCmd = `python3 -m py_compile "${filePath}"`;
+      } else if (ext === "js") {
+        compileCmd = `node --check "${filePath}"`;
+      } else if (ext === "java") {
+        compileCmd = `javac ${flags} "${filePath}"`;
+      } else {
+        return { success: false, error: `Unsupported file extension for compilation: .${ext}` };
+      }
+
+      const { executionService } = await import("../services/executionService.js");
+      const res = await executionService.executeCommand(compileCmd, {
+        cwd: ctx.workspaceDir,
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+
+      if (res.exitCode === 0) {
+        return {
+          success: true,
+          output: `Compilation succeeded for ${filePath}.\nCommand: ${compileCmd}\n${res.stdout || "No warnings."}`,
+          binary: outName,
+        };
+      } else {
+        return {
+          success: false,
+          error: `Compilation failed with exit code ${res.exitCode}:\n${res.stderr || res.stdout}`,
+        };
+      }
+    }
+  );
+
+  // 6. launch_file / launch_preview
+  registerTool(
+    {
+      type: "function",
+      function: {
+        name: "launch_file",
+        description: "Launch an HTML file, web app, or frontend game in the IDE Live Preview browser tab.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Relative path to the HTML or web entry file (e.g. 'index.html', 'snake.html')" },
+            port: { type: "integer", description: "Optional port if starting a custom dev server" },
+          },
+          required: ["path"],
+        },
+      },
+    },
+    async (args, ctx = {}) => {
+      const filePath = (args.path || args.file || args.filename || "index.html").replace(/^\/+/, "");
+      const { previewService } = await import("../services/previewService.js");
+      
+      const previewUrl = `/preview/${filePath}`;
+      previewService.setReady(previewUrl, 3001);
+
+      return {
+        success: true,
+        output: `Application launched! Live preview is now open at ${previewUrl}`,
+        url: previewUrl,
+      };
+    }
+  );
+
+  // 7. list_files / list_dir
   registerTool(
     {
       type: "function",
