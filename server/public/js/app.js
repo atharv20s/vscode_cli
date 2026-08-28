@@ -885,6 +885,14 @@ class App {
         fileTree.innerHTML = `<div class="empty-hint" style="padding:14px;color:var(--text-dim);">Workspace is empty. Click + above to create files.</div>`;
       }
     } catch (err) {
+      // Auto-retry once after 1.5s in case server was starting up
+      if (!this._fileRetryCount) {
+        this._fileRetryCount = 1;
+        setTimeout(() => {
+          this._fileRetryCount = 0;
+          this.loadWorkspaceFiles();
+        }, 1500);
+      }
       fileTree.innerHTML = `
         <div style="padding:14px;color:#ef4444;font-size:12px;">
           Failed to load files: ${this.escapeHtml(err.message)}

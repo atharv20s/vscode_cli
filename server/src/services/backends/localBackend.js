@@ -105,7 +105,7 @@ export class LocalBackend {
         });
       }
     } else {
-      // POSIX (Linux / macOS)
+      // POSIX (Linux / macOS / Cloud Shell)
       const posixShells = [
         { id: "bash", name: "Bash", path: "/bin/bash" },
         { id: "zsh", name: "Zsh", path: "/bin/zsh" },
@@ -117,7 +117,7 @@ export class LocalBackend {
             id: s.id,
             name: s.name,
             executable: s.path,
-            args: ["-l"],
+            args: ["--norc", "--noprofile", "-i"],
             platform: process.platform,
           });
         }
@@ -159,13 +159,27 @@ export class LocalBackend {
 
     logger.info(`LocalBackend: Spawning node-pty process for session ${sessionId}: ${shellCmd} in ${sessionCwd}`);
 
+    // Build clean sanitized virtual environment
+    const sanitizedEnv = isWindows
+      ? { ...process.env, TERM: "xterm-256color" }
+      : {
+          PATH: process.env.PATH || "/usr/local/bin:/usr/bin:/bin",
+          TERM: "xterm-256color",
+          COLORTERM: "truecolor",
+          LANG: "en_US.UTF-8",
+          HOME: sessionCwd,
+          PWD: sessionCwd,
+          PS1: "\\[\\033[01;36m\\]workspace\\[\\033[00m\\]:\\[\\033[01;34m\\]~/project\\[\\033[00m\\]$ ",
+          PROMPT_COMMAND: "",
+        };
+
     try {
       this.ptyProcess = pty.spawn(shellCmd, shellArgs, {
         name: "xterm-256color",
         cols: cols || 80,
         rows: rows || 24,
         cwd: sessionCwd,
-        env: { ...process.env, TERM: "xterm-256color" },
+        env: sanitizedEnv,
       });
 
       // Stream PTY output to the EventBus and WebSocket
@@ -234,12 +248,45 @@ export class LocalBackend {
   }
 
   /**
+   * Dangerous host escape and command injection patterns to block.
+   */
+  static isDangerousCommand(input) {
+    if (typeof input !== "string") return false;
+    const lower = input.toLowerCase();
+    const blocked = [
+      "metadata.google.internal",
+      "gcloud auth",
+      "gcloud compute",
+      "rm -rf /",
+      "rm -rf /*",
+      "rm -rf /home",
+      "rm -rf /etc",
+      "rm -rf /usr",
+      "mkfs.",
+      "killall node",
+      "killall -9 node",
+      "pkill -9 node",
+      "/etc/shadow",
+      ":(){ :|:& };:",
+    ];
+    return blocked.some((b) => lower.includes(b));
+  }
+
+  /**
    * Write input data/keystrokes to the shell's stdin.
    */
   write(sessionId, data) {
-    if (this.ptyProcess) {
-      this.ptyProcess.write(data);
+    if (!this.ptyProcess) return;
+
+    if (LocalBackend.isDangerousCommand(data)) {
+      logger.warn(`Blocked dangerous terminal input from session ${sessionId}: ${data}`);
+      if (this.ptyProcess) {
+        this.ptyProcess.write("\x03"); // send Ctrl+C
+      }
+      return;
     }
+
+    this.ptyProcess.write(data);
   }
 
   /**

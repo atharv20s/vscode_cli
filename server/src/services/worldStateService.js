@@ -55,16 +55,9 @@ class WorldStateService {
    */
   _setupListeners() {
     eventBus.subscribe("*", (envelope) => {
-      const { type, source } = envelope;
-
-      // 1. Filesystem Events
-      if (type.startsWith("file.")) {
+      // 1. Filesystem Events (Only poll Git when files actually change)
+      if (type.startsWith("file.") || type === "git.commit" || type === "git.pushed") {
         this.state.workspace.treeVersion++;
-        this._scheduleGitPoll();
-      }
-
-      // 2. Completed Non-Git Agent Commands
-      if (type === "agent.command.completed" && source !== "gitService") {
         this._scheduleGitPoll();
       }
     });
