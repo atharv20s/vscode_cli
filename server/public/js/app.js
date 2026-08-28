@@ -1701,27 +1701,46 @@ class App {
 
       listEl.innerHTML = "";
       data.conversations.forEach((conv) => {
+        const isCurrent = this.currentConversationId === conv.id;
         const item = document.createElement("div");
-        item.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-radius:4px;cursor:pointer;background:rgba(255,255,255,0.03);";
-        item.onmouseenter = () => item.style.background = "rgba(255,255,255,0.08)";
-        item.onmouseleave = () => item.style.background = "rgba(255,255,255,0.03)";
+        item.style.cssText = `display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:6px;cursor:pointer;margin-bottom:3px;background:${isCurrent ? 'rgba(56,189,248,0.15)' : 'rgba(255,255,255,0.04)'};border:1px solid ${isCurrent ? 'rgba(56,189,248,0.4)' : 'rgba(255,255,255,0.06)'};transition:all 0.15s ease;`;
+        
+        item.onmouseenter = () => {
+          if (!isCurrent) item.style.background = "rgba(255,255,255,0.09)";
+        };
+        item.onmouseleave = () => {
+          if (!isCurrent) item.style.background = "rgba(255,255,255,0.04)";
+        };
 
-        const titleDiv = document.createElement("div");
-        titleDiv.style.cssText = "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#f8fafc;margin-right:8px;";
-        titleDiv.textContent = conv.title || "Untitled Conversation";
-        titleDiv.title = conv.title || "";
-        titleDiv.addEventListener("click", () => {
+        // Left section (Icon + Title + date)
+        const leftDiv = document.createElement("div");
+        leftDiv.style.cssText = "display:flex;align-items:center;gap:8px;flex:1;overflow:hidden;margin-right:8px;";
+        leftDiv.innerHTML = `
+          <span style="color:${isCurrent ? '#38bdf8' : '#94a3b8'};font-size:13px;flex-shrink:0;">💬</span>
+          <div style="flex:1;overflow:hidden;">
+            <div style="font-size:12px;font-weight:${isCurrent ? '600' : '400'};color:${isCurrent ? '#38bdf8' : '#f8fafc'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+              ${this.escapeHtml(conv.title || "Untitled Conversation")}
+            </div>
+            <div style="font-size:10px;color:#64748b;margin-top:1px;">
+              ${conv.updated_at ? new Date(conv.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Saved'}
+            </div>
+          </div>
+        `;
+        
+        leftDiv.addEventListener("click", () => {
           this.switchConversation(conv);
           const popover = document.getElementById("inline-threads-popover");
           if (popover) popover.style.display = "none";
         });
 
-        // Instant delete button
+        // Delete button
         const delBtn = document.createElement("button");
-        delBtn.className = "icon-btn";
-        delBtn.style.cssText = "padding:2px;opacity:0.6;background:none;border:none;color:#ef4444;cursor:pointer;display:flex;align-items:center;";
-        delBtn.title = "Delete thread immediately";
-        delBtn.innerHTML = '<i data-lucide="trash-2" style="width:12px;height:12px;"></i>';
+        delBtn.style.cssText = "background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);border-radius:4px;color:#ef4444;font-size:11px;padding:3px 6px;cursor:pointer;display:flex;align-items:center;gap:3px;flex-shrink:0;transition:all 0.15s;";
+        delBtn.title = "Delete this conversation";
+        delBtn.innerHTML = "🗑 <span style='font-size:10px;'>Del</span>";
+        delBtn.onmouseenter = () => { delBtn.style.background = "rgba(239,68,68,0.3)"; delBtn.style.color = "#fff"; };
+        delBtn.onmouseleave = () => { delBtn.style.background = "rgba(239,68,68,0.1)"; delBtn.style.color = "#ef4444"; };
+
         delBtn.addEventListener("click", async (e) => {
           e.stopPropagation();
           item.style.opacity = "0.3";
@@ -1739,11 +1758,10 @@ class App {
           }
         });
 
-        item.appendChild(titleDiv);
+        item.appendChild(leftDiv);
         item.appendChild(delBtn);
         listEl.appendChild(item);
       });
-      if (window.lucide) window.lucide.createIcons();
     } catch (err) {
       listEl.innerHTML = `<div style="padding:6px;font-size:11px;color:#ef4444;">Error loading: ${err.message}</div>`;
     }
@@ -1766,8 +1784,7 @@ class App {
       timeline.innerHTML = "";
       try {
         let msgs = typeof conv.messages === "string" ? JSON.parse(conv.messages) : (conv.messages || []);
-        // If raw messages array from LLM, convert to display format
-        if (Array.isArray(msgs)) {
+        if (Array.isArray(msgs) && msgs.length > 0) {
           this.chatHistory = msgs.filter(m => m.role === "user" || m.role === "assistant");
           this.chatHistory.forEach((msg) => {
             if (msg.role === "user") {
@@ -1785,14 +1802,29 @@ class App {
               timeline.appendChild(msgEl);
             }
           });
+          if (window.hljs) {
+            timeline.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el));
+          }
           timeline.scrollTop = timeline.scrollHeight;
+        } else {
+          // If no messages stored in DB, show notice
+          timeline.innerHTML = `
+            <div class="ai-greeting">
+              <div class="greeting-avatar"><i data-lucide="bot"></i></div>
+              <div class="greeting-content">
+                <h3>Thread: ${this.escapeHtml(conv.title || "Conversation")}</h3>
+                <p>Ready to continue this conversation. Type a prompt below.</p>
+              </div>
+            </div>
+          `;
+          if (window.lucide) window.lucide.createIcons();
         }
         this.saveChatToCache();
       } catch {
         this.clearChatHistory();
       }
     }
-    this.logTerminal(`Switched to conversation: "${conv.title}"`, "info");
+    this.logTerminal(`Loaded conversation: "${conv.title}"`, "info");
   }
 
   suggestPrompt(text, autoSend = false) {
