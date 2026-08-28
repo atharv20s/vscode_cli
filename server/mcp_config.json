@@ -4,6 +4,11 @@
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "./workspace"],
       "transport": "stdio"
+    },
+    "github-architecture": {
+      "command": "node",
+      "args": ["src/mcp/githubMcpServer.js"],
+      "transport": "stdio"
     }
   }
 }

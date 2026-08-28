@@ -315,5 +315,232 @@ export function registerGitTools() {
       }
     }
   );
+
+  // 9. git_pull
+  registerTool(
+    {
+      type: "function",
+      function: {
+        name: "git_pull",
+        description: "Fetch and integrate remote changes from GitHub into the current workspace.",
+        parameters: {
+          type: "object",
+          properties: {
+            remote: { type: "string", description: "Remote repository (default: 'origin')" },
+            branch: { type: "string", description: "Branch name (e.g. 'main')" },
+          },
+          required: [],
+        },
+      },
+    },
+    async (args, ctx = {}) => {
+      const { executionService } = await import("../services/executionService.js");
+      const remote = args.remote || "origin";
+      const branch = args.branch ? ` ${args.branch}` : "";
+      const res = await executionService.executeCommand(`git pull ${remote}${branch}`, {
+        cwd: ctx.workspaceDir || config.workspaceRoot,
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+      return { success: res.exitCode === 0, output: res.stdout || res.stderr };
+    }
+  );
+
+  // 10. git_branch
+  registerTool(
+    {
+      type: "function",
+      function: {
+        name: "git_branch",
+        description: "List branches, create a new branch, or switch branches.",
+        parameters: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["list", "create", "switch", "delete"], description: "Branch operation" },
+            name: { type: "string", description: "Branch name (for create, switch, or delete)" },
+          },
+          required: ["action"],
+        },
+      },
+    },
+    async (args, ctx = {}) => {
+      const { executionService } = await import("../services/executionService.js");
+      let cmd = "git branch -a";
+      if (args.action === "create") {
+        if (!args.name) return { success: false, error: "Branch name required for create action." };
+        cmd = `git checkout -b "${args.name}"`;
+      } else if (args.action === "switch") {
+        if (!args.name) return { success: false, error: "Branch name required for switch action." };
+        cmd = `git checkout "${args.name}"`;
+      } else if (args.action === "delete") {
+        if (!args.name) return { success: false, error: "Branch name required for delete action." };
+        cmd = `git branch -D "${args.name}"`;
+      }
+
+      const res = await executionService.executeCommand(cmd, {
+        cwd: ctx.workspaceDir || config.workspaceRoot,
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+      return { success: res.exitCode === 0, output: res.stdout || res.stderr };
+    }
+  );
+
+  // 11. git_clone
+  registerTool(
+    {
+      type: "function",
+      function: {
+        name: "git_clone",
+        description: "Clone a remote GitHub repository into the workspace.",
+        parameters: {
+          type: "object",
+          properties: {
+            url: { type: "string", description: "GitHub repository clone URL (HTTPS or SSH)" },
+            directory: { type: "string", description: "Target subdirectory (optional)" },
+          },
+          required: ["url"],
+        },
+      },
+    },
+    async (args, ctx = {}) => {
+      const { executionService } = await import("../services/executionService.js");
+      const targetDir = args.directory ? ` "${args.directory}"` : "";
+      const res = await executionService.executeCommand(`git clone "${args.url}"${targetDir}`, {
+        cwd: ctx.workspaceDir || config.workspaceRoot,
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+      });
+      return { success: res.exitCode === 0, output: res.stdout || res.stderr };
+    }
+  );
+
+  // 12. github_create_repo
+  registerTool(
+    {
+      type: "function",
+      function: {
+        name: "github_create_repo",
+        description: "Create a new public or private repository on GitHub.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Repository name" },
+            description: { type: "string", description: "Optional repository description" },
+            is_private: { type: "boolean", description: "Whether the repo should be private (default: false)" },
+            auto_init: { type: "boolean", description: "Initialize with a README (default: true)" },
+          },
+          required: ["name"],
+        },
+      },
+    },
+    async (args, ctx = {}) => {
+      const token = ctx.user?.githubAccessToken || process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+      if (!token) return { success: false, error: "GitHub token not found." };
+
+      try {
+        const { getOctokit } = await import("../services/githubService.js");
+        const octokit = getOctokit(token);
+        const { data } = await octokit.repos.createForAuthenticatedUser({
+          name: args.name,
+          description: args.description || "",
+          private: !!args.is_private,
+          auto_init: args.auto_init !== false,
+        });
+
+        return {
+          success: true,
+          output: `Repository created: ${data.full_name}\nURL: ${data.html_url}\nClone URL: ${data.clone_url}`,
+          repo: data,
+        };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    }
+  );
+
+  // 13. github_create_issue
+  registerTool(
+    {
+      type: "function",
+      function: {
+        name: "github_create_issue",
+        description: "Create an issue in a GitHub repository.",
+        parameters: {
+          type: "object",
+          properties: {
+            owner: { type: "string", description: "Repository owner" },
+            repo: { type: "string", description: "Repository name" },
+            title: { type: "string", description: "Issue title" },
+            body: { type: "string", description: "Issue body / description" },
+            labels: { type: "array", items: { type: "string" }, description: "Optional labels (e.g. ['bug', 'enhancement'])" },
+          },
+          required: ["owner", "repo", "title"],
+        },
+      },
+    },
+    async (args, ctx = {}) => {
+      const token = ctx.user?.githubAccessToken || process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+      if (!token) return { success: false, error: "GitHub token not found." };
+
+      try {
+        const { getOctokit } = await import("../services/githubService.js");
+        const octokit = getOctokit(token);
+        const { data } = await octokit.issues.create({
+          owner: args.owner,
+          repo: args.repo,
+          title: args.title,
+          body: args.body || "",
+          labels: args.labels || [],
+        });
+
+        return {
+          success: true,
+          output: `Issue created: #${data.number} - ${data.title}\nURL: ${data.html_url}`,
+          issue: data,
+        };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    }
+  );
+
+  // 14. github_get_repo_info
+  registerTool(
+    {
+      type: "function",
+      function: {
+        name: "github_get_repo_info",
+        description: "Get detailed information about a GitHub repository (stars, forks, open issues, license, default branch).",
+        parameters: {
+          type: "object",
+          properties: {
+            owner: { type: "string", description: "Repository owner" },
+            repo: { type: "string", description: "Repository name" },
+          },
+          required: ["owner", "repo"],
+        },
+      },
+    },
+    async (args, ctx = {}) => {
+      const token = ctx.user?.githubAccessToken || process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+      try {
+        const { getOctokit } = await import("../services/githubService.js");
+        const octokit = getOctokit(token || null);
+        const { data } = await octokit.repos.get({
+          owner: args.owner,
+          repo: args.repo,
+        });
+
+        return {
+          success: true,
+          output: `Repository: ${data.full_name}\nDescription: ${data.description || "(none)"}\nStars: ⭐ ${data.stargazers_count} | Forks: 🍴 ${data.forks_count}\nOpen Issues: 📋 ${data.open_issues_count} | Default Branch: 🌿 ${data.default_branch}\nURL: ${data.html_url}`,
+          repoInfo: data,
+        };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    }
+  );
 }
 

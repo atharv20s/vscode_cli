@@ -35,11 +35,13 @@ export function listTools() {
 }
 
 const TOOL_ALIASES = {
+  // Shell execution aliases
   execute_command: "run_command",
   exec_command: "run_command",
   shell: "run_command",
   terminal: "run_command",
   bash: "run_command",
+  // File tool aliases
   readFile: "read_file",
   writeFile: "write_file",
   editFile: "edit_file",
@@ -47,13 +49,45 @@ const TOOL_ALIASES = {
   listFiles: "list_files",
   list_dir: "list_files",
   listDirectory: "list_files",
+  // Compile aliases
   compile: "compile_file",
   compileCode: "compile_file",
   compile_code: "compile_file",
+  // Launch/preview aliases
   launch: "launch_file",
   preview: "launch_file",
   launch_preview: "launch_file",
   startPreview: "start_preview",
+  // Git aliases
+  gitStatus: "git_status",
+  gitDiff: "git_diff",
+  gitLog: "git_log",
+  gitCommit: "git_commit",
+  gitPush: "git_push",
+  gitPull: "git_pull",
+  gitBranch: "git_branch",
+  gitClone: "git_clone",
+  // GitHub aliases
+  createRepo: "github_create_repo",
+  githubCreateRepo: "github_create_repo",
+  createIssue: "github_create_issue",
+  githubCreateIssue: "github_create_issue",
+  createPR: "github_create_pr",
+  createPullRequest: "github_create_pr",
+  githubCreatePR: "github_create_pr",
+  getRepoInfo: "github_get_repo_info",
+  repoInfo: "github_get_repo_info",
+  listRepos: "github_list_repos",
+  cloudCommit: "github_cloud_commit",
+  // Doc/diagram aliases
+  generateDiagram: "generate_uml_diagram",
+  generate_diagram: "generate_uml_diagram",
+  uml_diagram: "generate_uml_diagram",
+  architecture_diagram: "generate_uml_diagram",
+  generateReadme: "generate_readme",
+  create_readme: "generate_readme",
+  makeReadme: "generate_readme",
+  generateWalkthrough: "generate_walkthrough",
 };
 
 /**
