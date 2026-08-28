@@ -44,14 +44,16 @@ class SystemHealthService {
   }
 
   _getCpuTimes() {
-    const cpus = os.cpus();
+    const cpus = os.cpus() || [];
     let idle = 0;
     let total = 0;
     for (const cpu of cpus) {
-      for (const type in cpu.times) {
-        total += cpu.times[type];
+      if (cpu && cpu.times) {
+        for (const t of Object.keys(cpu.times)) {
+          total += cpu.times[t];
+        }
+        idle += (cpu.times.idle || 0);
       }
-      idle += cpu.times.idle;
     }
     return { idle, total };
   }
