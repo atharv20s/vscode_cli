@@ -159,18 +159,22 @@ export class LocalBackend {
 
     logger.info(`LocalBackend: Spawning node-pty process for session ${sessionId}: ${shellCmd} in ${sessionCwd}`);
 
-    // Build clean sanitized virtual environment
+    // Build clean sanitized virtual environment — hides host identity entirely
     const sanitizedEnv = isWindows
       ? { ...process.env, TERM: "xterm-256color" }
       : {
-          PATH: process.env.PATH || "/usr/local/bin:/usr/bin:/bin",
+          PATH: (process.env.PATH || "/usr/local/bin:/usr/bin:/bin"),
           TERM: "xterm-256color",
           COLORTERM: "truecolor",
           LANG: "en_US.UTF-8",
           HOME: sessionCwd,
+          USER: "user",
           PWD: sessionCwd,
-          PS1: "\\[\\033[01;36m\\]workspace\\[\\033[00m\\]:\\[\\033[01;34m\\]~/project\\[\\033[00m\\]$ ",
+          PS1: "\\$ ",
+          PS2: "> ",
           PROMPT_COMMAND: "",
+          HISTFILE: "/dev/null",
+          HISTSIZE: "100",
         };
 
     try {
