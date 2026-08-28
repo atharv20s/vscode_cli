@@ -127,7 +127,19 @@ export async function initPostgres(connectionString) {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
 
-      -- 9. Performance Indexes
+      -- 9. GitHub Commits & Activity History Table
+      CREATE TABLE IF NOT EXISTS github_history (
+        id SERIAL PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        repo_name VARCHAR(255) NOT NULL,
+        commit_sha VARCHAR(64),
+        commit_message TEXT,
+        branch VARCHAR(128) DEFAULT 'main',
+        action VARCHAR(64) DEFAULT 'commit',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 10. Performance Indexes
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
       CREATE INDEX IF NOT EXISTS idx_users_github ON users(github_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
@@ -137,6 +149,7 @@ export async function initPostgres(connectionString) {
       CREATE INDEX IF NOT EXISTS idx_terminal_session ON terminal_history(session_id);
       CREATE INDEX IF NOT EXISTS idx_workspace_files_session ON workspace_files(session_id);
       CREATE INDEX IF NOT EXISTS idx_preview_session ON preview_instances(session_id);
+      CREATE INDEX IF NOT EXISTS idx_github_history_user ON github_history(user_id);
       CREATE INDEX IF NOT EXISTS idx_cache_created ON cache_entries(created_at);
     `);
   } finally {
@@ -151,8 +164,53 @@ export async function initPostgres(connectionString) {
  * @returns {pg.Pool}
  */
 export function getPostgresPool() {
-  if (!pool) {
-    throw new Error("PostgreSQL pool not initialized. Call initPostgres() first.");
-  }
   return pool;
+}
+
+/**
+ * Migrates temporary guest records to authenticated user upon signup / login.
+ */
+export async function migrateGuestRecords(guestUserId, permanentUserId) {
+  if (!pool || !guestUserId || !permanentUserId || guestUserId === permanentUserId) return;
+  try {
+    await pool.query(
+      `UPDATE sessions SET user_id = $1 WHERE user_id = $2`,
+      [permanentUserId, guestUserId]
+    );
+    logger.info(`Migrated guest data from ${guestUserId} -> ${permanentUserId}`);
+  } catch (err) {
+    logger.warn(`Guest migration warning: ${err.message}`);
+  }
+}
+
+/**
+ * Persists terminal execution entry to database.
+ */
+export async function recordTerminalExecution({ sessionId, command, output, exitCode, shell }) {
+  if (!pool || !sessionId || !command) return;
+  try {
+    await pool.query(
+      `INSERT INTO terminal_history (session_id, command, output, exit_code, shell)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [sessionId, command, output ? output.slice(0, 10000) : null, exitCode ?? 0, shell || 'powershell']
+    );
+  } catch (err) {
+    logger.debug(`recordTerminalExecution: ${err.message}`);
+  }
+}
+
+/**
+ * Persists GitHub commit trace to database.
+ */
+export async function recordGithubCommit({ userId, repoName, commitSha, commitMessage, branch, action }) {
+  if (!pool || !userId || !repoName) return;
+  try {
+    await pool.query(
+      `INSERT INTO github_history (user_id, repo_name, commit_sha, commit_message, branch, action)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [userId, repoName, commitSha || null, commitMessage || 'Auto-commit', branch || 'main', action || 'commit']
+    );
+  } catch (err) {
+    logger.debug(`recordGithubCommit: ${err.message}`);
+  }
 }

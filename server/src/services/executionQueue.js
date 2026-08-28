@@ -10,11 +10,12 @@ import os from "os";
 import { logger } from "../config/logger.js";
 import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 
-/** Configuration constants */
-const MAX_GLOBAL_CONCURRENT = parseInt(process.env.QUEUE_MAX_GLOBAL_CONCURRENT || "6", 10);
-const MAX_PER_USER_CONCURRENT = parseInt(process.env.QUEUE_MAX_USER_CONCURRENT || "2", 10);
-const MAX_QUEUE_SIZE = parseInt(process.env.QUEUE_MAX_SIZE || "200", 10);
-const DEFAULT_JOB_TIMEOUT_MS = parseInt(process.env.QUEUE_JOB_TIMEOUT_MS || "60000", 10);
+/** Configuration constants - High throughput dynamic concurrency */
+const CPU_COUNT = os.cpus().length || 4;
+const MAX_GLOBAL_CONCURRENT = parseInt(process.env.QUEUE_MAX_GLOBAL_CONCURRENT || String(Math.max(64, CPU_COUNT * 8)), 10);
+const MAX_PER_USER_CONCURRENT = parseInt(process.env.QUEUE_MAX_USER_CONCURRENT || String(Math.max(16, CPU_COUNT * 4)), 10);
+const MAX_QUEUE_SIZE = parseInt(process.env.QUEUE_MAX_SIZE || "500", 10);
+const DEFAULT_JOB_TIMEOUT_MS = parseInt(process.env.QUEUE_JOB_TIMEOUT_MS || "120000", 10);
 
 /**
  * @typedef {'high' | 'normal' | 'low'} JobPriority

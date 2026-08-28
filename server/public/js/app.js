@@ -272,6 +272,18 @@ class App {
    * Setup UI Event Listeners
    */
   setupEventListeners() {
+    // Before Unload Session Guard & Cloud Sync Warning
+    window.addEventListener("beforeunload", (e) => {
+      const isGuest = !this.currentUser || this.currentUser.isGuest;
+      const hasChats = this.chatHistory.length > 0;
+      if (isGuest && hasChats) {
+        const msg = "You are currently in guest mode. Sign in or connect your GitHub account to permanently save your projects and conversations in the cloud!";
+        e.preventDefault();
+        e.returnValue = msg;
+        return msg;
+      }
+    });
+
     // Mode Switcher
     document.querySelectorAll(".mode-chip").forEach((btn) => {
       btn.addEventListener("click", () => {

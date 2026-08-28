@@ -13,6 +13,7 @@ import {
   updateUserToken,
   updateUserProfile,
 } from "../db/database.js";
+import { migrateGuestRecords } from "../db/postgres.js";
 
 /**
  * POST /api/auth/guest — Auto-provision or resume persistent guest user identity with JWT.
@@ -146,6 +147,12 @@ export async function register(req, res) {
     avatarUrl: newUser.avatar_url,
   });
 
+  // Migrate any active guest data to this newly registered user
+  const guestId = req.body.guestId;
+  if (guestId) {
+    migrateGuestRecords(`usr_${guestId}`, newUser.id).catch(() => {});
+  }
+
   logger.info(`User registered with email: ${cleanEmail}`, { userId });
 
   res.status(201).json({
@@ -165,7 +172,7 @@ export async function register(req, res) {
  * POST /api/auth/login — User Sign In (Email and Password).
  */
 export async function login(req, res) {
-  const { email, username, password } = req.body;
+  const { email, username, password, guestId } = req.body;
   const identifier = (email || username || "").trim();
 
   if (!identifier || !password) {
@@ -176,6 +183,11 @@ export async function login(req, res) {
 
   if (!user || !user.password_hash || !verifyPassword(password, user.password_hash)) {
     return res.status(401).json({ error: "AuthFailed", message: "Invalid email or password." });
+  }
+
+  // Migrate any active guest data to this user
+  if (guestId) {
+    migrateGuestRecords(`usr_${guestId}`, user.id).catch(() => {});
   }
 
   const jwtToken = generateToken({
@@ -296,6 +308,11 @@ export async function tokenLogin(req, res) {
     } else {
       updateUserToken(user.id, token.trim());
       user.github_access_token = token.trim();
+    }
+
+    const guestId = req.body.guestId;
+    if (guestId) {
+      migrateGuestRecords(`usr_${guestId}`, user.id).catch(() => {});
     }
 
     const jwtToken = generateToken({
