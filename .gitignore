@@ -41,6 +41,7 @@ web/.next/
 web/out/
 !.github/
 !Dockerfile
+!cloudbuild.yaml
 !docker-compose.yml
 !.env.example
 !.dockerignore

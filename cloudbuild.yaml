@@ -1,0 +1,46 @@
+# Google Cloud Build Pipeline for ATH IDE
+# Connects natively via Google Cloud Console -> Cloud Build -> Repositories (GitHub App)
+
+steps:
+  # 1. Build the production multi-stage Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/ath-ide-repo/ath-ide:$COMMIT_SHA'
+      - '-t'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/ath-ide-repo/ath-ide:latest'
+      - '.'
+
+  # 2. Push image to Google Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/ath-ide-repo/ath-ide:$COMMIT_SHA'
+
+  # 3. Deploy to Google Cloud Run v2 (Serverless with Auto-HTTPS)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'ath-ide'
+      - '--image=$_REGION-docker.pkg.dev/$PROJECT_ID/ath-ide-repo/ath-ide:$COMMIT_SHA'
+      - '--region=$_REGION'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--port=3001'
+      - '--memory=2Gi'
+      - '--cpu=2'
+      - '--min-instances=1'
+      - '--max-instances=10'
+
+images:
+  - '$_REGION-docker.pkg.dev/$PROJECT_ID/ath-ide-repo/ath-ide:$COMMIT_SHA'
+  - '$_REGION-docker.pkg.dev/$PROJECT_ID/ath-ide-repo/ath-ide:latest'
+
+substitutions:
+  _REGION: 'us-central1'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
