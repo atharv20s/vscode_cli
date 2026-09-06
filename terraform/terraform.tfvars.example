@@ -1,0 +1,17 @@
+# ATH IDE — Terraform Deployment Variables Example
+# Copy this file to terraform.tfvars:
+#   cp terraform.tfvars.example terraform.tfvars
+
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+zone       = "us-central1-a"
+app_name   = "ath-ide"
+
+# Database & Cache (Injected directly from your .env)
+database_url       = "postgresql://neondb_owner:npg_...ep-cold-bush-...neon.tech/neondb?sslmode=require"
+redis_url          = "redis://default:...@redis-....c300.eu-central-1-1.ec2.redns.redis-cloud.com:13961"
+openrouter_api_key = "sk-or-v1-..."
+jwt_secret         = "your-cryptographically-secure-jwt-secret-32-chars"
+
+# Optional Custom Domain (e.g. ide.yourdomain.com)
+domain_name = ""

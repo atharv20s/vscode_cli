@@ -1,0 +1,121 @@
+name: ATH IDE — Continuous Integration & Continuous Deployment to Google Cloud
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: ${{ secrets.GCP_REGION || 'us-central1' }}
+  REPO_NAME: ath-ide-repo
+  APP_NAME: ath-ide
+
+jobs:
+  # ============================================================================
+  # 1. Test & Lint Pipeline
+  # ============================================================================
+  test:
+    name: 🧪 Automated Test & Syntax Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install Server Dependencies
+        run: |
+          cd server
+          npm ci
+
+      - name: Verify Code Syntax & Exports
+        run: |
+          node --check server/src/server.js
+          node --check server/src/services/llmService.js
+          node --check server/src/services/clusterManager.js
+          node --check server/src/services/kafkaService.js
+          node --check server/src/db/shardManager.js
+          node --check server/src/routes/authRoutes.js
+          node --check server/src/routes/githubRoutes.js
+
+  # ============================================================================
+  # 2. Build, Push Docker Container & Deploy to Google Cloud Platform
+  # ============================================================================
+  deploy:
+    name: 🚀 Build Docker & Deploy to GCP
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Authenticate with Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK & Docker Credentials
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Google Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build Docker Container
+        run: |
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.APP_NAME }}"
+          docker build \
+            -t ${IMAGE_URI}:${{ github.sha }} \
+            -t ${IMAGE_URI}:latest \
+            .
+
+      - name: Push Container to Google Artifact Registry
+        run: |
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.APP_NAME }}"
+          docker push ${IMAGE_URI}:${{ github.sha }}
+          docker push ${IMAGE_URI}:latest
+
+      - name: Deploy to Google Cloud Run (Serverless Live URL)
+        id: deploy-cloudrun
+        run: |
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.APP_NAME }}:${{ github.sha }}"
+          
+          gcloud run deploy ${{ env.APP_NAME }} \
+            --image ${IMAGE_URI} \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 3001 \
+            --min-instances 1 \
+            --max-instances 10 \
+            --memory 2Gi \
+            --cpu 2 \
+            --set-env-vars NODE_ENV=production,PORT=3001,DATABASE_URL="${{ secrets.DATABASE_URL }}",REDIS_URL="${{ secrets.REDIS_URL }}",OPENROUTER_API_KEY="${{ secrets.OPENROUTER_API_KEY }}",JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+            --format 'value(status.url)' > cloud_run_url.txt
+            
+          echo "LIVE_URL=$(cat cloud_run_url.txt)" >> $GITHUB_ENV
+
+      - name: Deploy Summary & Live URL Output
+        run: |
+          echo "### 🚀 ATH IDE Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Live Public Site:** [${{ env.LIVE_URL }}](${{ env.LIVE_URL }})" >> $GITHUB_STEP_SUMMARY
+          echo "**Container Image:** \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.APP_NAME }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployed at:** $(date -u)" >> $GITHUB_STEP_SUMMARY

@@ -30,6 +30,16 @@ server/.env
 !utils/
 !cloud/
 !k8s/
+!terraform/
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/.terraform.lock.hcl
+!web/
+web/node_modules/
+web/.next/
+web/out/
+!.github/
 !Dockerfile
 !docker-compose.yml
 !.env.example
