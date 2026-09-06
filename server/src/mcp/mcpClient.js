@@ -10,10 +10,12 @@
  */
 
 import fs from "fs/promises";
+import fsSync from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { StdioTransport } from "./mcpTransport.js";
 import { registerTool } from "../tools/index.js";
+import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -64,9 +66,24 @@ async function connectServer(name, serverConfig) {
     return;
   }
 
-  logger.info(`Connecting to MCP server '${name}': ${command} ${args.join(" ")}`);
+  const resolvedArgs = args.map((arg) => {
+    if (arg === "./workspace" || arg === "workspace") {
+      try {
+        if (!fsSync.existsSync(config.workspaceRoot)) {
+          fsSync.mkdirSync(config.workspaceRoot, { recursive: true });
+        }
+      } catch {}
+      return config.workspaceRoot;
+    }
+    if (arg.startsWith("src/")) {
+      return path.resolve(__dirname, "..", arg.slice(4));
+    }
+    return arg;
+  });
 
-  const tp = new StdioTransport(command, args, env);
+  logger.info(`Connecting to MCP server '${name}': ${command} ${resolvedArgs.join(" ")}`);
+
+  const tp = new StdioTransport(command, resolvedArgs, env);
 
   tp.on("error", (err) => {
     logger.error(`MCP server '${name}' error: ${err.message}`);

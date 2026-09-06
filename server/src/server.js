@@ -93,40 +93,77 @@ app.get("/api/queue/status", async (req, res) => {
   res.json(executionQueue.getStatus());
 });
 
-// Direct LLM test endpoint — bypasses agent loop entirely
+// Distributed Cluster Topology & Multi-Instance Registry endpoint
+app.get("/api/cluster/nodes", async (req, res) => {
+  const { clusterManager } = await import("./services/clusterManager.js");
+  const nodes = await clusterManager.getClusterNodes();
+  res.json({
+    currentInstanceId: clusterManager.instanceId,
+    nodeCount: nodes.length,
+    nodes,
+  });
+});
+
+// Kafka Distributed Queue Status endpoint
+app.get("/api/kafka/status", async (req, res) => {
+  const { kafkaService } = await import("./services/kafkaService.js");
+  res.json({
+    connected: kafkaService.isConnected,
+    brokers: kafkaService.brokers,
+    consumerActive: kafkaService.isConsumerRunning,
+    groupId: kafkaService.groupId,
+  });
+});
+
+// Direct LLM test endpoint with intelligent multi-provider failover
 app.get("/api/test-llm", async (req, res) => {
   try {
     const OpenAI = (await import("openai")).default;
     const mistralKey = config.mistralKey || process.env.MISTRAL_API_KEY;
     const openrouterKey = config.openrouterKey || process.env.OPENROUTER_API_KEY;
 
-    const useKey = mistralKey || openrouterKey;
-    const baseURL = mistralKey ? "https://api.mistral.ai/v1" : "https://openrouter.ai/api/v1";
-    const modelId = mistralKey ? "mistral-small-latest" : "openrouter/free";
-
-    if (!useKey) {
-      return res.json({ error: "No LLM API key found in env", mistralKey: !!mistralKey, openrouterKey: !!openrouterKey });
+    const candidates = [];
+    if (config.defaultLlmProvider === "openrouter" && openrouterKey) {
+      candidates.push({ provider: "OpenRouter", key: openrouterKey, baseURL: "https://openrouter.ai/api/v1", model: "openrouter/free" });
+      if (mistralKey) candidates.push({ provider: "Mistral AI Direct", key: mistralKey, baseURL: "https://api.mistral.ai/v1", model: "mistral-small-latest" });
+    } else {
+      if (mistralKey) candidates.push({ provider: "Mistral AI Direct", key: mistralKey, baseURL: "https://api.mistral.ai/v1", model: "mistral-small-latest" });
+      if (openrouterKey) candidates.push({ provider: "OpenRouter", key: openrouterKey, baseURL: "https://openrouter.ai/api/v1", model: "openrouter/free" });
     }
 
-    logger.info(`test-llm: Using ${mistralKey ? 'Mistral Direct' : 'OpenRouter'} with model ${modelId}`);
+    if (candidates.length === 0) {
+      return res.status(500).json({ error: "No LLM API key found in env", mistralKey: Boolean(mistralKey), openrouterKey: Boolean(openrouterKey) });
+    }
 
-    const client = new OpenAI({ apiKey: useKey, baseURL });
-    const response = await client.chat.completions.create({
-      model: modelId,
-      messages: [{ role: "user", content: "Say 'ATH IDE is alive!' in exactly 5 words." }],
-      max_tokens: 50,
-    });
+    let lastError = null;
+    for (const c of candidates) {
+      try {
+        logger.info(`test-llm: Trying ${c.provider} with model ${c.model}...`);
+        const client = new OpenAI({ apiKey: c.key, baseURL: c.baseURL });
+        const response = await client.chat.completions.create({
+          model: c.model,
+          messages: [{ role: "user", content: "Say 'ATH IDE is alive!' in exactly 5 words." }],
+          max_tokens: 50,
+        });
 
-    res.json({
-      success: true,
-      provider: mistralKey ? "Mistral AI Direct" : "OpenRouter",
-      model: modelId,
-      response: response.choices[0]?.message?.content,
-      keyPrefix: useKey.slice(0, 8) + "...",
-    });
+        return res.json({
+          success: true,
+          provider: c.provider,
+          model: c.model,
+          response: response.choices[0]?.message?.content,
+          keyPrefix: c.key.slice(0, 8) + "...",
+        });
+      } catch (err) {
+        lastError = err;
+        logger.warn(`test-llm: Provider ${c.provider} failed: ${err.message}. Trying next candidate...`);
+      }
+    }
+
+    logger.error("test-llm FAILED on all providers", { error: lastError?.message });
+    res.status(lastError?.status || 500).json({ success: false, error: lastError?.message, status: lastError?.status });
   } catch (err) {
-    logger.error("test-llm FAILED", { error: err.message, status: err.status });
-    res.json({ success: false, error: err.message, status: err.status });
+    logger.error("test-llm fatal error", { error: err.message });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -189,6 +226,28 @@ async function startServer() {
     // Initialize External MCP Servers in background
     initMcpServers().catch((err) => logger.warn("MCP init background error", { error: err.message }));
 
+    // Initialize Cluster NoSQL Registry, Kafka Distributed Queue, and DB Sharding
+    try {
+      const { clusterManager } = await import("./services/clusterManager.js");
+      await clusterManager.initialize();
+    } catch (cErr) {
+      logger.warn(`Cluster manager startup warning: ${cErr.message}`);
+    }
+
+    try {
+      const { kafkaService } = await import("./services/kafkaService.js");
+      await kafkaService.initialize();
+    } catch (kErr) {
+      logger.warn(`Kafka service startup warning: ${kErr.message}`);
+    }
+
+    try {
+      const { shardManager } = await import("./db/shardManager.js");
+      await shardManager.initialize();
+    } catch (sErr) {
+      logger.warn(`Shard manager startup warning: ${sErr.message}`);
+    }
+
     // Start System Health Monitoring & Load Balancing Service
     const { systemHealthService } = await import("./services/systemHealthService.js");
     systemHealthService.start(3000);
@@ -211,6 +270,21 @@ async function startServer() {
 // Graceful shutdown handling
 async function handleShutdown(signal) {
   logger.info(`Gracefully shutting down on ${signal}...`);
+  try {
+    const { clusterManager } = await import("./services/clusterManager.js");
+    await clusterManager.shutdown();
+  } catch {}
+
+  try {
+    const { kafkaService } = await import("./services/kafkaService.js");
+    await kafkaService.shutdown();
+  } catch {}
+
+  try {
+    const { shardManager } = await import("./db/shardManager.js");
+    await shardManager.shutdown();
+  } catch {}
+
   try {
     const { systemHealthService } = await import("./services/systemHealthService.js");
     systemHealthService.stop();

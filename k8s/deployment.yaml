@@ -7,7 +7,7 @@ metadata:
     app: ath-ide-core
     tier: backend
 spec:
-  replicas: 1
+  replicas: 3
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -29,6 +29,11 @@ spec:
           ports:
             - name: http
               containerPort: 3001
+          env:
+            - name: KAFKA_BROKERS
+              value: "kafka-service.ath-ide.svc.cluster.local:9092"
+            - name: NODE_ENV
+              value: "production"
           envFrom:
             - configMapRef:
                 name: ath-ide-config
@@ -36,22 +41,22 @@ spec:
                 name: ath-ide-secrets
           resources:
             requests:
-              memory: "256Mi"
+              memory: "512Mi"
               cpu: "250m"
             limits:
-              memory: "1Gi"
+              memory: "1.5Gi"
               cpu: "1000m"
           livenessProbe:
             httpGet:
               path: /api/health
               port: 3001
-            initialDelaySeconds: 15
+            initialDelaySeconds: 20
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /api/health
               port: 3001
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 5
           volumeMounts:
             - name: workspaces-volume
@@ -69,7 +74,11 @@ metadata:
   labels:
     app: ath-ide-core
 spec:
-  type: ClusterIP
+  type: LoadBalancer
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
   selector:
     app: ath-ide-core
   ports:

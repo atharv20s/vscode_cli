@@ -8,18 +8,60 @@
 import jwt from "jsonwebtoken";
 import { config } from "../config/env.js";
 
+const REFRESH_SECRET = (config.jwtSecret || "dev-secret") + "_refresh";
+
 /**
- * Generate a JWT for a user.
- * @param {object} payload - User data to encode
- * @param {string} [expiresIn='7d'] - Token expiration
- * @returns {string} Signed JWT
+ * Generate a short-lived Access Token (15 minutes).
+ */
+export function generateAccessToken(payload) {
+  return jwt.sign(payload, config.jwtSecret, { expiresIn: "15m" });
+}
+
+/**
+ * Generate a long-lived Refresh Token (30 days).
+ */
+export function generateRefreshToken(payload) {
+  return jwt.sign(
+    { id: payload.id, username: payload.username, sessionId: payload.sessionId, type: "refresh" },
+    REFRESH_SECRET,
+    { expiresIn: "30d" }
+  );
+}
+
+/**
+ * Generate an Access Token and Refresh Token pair.
+ */
+export function generateTokenPair(payload) {
+  return {
+    accessToken: generateAccessToken(payload),
+    refreshToken: generateRefreshToken(payload),
+    expiresIn: 900, // 15 mins in seconds
+    tokenType: "Bearer",
+  };
+}
+
+/**
+ * Verify a Refresh Token.
+ */
+export function verifyRefreshToken(token) {
+  try {
+    const decoded = jwt.verify(token, REFRESH_SECRET);
+    if (decoded.type !== "refresh") return null;
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Legacy single JWT generator (backwards-compatible alias).
  */
 export function generateToken(payload, expiresIn = "7d") {
   return jwt.sign(payload, config.jwtSecret, { expiresIn });
 }
 
 /**
- * Verify and decode a JWT.
+ * Verify and decode an Access JWT.
  * @param {string} token - The JWT to verify
  * @returns {object | null} Decoded payload or null
  */

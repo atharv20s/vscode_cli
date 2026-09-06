@@ -122,14 +122,30 @@ export async function streamChatCompletion({ messages, tools, model, onEvent, si
     preset = MODEL_PRESETS["vision"];
   }
 
-  const hasMistralKey = Boolean(config.mistralKey || process.env.MISTRAL_API_KEY);
-  let provider = hasMistralKey ? "mistral" : "openrouter";
-  let modelId = hasMistralKey ? preset.id : preset.openrouterId || "openrouter/free";
+  // Determine failover priority based on config and available keys
+  const defaultProvider = config.defaultLlmProvider || (config.openrouterKey ? "openrouter" : "mistral");
+  const attempts = [];
 
-  let client = getClient(provider);
+  if (defaultProvider === "openrouter" && config.openrouterKey) {
+    attempts.push({ provider: "openrouter", model: preset?.openrouterId || config.openrouterModel || "openrouter/free" });
+    if (config.mistralKey) {
+      attempts.push({ provider: "mistral", model: preset?.id || "codestral-latest" });
+    }
+  } else {
+    if (config.mistralKey) {
+      attempts.push({ provider: "mistral", model: preset?.id || "codestral-latest" });
+      attempts.push({ provider: "mistral", model: "mistral-small-latest" });
+    }
+    if (config.openrouterKey) {
+      attempts.push({ provider: "openrouter", model: preset?.openrouterId || config.openrouterModel || "openrouter/free" });
+    }
+  }
 
-  const kwargs = {
-    model: modelId,
+  if (attempts.length === 0) {
+    attempts.push({ provider: "openrouter", model: "openrouter/free" });
+  }
+
+  const baseKwargs = {
     messages,
     stream: true,
     max_tokens: preset?.maxTokens || 4096,
@@ -137,33 +153,33 @@ export async function streamChatCompletion({ messages, tools, model, onEvent, si
   };
 
   if (tools && tools.length > 0) {
-    kwargs.tools = tools;
-    kwargs.tool_choice = "auto";
+    baseKwargs.tools = tools;
+    baseKwargs.tool_choice = "auto";
   }
 
-  logger.info("LLM request initiated", { model: modelId, provider, messageCount: messages.length });
+  logger.info("LLM request initiated", { attemptsCount: attempts.length, messageCount: messages.length });
 
   try {
-    let response;
-    try {
-      response = await client.chat.completions.create(kwargs, { signal });
-    } catch (createErr) {
-      if (signal?.aborted) return;
-      logger.warn(`Primary LLM (${modelId} via ${provider}) failed: ${createErr.message}. Attempting fallback...`);
+    let response = null;
+    let lastError = null;
 
-      // Fallback 1: If Codestral/Mistral Large fails, fallback to mistral-small-latest
-      if (provider === "mistral" && modelId !== "mistral-small-latest") {
-        kwargs.model = "mistral-small-latest";
-        response = await client.chat.completions.create(kwargs, { signal });
-      } else if (config.openrouterKey) {
-        // Fallback 2: Try OpenRouter
-        provider = "openrouter";
-        client = getClient("openrouter");
-        kwargs.model = "openrouter/free";
-        response = await client.chat.completions.create(kwargs, { signal });
-      } else {
-        throw createErr;
+    for (const attempt of attempts) {
+      if (signal?.aborted) return;
+      try {
+        const client = getClient(attempt.provider);
+        const attemptKwargs = { ...baseKwargs, model: attempt.model };
+        logger.info(`Attempting LLM call`, { provider: attempt.provider, model: attempt.model });
+        response = await client.chat.completions.create(attemptKwargs, { signal });
+        logger.info(`LLM call successfully established`, { provider: attempt.provider, model: attempt.model });
+        break;
+      } catch (err) {
+        lastError = err;
+        logger.warn(`LLM attempt failed (${attempt.provider} / ${attempt.model}): ${err.message}. Trying next fallback...`);
       }
+    }
+
+    if (!response) {
+      throw lastError || new Error("All configured LLM providers and fallbacks failed.");
     }
 
     let fullContent = "";

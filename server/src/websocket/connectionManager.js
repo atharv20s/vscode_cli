@@ -123,6 +123,8 @@ export function getTotalConnections() {
   return total;
 }
 
+export const getConnectionCount = getTotalConnections;
+
 /**
  * Get connection stats.
  */

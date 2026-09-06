@@ -24,10 +24,11 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL || "",
 
   // LLM Providers
+  defaultLlmProvider: process.env.DEFAULT_LLM_PROVIDER || (process.env.OPENROUTER_API_KEY ? "openrouter" : "mistral"),
   openrouterKey: process.env.OPENROUTER_API_KEY || "",
   openrouterBaseUrl: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
-  openrouterModel: process.env.OPENROUTER_MODEL || "mistralai/devstral-2512",
-  mistralKey: process.env.MISTRAL_API_KEY || process.env.OPENROUTER_API_KEY || "",
+  openrouterModel: process.env.OPENROUTER_MODEL || "openrouter/free",
+  mistralKey: process.env.MISTRAL_API_KEY || "",
 
   openaiKey: process.env.OPENAI_API_KEY || "",
   anthropicKey: process.env.ANTHROPIC_API_KEY || "",

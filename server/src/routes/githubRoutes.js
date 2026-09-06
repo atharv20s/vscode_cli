@@ -3,7 +3,7 @@
  */
 
 import { Router } from "express";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, optionalAuth } from "../middleware/auth.js";
 import { githubLimiter } from "../middleware/rateLimiter.js";
 import {
   listRepos,
@@ -13,8 +13,8 @@ import {
 
 const router = Router();
 
-router.get("/repos", requireAuth, githubLimiter, listRepos);
-router.get("/repos/:owner/:repo/tree", requireAuth, githubLimiter, getRepoTree);
+router.get("/repos", optionalAuth, githubLimiter, listRepos);
+router.get("/repos/:owner/:repo/tree", optionalAuth, githubLimiter, getRepoTree);
 router.post("/repos/:owner/:repo/commit", requireAuth, githubLimiter, commitFiles);
 
 export default router;

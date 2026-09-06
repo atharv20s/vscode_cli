@@ -2,7 +2,13 @@ import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
-import { generateToken } from "../middleware/auth.js";
+import {
+  generateToken,
+  generateAccessToken,
+  generateRefreshToken,
+  generateTokenPair,
+  verifyRefreshToken,
+} from "../middleware/auth.js";
 import {
   findUserByGithubId,
   findUserById,
@@ -52,29 +58,24 @@ export async function guestAuth(req, res) {
       });
     } catch {}
 
-    const jwtToken = generateToken(
-      {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        avatarUrl: user.avatar_url,
-        sessionId,
-        isGuest: true,
-      },
-      "30d"
-    );
+    const userPayload = {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      avatarUrl: user.avatar_url,
+      sessionId,
+      isGuest: true,
+    };
+    const tokens = generateTokenPair(userPayload);
 
     res.json({
       success: true,
-      token: jwtToken,
+      token: tokens.accessToken,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresIn: tokens.expiresIn,
       guestId,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        avatarUrl: user.avatar_url,
-        isGuest: true,
-      },
+      user: userPayload,
     });
   } catch (err) {
     logger.error("Guest auth error", { error: err.message });
@@ -140,12 +141,14 @@ export async function register(req, res) {
   });
 
   const newUser = findUserById(userId);
-  const jwtToken = generateToken({
+  const userPayload = {
     id: newUser.id,
     username: newUser.username,
     email: newUser.email,
     avatarUrl: newUser.avatar_url,
-  });
+    hasGithub: false,
+  };
+  const tokens = generateTokenPair(userPayload);
 
   // Migrate any active guest data to this newly registered user
   const guestId = req.body.guestId;
@@ -157,14 +160,11 @@ export async function register(req, res) {
 
   res.status(201).json({
     success: true,
-    token: jwtToken,
-    user: {
-      id: newUser.id,
-      username: newUser.username,
-      email: newUser.email,
-      avatarUrl: newUser.avatar_url,
-      hasGithub: false,
-    },
+    token: tokens.accessToken,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    expiresIn: tokens.expiresIn,
+    user: userPayload,
   });
 }
 
@@ -190,28 +190,84 @@ export async function login(req, res) {
     migrateGuestRecords(`usr_${guestId}`, user.id).catch(() => {});
   }
 
-  const jwtToken = generateToken({
+  const userPayload = {
     id: user.id,
     username: user.username,
     email: user.email,
     avatarUrl: user.avatar_url,
     githubAccessToken: user.github_access_token,
-  });
+    hasGithub: Boolean(user.github_access_token),
+  };
+  const tokens = generateTokenPair(userPayload);
 
   logger.info(`User logged in: ${user.email || user.username}`, { userId: user.id });
 
   res.json({
     success: true,
-    token: jwtToken,
+    token: tokens.accessToken,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    expiresIn: tokens.expiresIn,
     githubToken: user.github_access_token,
-    user: {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      avatarUrl: user.avatar_url,
-      hasGithub: Boolean(user.github_access_token),
-    },
+    user: userPayload,
   });
+}
+
+/**
+ * POST /api/auth/refresh — Exchange refresh token for a new access token.
+ */
+export async function refreshAccessToken(req, res) {
+  const refreshToken = req.body?.refreshToken || req.headers["x-refresh-token"];
+
+  if (!refreshToken) {
+    return res.status(400).json({ error: "BadRequest", message: "Refresh token is required." });
+  }
+
+  const decoded = verifyRefreshToken(refreshToken);
+  if (!decoded || !decoded.id) {
+    return res.status(401).json({ error: "InvalidToken", message: "Invalid or expired refresh token. Please sign in again." });
+  }
+
+  const user = findUserById(decoded.id);
+  if (!user) {
+    return res.status(401).json({ error: "UserNotFound", message: "User account no longer exists." });
+  }
+
+  const userPayload = {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    avatarUrl: user.avatar_url,
+    githubId: user.github_id,
+    githubAccessToken: user.github_access_token,
+    sessionId: decoded.sessionId,
+    hasGithub: Boolean(user.github_access_token),
+  };
+
+  const tokens = generateTokenPair(userPayload);
+
+  res.json({
+    success: true,
+    token: tokens.accessToken,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    expiresIn: tokens.expiresIn,
+    user: userPayload,
+  });
+}
+
+/**
+ * GET /api/auth/github — Redirect to GitHub OAuth Authorization page.
+ */
+export function githubLoginRedirect(req, res) {
+  if (!config.githubClientId) {
+    return res.redirect("/?github_modal=true");
+  }
+  const redirectUri = `${config.publicUrl || `http://localhost:${config.port}`}/api/auth/github/callback`;
+  const githubUrl = `https://github.com/login/oauth/authorize?client_id=${config.githubClientId}&redirect_uri=${encodeURIComponent(
+    redirectUri
+  )}&scope=repo,read:user,user:email`;
+  res.redirect(githubUrl);
 }
 
 /**
@@ -246,20 +302,39 @@ export async function connectGithubToken(req, res) {
 
     const githubUser = await userResponse.json();
 
+    let user = null;
     if (userId) {
       updateUserProfile(userId, {
         avatarUrl: githubUser.avatar_url,
         githubId: githubUser.id,
         githubAccessToken: cleanToken,
       });
+      user = findUserById(userId);
     }
+
+    const updatedToken = generateToken({
+      id: user?.id || userId || `usr_${githubUser.id}`,
+      username: user?.username || githubUser.login,
+      email: user?.email || githubUser.email || `${githubUser.login}@github.user`,
+      avatarUrl: githubUser.avatar_url,
+      githubId: githubUser.id,
+      githubAccessToken: cleanToken,
+      hasGithub: true,
+    });
 
     res.json({
       success: true,
+      token: updatedToken,
       githubUser: {
         id: githubUser.id,
         username: githubUser.login,
         avatarUrl: githubUser.avatar_url,
+      },
+      user: {
+        id: user?.id || userId || `usr_${githubUser.id}`,
+        username: user?.username || githubUser.login,
+        avatarUrl: githubUser.avatar_url,
+        hasGithub: true,
       },
       githubToken: cleanToken,
     });
