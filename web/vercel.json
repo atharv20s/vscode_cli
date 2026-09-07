@@ -1,0 +1,7 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "next build",
+  "env": {
+    "BACKEND_URL": "https://ath-ide-542353973808.us-central1.run.app"
+  }
+}
