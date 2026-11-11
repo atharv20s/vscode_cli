@@ -30,15 +30,59 @@ class WorkspaceService {
    * @returns {{ safe: boolean, resolved: string, relative: string }}
    */
   resolvePath(targetPath) {
-    if (!targetPath) {
-      return { safe: true, resolved: this.workspaceRoot, relative: "." };
+    const resolved = path.resolve(this.workspaceRoot, targetPath || ".");
+    const relativePath = path.relative(this.workspaceRoot, resolved);
+    const insideRoot =
+      relativePath === "" ||
+      (relativePath !== ".." &&
+        !relativePath.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relativePath));
+
+    if (!insideRoot) {
+      return {
+        safe: false,
+        resolved,
+        relative: relativePath.replace(/\\\\/g, "/"),
+      };
     }
 
-    const resolved = path.resolve(this.workspaceRoot, targetPath);
-    const safe = resolved.startsWith(this.workspaceRoot);
-    const relative = path.relative(this.workspaceRoot, resolved).replace(/\\/g, "/") || ".";
+    // Resolve the deepest existing ancestor so symlinks cannot redirect a
+    // missing/new target outside the workspace. realpathSync also canonicalizes
+    // the workspace root and existing target before the containment check.
+    try {
+      const realRoot = fs.realpathSync(this.workspaceRoot);
+      let existingAncestor = resolved;
+      const missingSegments = [];
 
-    return { safe, resolved, relative };
+      while (!fs.existsSync(existingAncestor)) {
+        const parent = path.dirname(existingAncestor);
+        if (parent === existingAncestor) {
+          return { safe: false, resolved, relative: relativePath };
+        }
+        missingSegments.unshift(path.basename(existingAncestor));
+        existingAncestor = parent;
+      }
+
+      const realAncestor = fs.realpathSync(existingAncestor);
+      const canonicalTarget = path.join(realAncestor, ...missingSegments);
+      const canonicalRelative = path.relative(realRoot, canonicalTarget);
+      const canonicalInsideRoot =
+        canonicalRelative === "" ||
+        (canonicalRelative !== ".." &&
+          !canonicalRelative.startsWith(`..${path.sep}`) &&
+          !path.isAbsolute(canonicalRelative));
+
+      return {
+        safe: canonicalInsideRoot,
+        resolved,
+        relative: relativePath.replace(/\\\\/g, "/") || ".",
+      };
+    } catch (error) {
+      // Fail closed on unexpected filesystem errors. A missing path below a
+      // valid existing ancestor is handled above; permission and I/O errors
+      // must not silently authorize access.
+      return { safe: false, resolved, relative: relativePath };
+    }
   }
 
   /**
