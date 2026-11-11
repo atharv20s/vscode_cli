@@ -8,6 +8,7 @@
 import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
+import crypto from "crypto";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
@@ -16,8 +17,8 @@ import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 const IGNORED_DIRS = new Set(["node_modules", ".git", ".worktrees", "dist", "build", ".next", ".cache"]);
 
 class WorkspaceService {
-  constructor() {
-    this.workspaceRoot = path.resolve(config.workspaceRoot);
+  constructor(root = config.workspaceRoot) {
+    this.workspaceRoot = path.resolve(root);
     this.watcher = null;
     this._recentInternalMutations = new Map(); // path -> timestamp
     this._initWatcher();
@@ -320,4 +321,28 @@ class WorkspaceService {
   }
 }
 
+const workspaceServices = new Map();
+
+/**
+ * Return a filesystem service rooted in a private, stable directory for one
+ * authenticated user. The opaque directory name prevents usernames/IDs from
+ * becoming path components and avoids traversal through crafted identities.
+ */
+export function getWorkspaceService(userId) {
+  if (typeof userId !== "string" || !userId.trim()) {
+    throw new Error("An authenticated workspace owner is required.");
+  }
+
+  const ownerKey = crypto.createHash("sha256").update(userId).digest("hex");
+  if (!workspaceServices.has(ownerKey)) {
+    const root = path.join(config.workspaceRoot, "users", ownerKey);
+    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+    workspaceServices.set(ownerKey, new WorkspaceService(root));
+  }
+
+  return workspaceServices.get(ownerKey);
+}
+
+// Retained for trusted internal/system operations only. Request handlers must
+// use getWorkspaceService(req.user.id) and must never expose this shared root.
 export const workspaceService = new WorkspaceService();
