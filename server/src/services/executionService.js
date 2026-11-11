@@ -74,9 +74,20 @@ class ExecutionService {
     timeout = 45000,
     signal = null,
   }) {
-    // Fail closed in production until commands are routed to a dedicated, isolated
-    // per-workspace runtime. LocalBackend/ProcessSupervisor execute inside this
-    // application process and must never be exposed to public users.
+    // Route production commands only into the dedicated per-user Docker
+    // workspace. Never fall back to the API host's shell.
+    if (config.executionRuntime === "docker") {
+      const { dockerWorkspaceRuntime } = await import("./dockerWorkspaceRuntime.js");
+      return dockerWorkspaceRuntime.execute({
+        workspaceId,
+        workspaceDir: cwd,
+        command,
+        timeout,
+        signal,
+      });
+    }
+
+    // Fail closed when no isolated execution provider is configured.
     if (!config.isDev) {
       throw new Error("Isolated execution runtime is not configured. Command execution is temporarily unavailable.");
     }
