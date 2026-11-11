@@ -73,6 +73,7 @@ export function registerShellTools() {
         payload: { command: args.command, working_dir: args.working_dir, shell: args.shell },
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
 
       if (!perm.granted) {
