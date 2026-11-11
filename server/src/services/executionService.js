@@ -74,6 +74,13 @@ class ExecutionService {
     timeout = 45000,
     signal = null,
   }) {
+    // Fail closed in production until commands are routed to a dedicated, isolated
+    // per-workspace runtime. LocalBackend/ProcessSupervisor execute inside this
+    // application process and must never be exposed to public users.
+    if (!config.isDev) {
+      throw new Error("Isolated execution runtime is not configured. Command execution is temporarily unavailable.");
+    }
+
     // Mode 1: USER_INTERACTIVE (Write directly into active user PTY session)
     if (mode === "USER_INTERACTIVE") {
       if (!sessionId) {
