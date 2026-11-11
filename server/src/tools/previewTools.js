@@ -5,9 +5,7 @@
  * with automated localhost port detection and readiness synchronization.
  */
 
-import path from "path";
 import { registerTool } from "./index.js";
-import { config } from "../config/env.js";
 import { getPreviewService } from "../services/previewService.js";
 import { getWorkspaceService } from "../services/workspaceService.js";
 
