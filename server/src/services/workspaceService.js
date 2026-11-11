@@ -17,8 +17,9 @@ import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 const IGNORED_DIRS = new Set(["node_modules", ".git", ".worktrees", "dist", "build", ".next", ".cache"]);
 
 class WorkspaceService {
-  constructor(root = config.workspaceRoot) {
+  constructor(root = config.workspaceRoot, workspaceId = "system") {
     this.workspaceRoot = path.resolve(root);
+    this.workspaceId = workspaceId;
     this.watcher = null;
     this._recentInternalMutations = new Map(); // path -> timestamp
     this._initWatcher();
@@ -135,6 +136,8 @@ class WorkspaceService {
       version: Date.now(),
       size: Buffer.byteLength(content),
     }, {
+      workspaceId: this.workspaceId,
+      workspaceId: this.workspaceId,
       source: options.source || "fs",
       actor: options.actor || "user",
       turnId: options.turnId || null,
@@ -304,7 +307,8 @@ class WorkspaceService {
               operation: exists ? "external_modify" : "external_delete",
               version: Date.now(),
             }, {
-              source: "watcher",
+              workspaceId: this.workspaceId,
+      source: "watcher",
               actor: "user",
             });
 
@@ -337,7 +341,7 @@ export function getWorkspaceService(userId) {
   if (!workspaceServices.has(ownerKey)) {
     const root = path.join(config.workspaceRoot, "users", ownerKey);
     fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-    workspaceServices.set(ownerKey, new WorkspaceService(root));
+    workspaceServices.set(ownerKey, new WorkspaceService(root, ownerKey));
   }
 
   return workspaceServices.get(ownerKey);
