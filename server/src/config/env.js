@@ -49,6 +49,8 @@ export const config = {
   executionRuntime: (process.env.EXECUTION_RUNTIME || "disabled").toLowerCase(),
   dockerBinary: process.env.DOCKER_BIN || "docker",
   dockerImage: process.env.DOCKER_WORKSPACE_IMAGE || "node:22-bookworm-slim",
+  dockerWorkspaceUid: parseInt(process.env.DOCKER_WORKSPACE_UID || "1000", 10),
+  dockerWorkspaceGid: parseInt(process.env.DOCKER_WORKSPACE_GID || "1000", 10),
 
   // Workspace (where user files are sandboxed)
   workspaceRoot: (() => {
