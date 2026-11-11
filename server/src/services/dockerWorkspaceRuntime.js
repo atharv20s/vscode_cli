@@ -106,8 +106,11 @@ class DockerWorkspaceRuntime {
     return new Promise((resolve) => {
       let output = "";
       let settled = false;
+      const timeoutSeconds = Math.max(1, Math.ceil(timeout / 1000));
       const child = spawn(config.dockerBinary, [
-        "exec", "-w", containerCwd, name, "/bin/bash", "-lc", command,
+        "exec", "-w", containerCwd, name,
+        "/usr/bin/timeout", "--signal=TERM", "--kill-after=3s",
+        `${timeoutSeconds}s`, "/bin/bash", "-lc", command,
       ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
 
       const finish = (result) => {
@@ -124,16 +127,19 @@ class DockerWorkspaceRuntime {
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
         finish({ success: false, output: output + "\\nCommand timed out.", exitCode: -1 });
-      }, timeout);
+      }, timeout + 5000);
 
       child.stdout.on("data", chunk => { output += chunk.toString("utf8"); });
       child.stderr.on("data", chunk => { output += chunk.toString("utf8"); });
       child.on("error", error => finish({ success: false, output: error.message, exitCode: 1 }));
-      child.on("close", code => finish({
-        success: code === 0,
-        output: output.trim(),
-        exitCode: code ?? 1,
-      }));
+      child.on("close", code => {
+        const timedOut = code === 124 || code === 137;
+        finish({
+          success: code === 0,
+          output: (output + (timedOut ? "\\nCommand timed out." : "")).trim(),
+          exitCode: code ?? 1,
+        });
+      });
       if (signal?.aborted) onAbort();
       else signal?.addEventListener("abort", onAbort, { once: true });
     });
