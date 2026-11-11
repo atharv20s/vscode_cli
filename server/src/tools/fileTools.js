@@ -38,6 +38,7 @@ export function registerFileTools() {
         payload: args,
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
@@ -79,6 +80,7 @@ export function registerFileTools() {
         payload: { path: filePath, content: fileContent },
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
@@ -126,6 +128,7 @@ export function registerFileTools() {
         payload: args,
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
@@ -180,6 +183,7 @@ export function registerFileTools() {
         payload: { path: targetPath },
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
@@ -275,6 +279,7 @@ export function registerFileTools() {
         mode: "AGENT_BACKGROUND",
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
 
       if (res.exitCode === 0) {
