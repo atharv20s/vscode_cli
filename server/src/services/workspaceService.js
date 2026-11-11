@@ -223,6 +223,7 @@ class WorkspaceService {
     if (!safe) throw new Error(`Access denied: Path is outside workspace root (${dirPath})`);
 
     await fsp.mkdir(resolved, { recursive: true });
+    this._alignRuntimeOwnership(resolved);
     const entries = await fsp.readdir(resolved, { withFileTypes: true });
 
     const items = await Promise.all(
