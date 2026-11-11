@@ -361,6 +361,7 @@ export function getWorkspaceService(userId) {
   if (!workspaceServices.has(ownerKey)) {
     const root = path.join(config.workspaceRoot, "users", ownerKey);
     fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+    fs.chmodSync(root, 0o700);
     workspaceServices.set(ownerKey, new WorkspaceService(root, ownerKey));
   }
 
