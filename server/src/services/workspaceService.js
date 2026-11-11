@@ -126,6 +126,7 @@ class WorkspaceService {
     const isNew = !fs.existsSync(resolved);
     await fsp.mkdir(path.dirname(resolved), { recursive: true });
     await fsp.writeFile(resolved, content, "utf8");
+    this._alignRuntimeOwnership(resolved);
 
     this._recordInternalMutation(relative);
 
@@ -182,6 +183,7 @@ class WorkspaceService {
 
     await fsp.mkdir(path.dirname(to.resolved), { recursive: true });
     await fsp.rename(from.resolved, to.resolved);
+    this._alignRuntimeOwnership(to.resolved);
 
     this._recordInternalMutation(from.relative);
     this._recordInternalMutation(to.relative);
@@ -209,6 +211,7 @@ class WorkspaceService {
     if (!safe) throw new Error(`Access denied: Path is outside workspace root (${dirPath})`);
 
     await fsp.mkdir(resolved, { recursive: true });
+    this._alignRuntimeOwnership(resolved);
     return { success: true, path: relative };
   }
 
@@ -247,6 +250,21 @@ class WorkspaceService {
     return { path: relative, entries: items };
   }
 
+  /**
+   * Keep host-created workspace files writable by the configured container UID.
+   * Ownership changes are limited to the current private workspace.
+   */
+  _alignRuntimeOwnership(targetPath) {
+    if (config.executionRuntime !== "docker") return;
+    const uid = config.dockerWorkspaceUid;
+    const gid = config.dockerWorkspaceGid;
+    let current = targetPath;
+    while (current === this.workspaceRoot || current.startsWith(this.workspaceRoot + path.sep)) {
+      fs.chownSync(current, uid, gid);
+      if (current === this.workspaceRoot) break;
+      current = path.dirname(current);
+    }
+  }
   /**
    * Record internal mutation to deduplicate external watcher events.
    * @private
