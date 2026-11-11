@@ -83,10 +83,6 @@ class PreviewService {
     }, {
       workspaceId: this.workspaceId,
       workspaceId: this.workspaceId,
-      workspaceId: this.workspaceId,
-      workspaceId: this.workspaceId,
-      workspaceId: this.workspaceId,
-      workspaceId: this.workspaceId,
       source: "preview",
       actor: "agent",
     });
