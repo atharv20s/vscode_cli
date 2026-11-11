@@ -70,13 +70,18 @@ class DockerWorkspaceRuntime {
     return name;
   }
 
-  async execute({ workspaceId, workspaceDir, command, timeout = 45000, signal }) {
+  async execute({ workspaceId, workspaceDir, cwd = workspaceDir, command, timeout = 45000, signal }) {
     const name = await this.ensureContainer(workspaceId, workspaceDir);
+    const relativeCwd = path.relative(workspaceDir, cwd || workspaceDir);
+    if (relativeCwd === ".." || relativeCwd.startsWith(`..${path.sep}`) || path.isAbsolute(relativeCwd)) {
+      throw new Error("Execution working directory is outside the workspace.");
+    }
+    const containerCwd = path.posix.join("/workspace", relativeCwd.split(path.sep).join("/"));
     return new Promise((resolve) => {
       let output = "";
       let settled = false;
       const child = spawn(config.dockerBinary, [
-        "exec", "-w", "/workspace", name, "/bin/bash", "-lc", command,
+        "exec", "-w", containerCwd, name, "/bin/bash", "-lc", command,
       ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
 
       const finish = (result) => {
