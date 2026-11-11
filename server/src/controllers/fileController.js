@@ -194,6 +194,7 @@ export async function execCommand(req, res) {
       command,
       shell,
       cwd: workspaceService.workspaceRoot,
+      workspaceId: req.user.id,
       mode: "AGENT_BACKGROUND",
     });
 
