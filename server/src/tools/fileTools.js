@@ -7,6 +7,7 @@
 
 import { registerTool } from "./index.js";
 import { getWorkspaceService } from "../services/workspaceService.js";
+import { generatePreviewToken } from "../middleware/auth.js";
 import { permissionEngine } from "../services/permissionEngine.js";
 
 export function registerFileTools() {
@@ -317,7 +318,8 @@ export function registerFileTools() {
       const safeTarget = getWorkspaceService(ctx.userId).resolvePath(filePath);
       if (!safeTarget.safe) return { success: false, error: "Preview path is outside your workspace." };
 
-      const previewUrl = `/preview/${encodeURIComponent(filePath).replace(/%2F/gi, "/")}`;
+      const previewToken = generatePreviewToken(ctx.userId, ctx.workspaceId);
+      const previewUrl = `/preview/${previewToken}/${encodeURIComponent(filePath).replace(/%2F/gi, "/")}`;
       previewService.setReady(previewUrl, 3001);
 
       return {
