@@ -82,8 +82,6 @@ class PreviewService {
       timestamp: this.state.startedAt,
     }, {
       workspaceId: this.workspaceId,
-      workspaceId: this.workspaceId,
-      workspaceId: this.workspaceId,
       source: "preview",
       actor: "agent",
     });
@@ -210,6 +208,7 @@ class PreviewService {
       pid: this.state.pid,
       command: this.state.command,
     }, {
+      workspaceId: this.workspaceId,
       source: "preview",
       actor: "agent",
     });
@@ -288,6 +287,7 @@ class PreviewService {
       port,
       timestamp: Date.now(),
     }, {
+      workspaceId: this.workspaceId,
       source: "preview",
       actor: "agent",
     });
