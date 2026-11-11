@@ -45,6 +45,11 @@ export const config = {
   githubClientId: process.env.GITHUB_CLIENT_ID || "",
   githubClientSecret: process.env.GITHUB_CLIENT_SECRET || "",
 
+  // Isolated execution runtime (Docker Engine must be available on the worker host)
+  executionRuntime: (process.env.EXECUTION_RUNTIME || "disabled").toLowerCase(),
+  dockerBinary: process.env.DOCKER_BIN || "docker",
+  dockerImage: process.env.DOCKER_WORKSPACE_IMAGE || "node:22-bookworm-slim",
+
   // Workspace (where user files are sandboxed)
   workspaceRoot: (() => {
     const raw = process.env.WORKSPACE_ROOT;
