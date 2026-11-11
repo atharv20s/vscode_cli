@@ -47,6 +47,8 @@ export const config = {
 
   // Isolated execution runtime (Docker Engine must be available on the worker host)
   executionRuntime: (process.env.EXECUTION_RUNTIME || "disabled").toLowerCase(),
+  executionWorkerUrl: (process.env.EXECUTION_WORKER_URL || "").replace(/\/$/, ""),
+  workerSharedSecret: process.env.WORKER_SHARED_SECRET || "",
   dockerBinary: process.env.DOCKER_BIN || "docker",
   dockerImage: process.env.DOCKER_WORKSPACE_IMAGE || "ath-ide-workspace:local",
   dockerWorkspaceNetwork: process.env.DOCKER_WORKSPACE_NETWORK || "none",
@@ -120,8 +122,13 @@ export function validateConfig() {
     );
   }
 
-  if (!["disabled", "docker"].includes(config.executionRuntime)) {
-    errors.push("EXECUTION_RUNTIME must be either disabled or docker.");
+  if (!["disabled", "docker", "remote"].includes(config.executionRuntime)) {
+    errors.push("EXECUTION_RUNTIME must be disabled, docker, or remote.");
+  }
+
+  if (config.executionRuntime === "remote") {
+    if (!config.executionWorkerUrl) errors.push("EXECUTION_WORKER_URL is required when EXECUTION_RUNTIME=remote.");
+    if (config.workerSharedSecret.length < 32) errors.push("WORKER_SHARED_SECRET must contain at least 32 characters when EXECUTION_RUNTIME=remote.");
   }
 
   if (!["none", "bridge"].includes(config.dockerWorkspaceNetwork)) {
