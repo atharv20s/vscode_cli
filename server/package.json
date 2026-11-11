@@ -5,7 +5,8 @@
   "description": "Pure JavaScript backend for the Agentic CLI — AI agent platform with MCP, WebSockets, and GitHub integration",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",\n    "start:worker": "node src/worker/executionWorker.js",
+    "start": "node src/server.js",
+    "start:worker": "node src/worker/executionWorker.js",
     "dev": "node --watch src/server.js",
     "test": "node --test src/**/*.test.js"
   },
