@@ -119,6 +119,14 @@ export function validateConfig() {
     );
   }
 
+  if (!["disabled", "docker"].includes(config.executionRuntime)) {
+    errors.push("EXECUTION_RUNTIME must be either disabled or docker.");
+  }
+
+  if (!Number.isInteger(config.dockerWorkspaceUid) || config.dockerWorkspaceUid < 1 || !Number.isInteger(config.dockerWorkspaceGid) || config.dockerWorkspaceGid < 1) {
+    errors.push("DOCKER_WORKSPACE_UID and DOCKER_WORKSPACE_GID must be positive integers.");
+  }
+
   if (config.remoteSandbox.enabled && !config.remoteSandbox.host) {
     errors.push(
       "REMOTE_ENABLED=true but REMOTE_HOST is not set. Provide the cloud VM IP address."
