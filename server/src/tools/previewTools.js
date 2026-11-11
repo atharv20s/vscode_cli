@@ -9,6 +9,7 @@ import path from "path";
 import { registerTool } from "./index.js";
 import { config } from "../config/env.js";
 import { getPreviewService } from "../services/previewService.js";
+import { getWorkspaceService } from "../services/workspaceService.js";
 
 export function registerPreviewTools() {
   // 1. start_preview
@@ -41,8 +42,11 @@ export function registerPreviewTools() {
     },
     async (args, ctx = {}) => {
       const previewService = getPreviewService(ctx.workspaceId);
-      const baseDir = ctx.workspaceDir || config.workspaceRoot;
-      const cwd = args.working_dir ? path.resolve(baseDir, args.working_dir) : baseDir;
+      const workspace = getWorkspaceService(ctx.userId);
+      const baseDir = workspace.workspaceRoot;
+      const target = workspace.resolvePath(args.working_dir || ".");
+      if (!target.safe) return { success: false, error: "Preview directory is outside your workspace." };
+      const cwd = target.resolved;
 
       try {
         const result = await previewService.startPreview({
