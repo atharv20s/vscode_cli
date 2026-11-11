@@ -137,7 +137,6 @@ class WorkspaceService {
       size: Buffer.byteLength(content),
     }, {
       workspaceId: this.workspaceId,
-      workspaceId: this.workspaceId,
       source: options.source || "fs",
       actor: options.actor || "user",
       turnId: options.turnId || null,
@@ -162,6 +161,7 @@ class WorkspaceService {
       operation: "delete",
       version: Date.now(),
     }, {
+      workspaceId: this.workspaceId,
       source: options.source || "fs",
       actor: options.actor || "user",
     });
@@ -193,6 +193,7 @@ class WorkspaceService {
       operation: "rename",
       version: Date.now(),
     }, {
+      workspaceId: this.workspaceId,
       source: options.source || "fs",
       actor: options.actor || "user",
     });
