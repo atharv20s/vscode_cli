@@ -42,7 +42,7 @@ class WorkspaceService {
       return {
         safe: false,
         resolved,
-        relative: relativePath.replace(/\\\\/g, "/"),
+        relative: relativePath.split(path.sep).join("/"),
       };
     }
 
@@ -75,7 +75,7 @@ class WorkspaceService {
       return {
         safe: canonicalInsideRoot,
         resolved,
-        relative: relativePath.replace(/\\\\/g, "/") || ".",
+        relative: relativePath.split(path.sep).join("/") || ".",
       };
     } catch (error) {
       // Fail closed on unexpected filesystem errors. A missing path below a
