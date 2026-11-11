@@ -103,7 +103,7 @@ async function readWorkspace(root) {
 }
 
 app.get("/healthz", (_req, res) => res.json({ status: "ok", role: "execution-worker" }));
-app.post("/v1/execute", express.raw({ type: "application/json", limit: "16mb" }), verifyRequest, async (req, res) => {
+app.post("/v1/execute", express.raw({ type: "application/json", limit: "20mb" }), verifyRequest, async (req, res) => {
   try {
     const input = JSON.parse(req.body.toString("utf8"));
     const { workspaceId, files, command, cwd = ".", timeout = 45000 } = input;
@@ -118,7 +118,7 @@ app.post("/v1/execute", express.raw({ type: "application/json", limit: "16mb" })
     }
     const result = await withWorkspaceLock(workspaceId, async () => {
       const root = path.join(config.workspaceRoot, "remote-users", workspaceId);
-      await replaceWorkspace(root, files);
+      // Remove any prior container before replacing its bind-mounted workspace directory.\n      await dockerWorkspaceRuntime.stop(workspaceId);\n      await replaceWorkspace(root, files);
       const resolvedCwd = path.resolve(root, cwd);
       if (resolvedCwd !== root && !resolvedCwd.startsWith(root + path.sep)) throw new Error("Working directory escaped workspace.");
       const execution = await dockerWorkspaceRuntime.execute({
