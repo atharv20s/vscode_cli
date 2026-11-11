@@ -242,7 +242,7 @@ async function handleMessage(ws, msg, user) {
     case "permission.resolve":
     case "permission_resolve":
       if (payload?.permissionId) {
-        permissionEngine.resolvePermission(payload.permissionId, payload.granted, payload.reason);
+        permissionEngine.resolvePermission(payload.permissionId, payload.granted, payload.reason, ws.workspaceId);
       }
       break;
 
