@@ -11,6 +11,7 @@ import { config } from "../config/env.js";
 import { eventBus } from "../websocket/eventBus.js";
 import { LocalBackend } from "./backends/localBackend.js";
 import { RemoteSSHBackend } from "./backends/remoteSSHBackend.js";
+import { DockerBackend } from "./backends/dockerBackend.js";
 
 /**
  * Terminal Lifecycle States
@@ -60,17 +61,17 @@ class TerminalSessionManager {
   async createSession(sessionId, options = {}) {
     this.destroySession(sessionId);
 
-    const cwd = options.cwd || config.workspaceRoot;
+    const cwd = options.workspaceDir || options.cwd || config.workspaceRoot;
     const shell = options.shellType || "powershell";
     const cols = options.cols || 80;
     const rows = options.rows || 24;
     const workspaceId = options.workspaceId || "default";
-    const backendType = options.backendType || (options.remoteHost ? "remote_ssh" : "local");
+    const backendType = config.executionRuntime === "docker" ? "docker" : (options.backendType || (options.remoteHost ? "remote_ssh" : "local"));
 
     // Do not spawn shells inside the shared API container in production. The
     // remote SSH adapter is not yet a per-user isolated runtime either.
-    if (!config.isDev) {
-      throw new Error("Isolated Linux workspace runtime is not configured. Terminal startup is temporarily unavailable.");
+    if (!config.isDev && config.executionRuntime !== "docker") {
+      throw new Error("Isolated Linux workspace runtime is not configured. Set EXECUTION_RUNTIME=docker on a worker with Docker Engine access.");
     }
 
     const session = {
@@ -91,6 +92,19 @@ class TerminalSessionManager {
     this._emitStateChange(session, "connecting");
 
     try {
+      if (backendType === "docker") {
+        const backend = new DockerBackend();
+        session.backendInstance = backend;
+        const ptyProcess = await backend.spawnShell({
+          sessionId, workspaceId, workspaceDir: cwd, cols, rows, ws: options.ws,
+        });
+        session.pid = ptyProcess?.pid || null;
+        session.state = "ready";
+        this._emitStateChange(session, "ready");
+        logger.info("TerminalSessionManager: Isolated Docker session ready", { sessionId });
+        return session;
+      }
+
       if (backendType === "remote_ssh" && options.remoteHost) {
         const backend = new RemoteSSHBackend();
         session.backendInstance = backend;
