@@ -7,6 +7,7 @@
  * - AGENT_INTERACTIVE: Dedicated interactive agent PTY shell.
  */
 
+import path from "path";
 import { logger } from "../config/logger.js";
 import { config } from "../config/env.js";
 import { terminalSessionManager } from "./terminalSessionManager.js";
@@ -65,6 +66,7 @@ class ExecutionService {
   async execute({
     command,
     cwd = config.workspaceRoot,
+    workspaceDir = config.workspaceRoot,
     mode = "AGENT_BACKGROUND",
     operationId = `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
     turnId = null,
@@ -80,7 +82,8 @@ class ExecutionService {
       const { dockerWorkspaceRuntime } = await import("./dockerWorkspaceRuntime.js");
       return dockerWorkspaceRuntime.execute({
         workspaceId,
-        workspaceDir: cwd,
+        workspaceDir,
+        cwd,
         command,
         timeout,
         signal,
