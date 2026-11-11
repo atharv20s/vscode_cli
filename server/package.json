@@ -8,7 +8,10 @@
     "start": "node src/server.js",
     "start:worker": "node src/worker/executionWorker.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test src/**/*.test.js"
+    "test": "node --test src/**/*.test.js",
+    "bench:event-bus": "node ../benchmarks/event-bus.mjs",
+    "bench:websocket": "node ../benchmarks/websocket-load.mjs",
+    "bench:redis-lease": "node ../benchmarks/redis-lease-fault.mjs"
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0",
