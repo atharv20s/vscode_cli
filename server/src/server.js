@@ -25,7 +25,7 @@ import { initializeTools } from "./tools/index.js";
 import { initMcpServers, shutdownMcpServers, getMcpStatus } from "./mcp/mcpClient.js";
 import { initWebSocketServer } from "./websocket/wsServer.js";
 import { generalLimiter } from "./middleware/rateLimiter.js";
-import { requireAuth } from "./middleware/auth.js";
+import { previewAuth } from "./middleware/auth.js";
 import { getWorkspaceService } from "./services/workspaceService.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 
@@ -63,11 +63,11 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 // 3. Private workspace preview. Never serve the shared workspace root.
 // Resolve every requested path through the symlink-aware workspace boundary
 // check before sending a file.
-app.use("/preview", requireAuth, (req, res) => {
+app.use("/preview", previewAuth, (req, res) => {
   try {
     const workspace = getWorkspaceService(req.user.id);
-    let relativePath = req.path.replace(/^\/+/, "") || "index.html";
-    if (relativePath.endsWith("/")) relativePath += "index.html";
+    if (workspace.workspaceId !== req.previewWorkspaceId) return res.status(403).json({ error: "Forbidden" });
+    const relativePath = req.previewPath || "index.html";
     const target = workspace.resolvePath(relativePath);
     if (!target.safe) return res.status(403).json({ error: "Forbidden", message: "Preview path is outside your workspace." });
     return res.sendFile(target.resolved, { dotfiles: "deny" }, error => {
