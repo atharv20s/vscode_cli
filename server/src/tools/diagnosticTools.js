@@ -12,7 +12,7 @@ import { registerTool } from "./index.js";
 import { config } from "../config/env.js";
 import { LocalBackend } from "../services/backends/localBackend.js";
 import { worldStateService } from "../services/worldStateService.js";
-import { workspaceService } from "../services/workspaceService.js";
+import { getWorkspaceService } from "../services/workspaceService.js";
 import { processSupervisor, killProcessTree } from "../services/processSupervisor.js";
 
 /** Helper to execute quick version check */
@@ -158,7 +158,8 @@ export function registerDiagnosticTools() {
         },
       },
     },
-    async (args) => {
+    async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId);
       const actionsTaken = [];
 
       if (args.kill_orphaned_ports) {
