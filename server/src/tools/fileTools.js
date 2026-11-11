@@ -266,8 +266,12 @@ export function registerFileTools() {
       }
 
       const { executionService } = await import("../services/executionService.js");
-      const res = await executionService.executeCommand(compileCmd, {
+      const res = await executionService.execute({
+        command: compileCmd,
         cwd: ctx.workspaceDir,
+        workspaceDir: ctx.workspaceDir,
+        workspaceId: ctx.workspaceId,
+        mode: "AGENT_BACKGROUND",
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
       });
@@ -275,13 +279,13 @@ export function registerFileTools() {
       if (res.exitCode === 0) {
         return {
           success: true,
-          output: `Compilation succeeded for ${filePath}.\nCommand: ${compileCmd}\n${res.stdout || "No warnings."}`,
+          output: `Compilation succeeded for ${filePath}.\nCommand: ${compileCmd}\n${res.output || "No warnings."}`,
           binary: outName,
         };
       } else {
         return {
           success: false,
-          error: `Compilation failed with exit code ${res.exitCode}:\n${res.stderr || res.stdout}`,
+          error: `Compilation failed with exit code ${res.exitCode}:\n${res.output}`,
         };
       }
     }
