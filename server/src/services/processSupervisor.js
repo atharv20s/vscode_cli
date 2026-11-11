@@ -77,6 +77,12 @@ class ProcessSupervisor {
     sessionId = null,
     workspaceId = "default",
   }) {
+    // Defense in depth: never execute arbitrary commands in the shared API
+    // container. Production execution must use a dedicated isolated runner.
+    if (!config.isDev) {
+      throw new Error("Isolated execution runtime is not configured. Command execution is temporarily unavailable.");
+    }
+
     const startTime = Date.now();
 
     // 1. Emit agent.command.requested
