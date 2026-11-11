@@ -107,6 +107,7 @@ export function registerGitTools() {
         payload: args,
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
@@ -141,6 +142,7 @@ export function registerGitTools() {
         payload: args,
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
@@ -199,6 +201,7 @@ export function registerGitTools() {
         payload: { owner: args.owner, repo: args.repo, branch: args.branch },
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
@@ -290,6 +293,7 @@ export function registerGitTools() {
         payload: args,
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
@@ -341,6 +345,7 @@ export function registerGitTools() {
         cwd: ctx.workspaceDir || config.workspaceRoot,
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       return { success: res.exitCode === 0, output: res.stdout || res.stderr };
     }
@@ -381,6 +386,7 @@ export function registerGitTools() {
         cwd: ctx.workspaceDir || config.workspaceRoot,
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       return { success: res.exitCode === 0, output: res.stdout || res.stderr };
     }
@@ -410,6 +416,7 @@ export function registerGitTools() {
         cwd: ctx.workspaceDir || config.workspaceRoot,
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       return { success: res.exitCode === 0, output: res.stdout || res.stderr };
     }
