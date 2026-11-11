@@ -5,7 +5,6 @@
  * (TerminalSessionManager, ProcessSupervisor, PreviewService, FileSystem, Agent).
  */
 
-import fs from "fs/promises";
 import path from "path";
 import { WebSocketServer } from "ws";
 import { verifyToken } from "../middleware/auth.js";
@@ -18,11 +17,10 @@ import {
   removeConnection,
   recordMessage,
   sendMessage,
-  broadcastAll,
   disconnectIdle,
 } from "./connectionManager.js";
 import { executionService } from "../services/executionService.js";
-import { getPreviewService } from "../services/ws.previewService.js";
+import { getPreviewService } from "../services/previewService.js";
 import { permissionEngine } from "../services/permissionEngine.js";
 import { LocalBackend } from "../services/backends/localBackend.js";
 import { eventBus, EVENT_TOPICS } from "./eventBus.js";
@@ -66,14 +64,21 @@ export function initWebSocketServer(httpServer) {
     clearInterval(idleCleanupInterval);
   });
 
+  const broadcastScoped = (type, envelope, payload = envelope.payload) => {
+    if (!envelope.workspaceId) return;
+    wss.clients.forEach(client => {
+      if (client.workspaceId === envelope.workspaceId) sendMessage(client, type, payload);
+    });
+  };
+
   // 1. Filesystem Events
   eventBus.subscribe(EVENT_TOPICS.FILE_CHANGED, (envelope) => {
-    broadcastAll("file.changed", envelope.payload);
+    broadcastScoped("file.changed", envelope);
   });
 
   // 2. Agent Background Command Lifecycle
   eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_STARTED, (envelope) => {
-    broadcastAll("agent.command.started", {
+    broadcastScoped("agent.command.started", envelope, {
       ...envelope.payload,
       operationId: envelope.operationId,
       turnId: envelope.turnId,
@@ -81,14 +86,14 @@ export function initWebSocketServer(httpServer) {
   });
 
   eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_OUTPUT, (envelope) => {
-    broadcastAll("agent.command.output", {
+    broadcastScoped("agent.command.output", envelope, {
       ...envelope.payload,
       operationId: envelope.operationId,
     });
   });
 
   eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_COMPLETED, (envelope) => {
-    broadcastAll("agent.command.completed", {
+    broadcastScoped("agent.command.completed", envelope, {
       ...envelope.payload,
       operationId: envelope.operationId,
       turnId: envelope.turnId,
@@ -96,7 +101,7 @@ export function initWebSocketServer(httpServer) {
   });
 
   eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_FAILED, (envelope) => {
-    broadcastAll("agent.command.failed", {
+    broadcastScoped("agent.command.failed", envelope, {
       ...envelope.payload,
       operationId: envelope.operationId,
       turnId: envelope.turnId,
@@ -105,28 +110,28 @@ export function initWebSocketServer(httpServer) {
 
   // 3. Live Preview Events
   eventBus.subscribe(EVENT_TOPICS.PREVIEW_STARTED, (envelope) => {
-    broadcastAll("preview.started", envelope.payload);
+    broadcastScoped("preview.started", envelope);
   });
 
   eventBus.subscribe(EVENT_TOPICS.PREVIEW_READY, (envelope) => {
-    broadcastAll("preview.ready", envelope.payload);
+    broadcastScoped("preview.ready", envelope);
   });
 
   eventBus.subscribe(EVENT_TOPICS.PREVIEW_OUTPUT, (envelope) => {
-    broadcastAll("preview.output", envelope.payload);
+    broadcastScoped("preview.output", envelope);
   });
 
   eventBus.subscribe(EVENT_TOPICS.PREVIEW_STOPPED, (envelope) => {
-    broadcastAll("preview.stopped", envelope.payload);
+    broadcastScoped("preview.stopped", envelope);
   });
 
   // 4. Permissions Events
   eventBus.subscribe(EVENT_TOPICS.PERMISSION_REQUESTED, (envelope) => {
-    broadcastAll("permission.requested", envelope.payload);
+    broadcastScoped("permission.requested", envelope);
   });
 
   eventBus.subscribe(EVENT_TOPICS.PERMISSION_RESOLVED, (envelope) => {
-    broadcastAll("permission.resolved", envelope.payload);
+    broadcastScoped("permission.resolved", envelope);
   });
 
   wss.on("connection", (ws, req) => {
