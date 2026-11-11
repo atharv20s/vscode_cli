@@ -37,8 +37,15 @@ class DockerWorkspaceRuntime {
       execFileSync(docker, ["inspect", name], { stdio: "ignore", timeout: 10000 });
       execFileSync(docker, ["start", name], { stdio: "ignore", timeout: 15000 });
     } catch {
-      const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
-      const gid = typeof process.getgid === "function" ? process.getgid() : 1000;
+      const uid = config.dockerWorkspaceUid;
+      const gid = config.dockerWorkspaceGid;
+      const processUid = typeof process.getuid === "function" ? process.getuid() : uid;
+      const processGid = typeof process.getgid === "function" ? process.getgid() : gid;
+      if (processUid === 0) {
+        execFileSync("chown", ["-R", `${uid}:${gid}`, workspaceDir], { stdio: "ignore", timeout: 30000 });
+      } else if (processUid !== uid || processGid !== gid) {
+        throw new Error("Docker workspace UID/GID must match the API worker user, or the worker must run with permission to chown workspace files.");
+      }
       const args = [
         "run", "-d", "--name", name,
         "--label", "app=ath-ide",
@@ -50,8 +57,10 @@ class DockerWorkspaceRuntime {
         "--pids-limit", "256",
         "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges",
+        "--read-only",
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
         "--user", `${uid}:${gid}`,
+        "-e", "HOME=/tmp",
         "--network", "bridge",
         "-v", `${workspaceDir}:/workspace:rw`,
         "-w", "/workspace",
