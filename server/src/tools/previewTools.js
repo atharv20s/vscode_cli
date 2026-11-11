@@ -8,7 +8,7 @@
 import path from "path";
 import { registerTool } from "./index.js";
 import { config } from "../config/env.js";
-import { previewService } from "../services/previewService.js";
+import { getPreviewService } from "../services/previewService.js";
 
 export function registerPreviewTools() {
   // 1. start_preview
@@ -40,6 +40,7 @@ export function registerPreviewTools() {
       },
     },
     async (args, ctx = {}) => {
+      const previewService = getPreviewService(ctx.workspaceId);
       const baseDir = ctx.workspaceDir || config.workspaceRoot;
       const cwd = args.working_dir ? path.resolve(baseDir, args.working_dir) : baseDir;
 
@@ -83,7 +84,8 @@ export function registerPreviewTools() {
         },
       },
     },
-    async () => {
+    async (args, ctx = {}) => {
+      const previewService = getPreviewService(ctx.workspaceId);
       try {
         await previewService.stopPreview();
         return { success: true, output: "Preview server stopped successfully." };
@@ -107,7 +109,8 @@ export function registerPreviewTools() {
         },
       },
     },
-    async () => {
+    async (args, ctx = {}) => {
+      const previewService = getPreviewService(ctx.workspaceId);
       const state = previewService.getPreviewState();
       return {
         success: true,
