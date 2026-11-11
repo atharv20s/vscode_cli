@@ -110,8 +110,8 @@ app.post("/v1/execute", express.raw({ type: "application/json", limit: "20mb" })
     if (!safeWorkspaceId(workspaceId) || typeof command !== "string" || !command.trim() || command.length > 20000) {
       return res.status(400).json({ error: "Invalid execution request." });
     }
-    if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 120000) {
-      return res.status(400).json({ error: "Timeout must be between 1 and 120 seconds." });
+    if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 300000) {
+      return res.status(400).json({ error: "Timeout must be between 1 and 300 seconds." });
     }
     if (typeof cwd !== "string" || cwd.startsWith("/") || cwd.split("/").some(p => p === "..")) {
       return res.status(400).json({ error: "Invalid working directory." });
