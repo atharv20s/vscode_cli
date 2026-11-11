@@ -34,9 +34,26 @@ class DockerWorkspaceRuntime {
 
     const docker = config.dockerBinary;
     try {
-      execFileSync(docker, ["inspect", name], { stdio: "ignore", timeout: 10000 });
-      execFileSync(docker, ["start", name], { stdio: "ignore", timeout: 15000 });
+      const raw = execFileSync(docker, ["inspect", name], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 10000,
+      });
+      const inspected = JSON.parse(raw)[0];
+      const mount = inspected?.Mounts?.find(item => item.Destination === "/workspace");
+      if (mount && path.resolve(mount.Source) === path.resolve(workspaceDir)) {
+        if (!inspected.State?.Running) {
+          execFileSync(docker, ["start", name], { stdio: "ignore", timeout: 15000 });
+        }
+        this.containers.set(name, { workspaceDir, workspaceId: String(workspaceId) });
+        return name;
+      }
+      execFileSync(docker, ["rm", "-f", name], { stdio: "ignore", timeout: 15000 });
     } catch {
+      // Container does not exist or could not be inspected; attempt a fresh one.
+    }
+
+    {
       const uid = config.dockerWorkspaceUid;
       const gid = config.dockerWorkspaceGid;
       const processUid = typeof process.getuid === "function" ? process.getuid() : uid;
