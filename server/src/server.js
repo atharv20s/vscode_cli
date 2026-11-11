@@ -66,7 +66,7 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use("/preview", requireAuth, (req, res) => {
   try {
     const workspace = getWorkspaceService(req.user.id);
-    let relativePath = req.path.replace(/^\\/+/, "") || "index.html";
+    let relativePath = req.path.replace(/^\/+/, "") || "index.html";
     if (relativePath.endsWith("/")) relativePath += "index.html";
     const target = workspace.resolvePath(relativePath);
     if (!target.safe) return res.status(403).json({ error: "Forbidden", message: "Preview path is outside your workspace." });
