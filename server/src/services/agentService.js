@@ -184,6 +184,8 @@ export async function runAgent({
   systemPrompt,
   model,
   workspaceDir,
+  workspaceId,
+  userId,
   sessionId,
   maxIterations = 15,
   signal,
@@ -244,7 +246,7 @@ export async function runAgent({
       data: { turn: iteration, maxTurns: maxIterations, turnId: currentTurnId },
     });
 
-    const toolContext = { workspaceDir, sessionId, turnId: currentTurnId, signal };
+    const toolContext = { workspaceDir, workspaceId, userId, sessionId, turnId: currentTurnId, signal };
 
     let textContent = "";
     let pendingToolCalls = [];
