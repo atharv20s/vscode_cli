@@ -7,7 +7,7 @@
 
 import path from "path";
 import { registerTool } from "./index.js";
-import { workspaceService } from "../services/workspaceService.js";
+import { getWorkspaceService } from "../services/workspaceService.js";
 import { permissionEngine } from "../services/permissionEngine.js";
 
 export function registerImageTools() {
@@ -45,6 +45,7 @@ export function registerImageTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId);
       // Permission Check
       const perm = await permissionEngine.checkPermission({
         resource: "file",
@@ -131,7 +132,8 @@ export function registerImageTools() {
         },
       },
     },
-    async (args) => {
+    async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId);
       try {
         const file = await workspaceService.readFile(args.path);
         const ext = path.extname(args.path).toLowerCase();
