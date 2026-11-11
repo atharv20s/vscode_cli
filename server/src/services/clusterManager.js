@@ -14,6 +14,7 @@ import { v4 as uuidv4 } from "uuid";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { getTotalConnections } from "../websocket/connectionManager.js";
+import { getClusterTiming } from "./clusterTiming.js";
 
 class ClusterManager {
   constructor() {
@@ -23,6 +24,7 @@ class ClusterManager {
     this.heartbeatTimer = null;
     this.isRegistered = false;
     this.startTime = Date.now();
+    this.timing = getClusterTiming();
   }
 
   /**
@@ -59,7 +61,7 @@ class ClusterManager {
   }
 
   /**
-   * Start 5-second periodic heartbeat with 15-second TTL.
+   * Start the configured periodic heartbeat and Redis lease TTL.
    */
   startHeartbeat() {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
@@ -69,13 +71,13 @@ class ClusterManager {
 
     this.heartbeatTimer = setInterval(async () => {
       await this.sendHeartbeat();
-    }, 5000);
+    }, this.timing.heartbeatMs);
 
     this.isRegistered = true;
     logger.info(`ClusterManager: Node self-registered in cluster registry`, {
       instanceId: this.instanceId,
-      heartbeatInterval: "5s",
-      ttl: "15s",
+      heartbeatIntervalMs: this.timing.heartbeatMs,
+      ttlMs: this.timing.ttlMs,
     });
   }
 
@@ -104,7 +106,7 @@ class ClusterManager {
       };
 
       const key = `ath:cluster:node:${this.instanceId}`;
-      await this.client.set(key, JSON.stringify(nodeData), "EX", 15);
+      await this.client.set(key, JSON.stringify(nodeData), "PX", this.timing.ttlMs);
     } catch (err) {
       logger.debug(`Heartbeat write error: ${err.message}`);
     }
