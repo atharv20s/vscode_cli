@@ -119,7 +119,8 @@ app.post("/v1/execute", express.raw({ type: "application/json", limit: "20mb" })
     const result = await withWorkspaceLock(workspaceId, async () => {
       const root = path.join(config.workspaceRoot, "remote-users", workspaceId);
       // Remove any prior container before replacing its bind-mounted workspace directory.
-      await dockerWorkspaceRuntime.stop(workspaceId);\n      await replaceWorkspace(root, files);
+      await dockerWorkspaceRuntime.stop(workspaceId);
+      await replaceWorkspace(root, files);
       const resolvedCwd = path.resolve(root, cwd);
       if (resolvedCwd !== root && !resolvedCwd.startsWith(root + path.sep)) throw new Error("Working directory escaped workspace.");
       const execution = await dockerWorkspaceRuntime.execute({
