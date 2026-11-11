@@ -22,7 +22,7 @@ import {
   disconnectIdle,
 } from "./connectionManager.js";
 import { executionService } from "../services/executionService.js";
-import { previewService } from "../services/previewService.js";
+import { getPreviewService } from "../services/ws.previewService.js";
 import { permissionEngine } from "../services/permissionEngine.js";
 import { LocalBackend } from "../services/backends/localBackend.js";
 import { eventBus, EVENT_TOPICS } from "./eventBus.js";
@@ -152,6 +152,8 @@ export function initWebSocketServer(httpServer) {
 
     ws.userId = user?.id || ws.sessionId;
     ws.workspaceService = getWorkspaceService(ws.userId);
+    ws.workspaceId = ws.workspaceService.workspaceId;
+    ws.previewService = getPreviewService(ws.workspaceId);
 
     addConnection(ws, user || { id: ws.userId, username: "guest" });
 
@@ -195,7 +197,7 @@ export function initWebSocketServer(httpServer) {
       user: user ? { id: user.id, username: user.username } : null,
       sessionId: ws.sessionId,
       workspace: path.basename(ws.workspaceService.workspaceRoot),
-      previewState: previewService.getPreviewState(),
+      previewState: ws.previewService.getPreviewState(),
     });
   });
 
@@ -263,22 +265,22 @@ async function handleMessage(ws, msg, user) {
     // Live Application Preview Controls
     case "preview.start":
     case "preview_start":
-      await previewService.startPreview(payload);
+      await ws.previewService.startPreview({ ...payload, cwd: ws.workspaceService.workspaceRoot });
       break;
 
     case "preview.stop":
     case "preview_stop":
-      await previewService.stopPreview();
+      await ws.previewService.stopPreview();
       break;
 
     case "preview.restart":
     case "preview_restart":
-      await previewService.restartPreview();
+      await ws.previewService.restartPreview();
       break;
 
     case "preview.status":
     case "preview_status":
-      sendMessage(ws, "preview.status", previewService.getPreviewState());
+      sendMessage(ws, "preview.status", ws.previewService.getPreviewState());
       break;
 
     case "file_read":
@@ -295,9 +297,11 @@ async function handleMessage(ws, msg, user) {
     case "terminal_init":
     case "terminal.init":
       await executionService.spawnInteractiveSession(ws.sessionId, {
-        shellType: payload?.shell || "powershell",
+        shellType: payload?.shell || "bash",
         cols: payload?.cols || 80,
         rows: payload?.rows || 24,
+        workspaceDir: ws.workspaceService.workspaceRoot,
+        workspaceId: ws.workspaceId,
         ws,
       });
       break;
@@ -402,6 +406,7 @@ async function handleChat(ws, payload, user) {
       model: model || undefined,
       systemPrompt: systemPrompt || undefined,
       workspaceDir: ws.workspaceService.workspaceRoot,
+      workspaceId: ws.workspaceId,
       sessionId,
       signal: abortController.signal,
       onEvent: (event) => {
