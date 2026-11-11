@@ -75,8 +75,14 @@ class ExecutionService {
     timeout = 45000,
     signal = null,
   }) {
-    // Route production commands only into the dedicated per-user Docker
-    // workspace. Never fall back to the API host's shell.
+    // Cloud Run delegates execution to a separately isolated Linux worker.
+    if (config.executionRuntime === "remote") {
+      const { executeOnRemoteWorker } = await import("./remoteExecutionWorker.js");
+      const result = await executeOnRemoteWorker({ workspaceId, workspaceDir, cwd, command, timeout, signal });
+      return { ...result, operationId };
+    }
+
+    // Local Docker mode is reserved for a dedicated worker host.
     if (config.executionRuntime === "docker") {
       const { dockerWorkspaceRuntime } = await import("./dockerWorkspaceRuntime.js");
       const result = await dockerWorkspaceRuntime.execute({
