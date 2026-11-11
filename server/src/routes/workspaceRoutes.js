@@ -3,7 +3,7 @@
  */
 
 import { Router } from "express";
-import { optionalAuth } from "../middleware/auth.js";
+import { requireAuth } from "../middleware/auth.js";
 import {
   listFiles,
   readFile,
@@ -14,20 +14,21 @@ import {
   execCommand,
 } from "../controllers/fileController.js";
 import { LocalBackend } from "../services/backends/localBackend.js";
+import { config } from "../config/env.js";
 
 const router = Router();
 
-router.get("/files", optionalAuth, listFiles);
-router.get("/file", optionalAuth, readFile);
-router.post("/file", optionalAuth, writeFile);
-router.delete("/file", optionalAuth, deleteFile);
-router.post("/move", optionalAuth, moveFile);
-router.post("/folder", optionalAuth, createFolder);
-router.post("/exec", optionalAuth, execCommand);
+router.get("/files", requireAuth, listFiles);
+router.get("/file", requireAuth, readFile);
+router.post("/file", requireAuth, writeFile);
+router.delete("/file", requireAuth, deleteFile);
+router.post("/move", requireAuth, moveFile);
+router.post("/folder", requireAuth, createFolder);
+router.post("/exec", requireAuth, execCommand);
 
 // Shell Provider Route
-router.get("/terminal/shells", optionalAuth, (req, res) => {
-  const shells = LocalBackend.detectAvailableShells();
+router.get("/terminal/shells", requireAuth, (req, res) => {
+  const shells = config.executionRuntime === "docker" ? ["bash", "sh"] : config.executionRuntime === "remote" ? [] : LocalBackend.detectAvailableShells();
   res.json({ shells });
 });
 

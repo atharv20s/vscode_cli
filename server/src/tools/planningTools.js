@@ -6,7 +6,7 @@
  */
 
 import { registerTool } from "./index.js";
-import { workspaceService } from "../services/workspaceService.js";
+import { getWorkspaceService } from "../services/workspaceService.js";
 
 export function registerPlanningTools() {
   // 1. create_plan
@@ -37,6 +37,7 @@ export function registerPlanningTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId);
       const taskList = args.tasks.map((t, i) => `- [ ] ${i + 1}. ${t}`).join("\n");
       const planContent = `# ${args.title}
 
@@ -98,6 +99,7 @@ ${args.verification || "Verify functionality upon completion."}
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId);
       try {
         const file = await workspaceService.readFile("task.md");
         const lines = file.content.split("\n");

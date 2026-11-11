@@ -8,6 +8,7 @@
 import { runAgent } from "../services/agentService.js";
 import { getAvailableModels } from "../services/llmService.js";
 import { config } from "../config/env.js";
+import { getWorkspaceService } from "../services/workspaceService.js";
 
 /**
  * POST /api/agent/chat — SSE streaming chat.
@@ -35,7 +36,9 @@ export async function chatStream(req, res) {
       conversationHistory: conversationHistory || [],
       model: model || undefined,
       systemPrompt: systemPrompt || undefined,
-      workspaceDir: config.workspaceRoot,
+      workspaceDir: getWorkspaceService(req.user.id).workspaceRoot,
+      workspaceId: getWorkspaceService(req.user.id).workspaceId,
+      userId: req.user.id,
       onEvent: (event) => {
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       },

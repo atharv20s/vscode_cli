@@ -45,6 +45,16 @@ export const config = {
   githubClientId: process.env.GITHUB_CLIENT_ID || "",
   githubClientSecret: process.env.GITHUB_CLIENT_SECRET || "",
 
+  // Isolated execution runtime (Docker Engine must be available on the worker host)
+  executionRuntime: (process.env.EXECUTION_RUNTIME || "disabled").toLowerCase(),
+  executionWorkerUrl: (process.env.EXECUTION_WORKER_URL || "").replace(/\/$/, ""),
+  workerSharedSecret: process.env.WORKER_SHARED_SECRET || "",
+  dockerBinary: process.env.DOCKER_BIN || "docker",
+  dockerImage: process.env.DOCKER_WORKSPACE_IMAGE || "ath-ide-workspace:local",
+  dockerWorkspaceNetwork: process.env.DOCKER_WORKSPACE_NETWORK || "none",
+  dockerWorkspaceUid: parseInt(process.env.DOCKER_WORKSPACE_UID || "1000", 10),
+  dockerWorkspaceGid: parseInt(process.env.DOCKER_WORKSPACE_GID || "1000", 10),
+
   // Workspace (where user files are sandboxed)
   workspaceRoot: (() => {
     const raw = process.env.WORKSPACE_ROOT;
@@ -110,6 +120,24 @@ export function validateConfig() {
     errors.push(
       "JWT_SECRET must be set in production! Generate a random 32+ character string."
     );
+  }
+
+  if (!["disabled", "docker", "remote"].includes(config.executionRuntime)) {
+    errors.push("EXECUTION_RUNTIME must be disabled, docker, or remote.");
+  }
+
+  if (config.executionRuntime === "remote") {
+    if (!config.executionWorkerUrl) errors.push("EXECUTION_WORKER_URL is required when EXECUTION_RUNTIME=remote.");
+    else if (!config.executionWorkerUrl.startsWith("https://")) errors.push("EXECUTION_WORKER_URL must use HTTPS.");
+    if (config.workerSharedSecret.length < 32) errors.push("WORKER_SHARED_SECRET must contain at least 32 characters when EXECUTION_RUNTIME=remote.");
+  }
+
+  if (!["none", "bridge"].includes(config.dockerWorkspaceNetwork)) {
+    errors.push("DOCKER_WORKSPACE_NETWORK must be none or bridge.");
+  }
+
+  if (!Number.isInteger(config.dockerWorkspaceUid) || config.dockerWorkspaceUid < 1 || !Number.isInteger(config.dockerWorkspaceGid) || config.dockerWorkspaceGid < 1) {
+    errors.push("DOCKER_WORKSPACE_UID and DOCKER_WORKSPACE_GID must be positive integers.");
   }
 
   if (config.remoteSandbox.enabled && !config.remoteSandbox.host) {

@@ -65,6 +65,7 @@ class ExecutionService {
   async execute({
     command,
     cwd = config.workspaceRoot,
+    workspaceDir = config.workspaceRoot,
     mode = "AGENT_BACKGROUND",
     operationId = `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
     turnId = null,
@@ -74,6 +75,32 @@ class ExecutionService {
     timeout = 45000,
     signal = null,
   }) {
+    // Cloud Run delegates execution to a separately isolated Linux worker.
+    if (config.executionRuntime === "remote") {
+      const { executeOnRemoteWorker } = await import("./remoteExecutionWorker.js");
+      const result = await executeOnRemoteWorker({ workspaceId, workspaceDir, cwd, command, timeout, signal });
+      return { ...result, operationId };
+    }
+
+    // Local Docker mode is reserved for a dedicated worker host.
+    if (config.executionRuntime === "docker") {
+      const { dockerWorkspaceRuntime } = await import("./dockerWorkspaceRuntime.js");
+      const result = await dockerWorkspaceRuntime.execute({
+        workspaceId,
+        workspaceDir,
+        cwd,
+        command,
+        timeout,
+        signal,
+      });
+      return { ...result, operationId };
+    }
+
+    // Fail closed when no isolated execution provider is configured.
+    if (!config.isDev) {
+      throw new Error("Isolated execution runtime is not configured. Command execution is temporarily unavailable.");
+    }
+
     // Mode 1: USER_INTERACTIVE (Write directly into active user PTY session)
     if (mode === "USER_INTERACTIVE") {
       if (!sessionId) {

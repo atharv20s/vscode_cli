@@ -6,7 +6,8 @@
  */
 
 import { registerTool } from "./index.js";
-import { workspaceService } from "../services/workspaceService.js";
+import { getWorkspaceService } from "../services/workspaceService.js";
+import { generatePreviewToken } from "../middleware/auth.js";
 import { permissionEngine } from "../services/permissionEngine.js";
 
 export function registerFileTools() {
@@ -29,6 +30,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       // Permission Check
       const perm = await permissionEngine.checkPermission({
         resource: "file",
@@ -36,6 +38,7 @@ export function registerFileTools() {
         payload: args,
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
@@ -66,6 +69,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       const filePath = args.path || args.filePath || args.file || args.filename || "index.html";
       const fileContent = args.content !== undefined ? args.content : (args.data !== undefined ? args.data : (args.code !== undefined ? args.code : (args.text !== undefined ? args.text : "")));
 
@@ -76,6 +80,7 @@ export function registerFileTools() {
         payload: { path: filePath, content: fileContent },
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
@@ -115,6 +120,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       // Permission Check
       const perm = await permissionEngine.checkPermission({
         resource: "file",
@@ -122,6 +128,7 @@ export function registerFileTools() {
         payload: args,
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
@@ -166,6 +173,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       const targetPath = args.path || args.file || args.filename || args.filePath;
       if (!targetPath) return { success: false, error: "Missing required 'path' parameter." };
 
@@ -175,6 +183,7 @@ export function registerFileTools() {
         payload: { path: targetPath },
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
@@ -211,6 +220,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       const filePath = args.path || args.file || args.filename || args.filePath;
       if (!filePath) return { success: false, error: "Missing 'path' parameter for compilation." };
 
@@ -261,22 +271,27 @@ export function registerFileTools() {
       }
 
       const { executionService } = await import("../services/executionService.js");
-      const res = await executionService.executeCommand(compileCmd, {
+      const res = await executionService.execute({
+        command: compileCmd,
         cwd: ctx.workspaceDir,
+        workspaceDir: ctx.workspaceDir,
+        workspaceId: ctx.workspaceId,
+        mode: "AGENT_BACKGROUND",
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
 
       if (res.exitCode === 0) {
         return {
           success: true,
-          output: `Compilation succeeded for ${filePath}.\nCommand: ${compileCmd}\n${res.stdout || "No warnings."}`,
+          output: `Compilation succeeded for ${filePath}.\nCommand: ${compileCmd}\n${res.output || "No warnings."}`,
           binary: outName,
         };
       } else {
         return {
           success: false,
-          error: `Compilation failed with exit code ${res.exitCode}:\n${res.stderr || res.stdout}`,
+          error: `Compilation failed with exit code ${res.exitCode}:\n${res.output}`,
         };
       }
     }
@@ -300,11 +315,16 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       const raw = (args.path || args.file || args.filename || "index.html").trim();
       const filePath = raw.replace(/^\/+/, "").replace(/^preview\//, "");
-      const { previewService } = await import("../services/previewService.js");
-      
-      const previewUrl = `/preview/${filePath}`;
+      const { getPreviewService } = await import("../services/previewService.js");
+      const previewService = getPreviewService(ctx.workspaceId);
+      const safeTarget = getWorkspaceService(ctx.userId).resolvePath(filePath);
+      if (!safeTarget.safe) return { success: false, error: "Preview path is outside your workspace." };
+
+      const previewToken = generatePreviewToken(ctx.userId, ctx.workspaceId);
+      const previewUrl = `/preview/${previewToken}/${encodeURIComponent(filePath).replace(/%2F/gi, "/")}`;
       previewService.setReady(previewUrl, 3001);
 
       return {
@@ -332,6 +352,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       const dirPath = args.path || ".";
       try {
         const result = await workspaceService.listDirectory(dirPath);

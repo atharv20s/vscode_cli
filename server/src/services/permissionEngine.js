@@ -105,7 +105,7 @@ class PermissionEngine {
             permissionId,
             granted: false,
             reason: "Approval request timed out.",
-          });
+          }, { workspaceId, sessionId, turnId, source: "permission", actor: "system" });
           resolve({
             granted: false,
             decision: "ASK",
@@ -122,14 +122,15 @@ class PermissionEngine {
             permissionId,
             granted,
             reason,
-          });
+          }, { workspaceId, sessionId, turnId, source: "permission", actor: "system" });
           resolve({
             granted,
             decision: "ASK",
             reason: granted ? "Approved by user" : (reason || "Rejected by user"),
           });
         },
-        descriptor: { resource, action, payload, permissionId },
+        workspaceId,
+        descriptor: { resource, action, payload, permissionId, workspaceId },
       });
     });
   }
@@ -142,9 +143,9 @@ class PermissionEngine {
    * @param {string} [reason]
    * @returns {boolean}
    */
-  resolvePermission(permissionId, granted, reason = "") {
+  resolvePermission(permissionId, granted, reason = "", workspaceId = null) {
     const pending = this.pendingRequests.get(permissionId);
-    if (pending) {
+    if (pending && pending.workspaceId === workspaceId) {
       pending.resolve(granted, reason);
       logger.info(`PermissionEngine: Resolved [${permissionId}] -> ${granted ? "GRANTED" : "REJECTED"}`);
       return true;

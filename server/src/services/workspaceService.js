@@ -8,6 +8,7 @@
 import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
+import crypto from "crypto";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
@@ -16,8 +17,9 @@ import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 const IGNORED_DIRS = new Set(["node_modules", ".git", ".worktrees", "dist", "build", ".next", ".cache"]);
 
 class WorkspaceService {
-  constructor() {
-    this.workspaceRoot = path.resolve(config.workspaceRoot);
+  constructor(root = config.workspaceRoot, workspaceId = "system") {
+    this.workspaceRoot = path.resolve(root);
+    this.workspaceId = workspaceId;
     this.watcher = null;
     this._recentInternalMutations = new Map(); // path -> timestamp
     this._initWatcher();
@@ -30,15 +32,59 @@ class WorkspaceService {
    * @returns {{ safe: boolean, resolved: string, relative: string }}
    */
   resolvePath(targetPath) {
-    if (!targetPath) {
-      return { safe: true, resolved: this.workspaceRoot, relative: "." };
+    const resolved = path.resolve(this.workspaceRoot, targetPath || ".");
+    const relativePath = path.relative(this.workspaceRoot, resolved);
+    const insideRoot =
+      relativePath === "" ||
+      (relativePath !== ".." &&
+        !relativePath.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relativePath));
+
+    if (!insideRoot) {
+      return {
+        safe: false,
+        resolved,
+        relative: relativePath.split(path.sep).join("/"),
+      };
     }
 
-    const resolved = path.resolve(this.workspaceRoot, targetPath);
-    const safe = resolved.startsWith(this.workspaceRoot);
-    const relative = path.relative(this.workspaceRoot, resolved).replace(/\\/g, "/") || ".";
+    // Resolve the deepest existing ancestor so symlinks cannot redirect a
+    // missing/new target outside the workspace. realpathSync also canonicalizes
+    // the workspace root and existing target before the containment check.
+    try {
+      const realRoot = fs.realpathSync(this.workspaceRoot);
+      let existingAncestor = resolved;
+      const missingSegments = [];
 
-    return { safe, resolved, relative };
+      while (!fs.existsSync(existingAncestor)) {
+        const parent = path.dirname(existingAncestor);
+        if (parent === existingAncestor) {
+          return { safe: false, resolved, relative: relativePath };
+        }
+        missingSegments.unshift(path.basename(existingAncestor));
+        existingAncestor = parent;
+      }
+
+      const realAncestor = fs.realpathSync(existingAncestor);
+      const canonicalTarget = path.join(realAncestor, ...missingSegments);
+      const canonicalRelative = path.relative(realRoot, canonicalTarget);
+      const canonicalInsideRoot =
+        canonicalRelative === "" ||
+        (canonicalRelative !== ".." &&
+          !canonicalRelative.startsWith(`..${path.sep}`) &&
+          !path.isAbsolute(canonicalRelative));
+
+      return {
+        safe: canonicalInsideRoot,
+        resolved,
+        relative: relativePath.split(path.sep).join("/") || ".",
+      };
+    } catch (error) {
+      // Fail closed on unexpected filesystem errors. A missing path below a
+      // valid existing ancestor is handled above; permission and I/O errors
+      // must not silently authorize access.
+      return { safe: false, resolved, relative: relativePath };
+    }
   }
 
   /**
@@ -80,6 +126,7 @@ class WorkspaceService {
     const isNew = !fs.existsSync(resolved);
     await fsp.mkdir(path.dirname(resolved), { recursive: true });
     await fsp.writeFile(resolved, content, "utf8");
+    this._alignRuntimeOwnership(resolved);
 
     this._recordInternalMutation(relative);
 
@@ -90,6 +137,7 @@ class WorkspaceService {
       version: Date.now(),
       size: Buffer.byteLength(content),
     }, {
+      workspaceId: this.workspaceId,
       source: options.source || "fs",
       actor: options.actor || "user",
       turnId: options.turnId || null,
@@ -114,6 +162,7 @@ class WorkspaceService {
       operation: "delete",
       version: Date.now(),
     }, {
+      workspaceId: this.workspaceId,
       source: options.source || "fs",
       actor: options.actor || "user",
     });
@@ -134,6 +183,7 @@ class WorkspaceService {
 
     await fsp.mkdir(path.dirname(to.resolved), { recursive: true });
     await fsp.rename(from.resolved, to.resolved);
+    this._alignRuntimeOwnership(to.resolved);
 
     this._recordInternalMutation(from.relative);
     this._recordInternalMutation(to.relative);
@@ -145,6 +195,7 @@ class WorkspaceService {
       operation: "rename",
       version: Date.now(),
     }, {
+      workspaceId: this.workspaceId,
       source: options.source || "fs",
       actor: options.actor || "user",
     });
@@ -160,6 +211,7 @@ class WorkspaceService {
     if (!safe) throw new Error(`Access denied: Path is outside workspace root (${dirPath})`);
 
     await fsp.mkdir(resolved, { recursive: true });
+    this._alignRuntimeOwnership(resolved);
     return { success: true, path: relative };
   }
 
@@ -171,6 +223,7 @@ class WorkspaceService {
     if (!safe) throw new Error(`Access denied: Path is outside workspace root (${dirPath})`);
 
     await fsp.mkdir(resolved, { recursive: true });
+    this._alignRuntimeOwnership(resolved);
     const entries = await fsp.readdir(resolved, { withFileTypes: true });
 
     const items = await Promise.all(
@@ -198,6 +251,21 @@ class WorkspaceService {
     return { path: relative, entries: items };
   }
 
+  /**
+   * Keep host-created workspace files writable by the configured container UID.
+   * Ownership changes are limited to the current private workspace.
+   */
+  _alignRuntimeOwnership(targetPath) {
+    if (config.executionRuntime !== "docker") return;
+    const uid = config.dockerWorkspaceUid;
+    const gid = config.dockerWorkspaceGid;
+    let current = targetPath;
+    while (current === this.workspaceRoot || current.startsWith(this.workspaceRoot + path.sep)) {
+      fs.chownSync(current, uid, gid);
+      if (current === this.workspaceRoot) break;
+      current = path.dirname(current);
+    }
+  }
   /**
    * Record internal mutation to deduplicate external watcher events.
    * @private
@@ -259,7 +327,8 @@ class WorkspaceService {
               operation: exists ? "external_modify" : "external_delete",
               version: Date.now(),
             }, {
-              source: "watcher",
+              workspaceId: this.workspaceId,
+      source: "watcher",
               actor: "user",
             });
 
@@ -276,4 +345,29 @@ class WorkspaceService {
   }
 }
 
+const workspaceServices = new Map();
+
+/**
+ * Return a filesystem service rooted in a private, stable directory for one
+ * authenticated user. The opaque directory name prevents usernames/IDs from
+ * becoming path components and avoids traversal through crafted identities.
+ */
+export function getWorkspaceService(userId) {
+  if (typeof userId !== "string" || !userId.trim()) {
+    throw new Error("An authenticated workspace owner is required.");
+  }
+
+  const ownerKey = crypto.createHash("sha256").update(userId).digest("hex");
+  if (!workspaceServices.has(ownerKey)) {
+    const root = path.join(config.workspaceRoot, "users", ownerKey);
+    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+    fs.chmodSync(root, 0o700);
+    workspaceServices.set(ownerKey, new WorkspaceService(root, ownerKey));
+  }
+
+  return workspaceServices.get(ownerKey);
+}
+
+// Retained for trusted internal/system operations only. Request handlers must
+// use getWorkspaceService(req.user.id) and must never expose this shared root.
 export const workspaceService = new WorkspaceService();

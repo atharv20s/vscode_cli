@@ -5,23 +5,22 @@
  * (TerminalSessionManager, ProcessSupervisor, PreviewService, FileSystem, Agent).
  */
 
-import fs from "fs/promises";
 import path from "path";
 import { WebSocketServer } from "ws";
 import { verifyToken } from "../middleware/auth.js";
 import { runAgent } from "../services/agentService.js";
 import { config } from "../config/env.js";
+import { getWorkspaceService } from "../services/workspaceService.js";
 import { logger } from "../config/logger.js";
 import {
   addConnection,
   removeConnection,
   recordMessage,
   sendMessage,
-  broadcastAll,
   disconnectIdle,
 } from "./connectionManager.js";
 import { executionService } from "../services/executionService.js";
-import { previewService } from "../services/previewService.js";
+import { getPreviewService } from "../services/previewService.js";
 import { permissionEngine } from "../services/permissionEngine.js";
 import { LocalBackend } from "../services/backends/localBackend.js";
 import { eventBus, EVENT_TOPICS } from "./eventBus.js";
@@ -65,14 +64,30 @@ export function initWebSocketServer(httpServer) {
     clearInterval(idleCleanupInterval);
   });
 
+  const broadcastScoped = (type, envelope, payload = envelope.payload) => {
+    if (!envelope.workspaceId) return;
+    wss.clients.forEach(client => {
+      if (client.workspaceId === envelope.workspaceId) sendMessage(client, type, payload);
+    });
+  };
+
   // 1. Filesystem Events
   eventBus.subscribe(EVENT_TOPICS.FILE_CHANGED, (envelope) => {
-    broadcastAll("file.changed", envelope.payload);
+    broadcastScoped("file.changed", envelope);
+  });
+  eventBus.subscribe(EVENT_TOPICS.FILE_CREATED, (envelope) => {
+    broadcastScoped("file.created", envelope);
+  });
+  eventBus.subscribe(EVENT_TOPICS.FILE_DELETED, (envelope) => {
+    broadcastScoped("file.deleted", envelope);
+  });
+  eventBus.subscribe(EVENT_TOPICS.FILE_RENAMED, (envelope) => {
+    broadcastScoped("file.renamed", envelope);
   });
 
   // 2. Agent Background Command Lifecycle
   eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_STARTED, (envelope) => {
-    broadcastAll("agent.command.started", {
+    broadcastScoped("agent.command.started", envelope, {
       ...envelope.payload,
       operationId: envelope.operationId,
       turnId: envelope.turnId,
@@ -80,14 +95,14 @@ export function initWebSocketServer(httpServer) {
   });
 
   eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_OUTPUT, (envelope) => {
-    broadcastAll("agent.command.output", {
+    broadcastScoped("agent.command.output", envelope, {
       ...envelope.payload,
       operationId: envelope.operationId,
     });
   });
 
   eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_COMPLETED, (envelope) => {
-    broadcastAll("agent.command.completed", {
+    broadcastScoped("agent.command.completed", envelope, {
       ...envelope.payload,
       operationId: envelope.operationId,
       turnId: envelope.turnId,
@@ -95,7 +110,7 @@ export function initWebSocketServer(httpServer) {
   });
 
   eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_FAILED, (envelope) => {
-    broadcastAll("agent.command.failed", {
+    broadcastScoped("agent.command.failed", envelope, {
       ...envelope.payload,
       operationId: envelope.operationId,
       turnId: envelope.turnId,
@@ -104,28 +119,28 @@ export function initWebSocketServer(httpServer) {
 
   // 3. Live Preview Events
   eventBus.subscribe(EVENT_TOPICS.PREVIEW_STARTED, (envelope) => {
-    broadcastAll("preview.started", envelope.payload);
+    broadcastScoped("preview.started", envelope);
   });
 
   eventBus.subscribe(EVENT_TOPICS.PREVIEW_READY, (envelope) => {
-    broadcastAll("preview.ready", envelope.payload);
+    broadcastScoped("preview.ready", envelope);
   });
 
   eventBus.subscribe(EVENT_TOPICS.PREVIEW_OUTPUT, (envelope) => {
-    broadcastAll("preview.output", envelope.payload);
+    broadcastScoped("preview.output", envelope);
   });
 
   eventBus.subscribe(EVENT_TOPICS.PREVIEW_STOPPED, (envelope) => {
-    broadcastAll("preview.stopped", envelope.payload);
+    broadcastScoped("preview.stopped", envelope);
   });
 
   // 4. Permissions Events
   eventBus.subscribe(EVENT_TOPICS.PERMISSION_REQUESTED, (envelope) => {
-    broadcastAll("permission.requested", envelope.payload);
+    broadcastScoped("permission.requested", envelope);
   });
 
   eventBus.subscribe(EVENT_TOPICS.PERMISSION_RESOLVED, (envelope) => {
-    broadcastAll("permission.resolved", envelope.payload);
+    broadcastScoped("permission.resolved", envelope);
   });
 
   wss.on("connection", (ws, req) => {
@@ -149,7 +164,12 @@ export function initWebSocketServer(httpServer) {
       return;
     }
 
-    addConnection(ws, user || { id: "anonymous", username: "anonymous" });
+    ws.userId = user?.id || ws.sessionId;
+    ws.workspaceService = getWorkspaceService(ws.userId);
+    ws.workspaceId = ws.workspaceService.workspaceId;
+    ws.previewService = getPreviewService(ws.workspaceId);
+
+    addConnection(ws, user || { id: ws.userId, username: "guest" });
 
     ws.on("pong", () => {
       ws.isAlive = true;
@@ -190,8 +210,8 @@ export function initWebSocketServer(httpServer) {
       message: "Connected to Agentic CLI Server",
       user: user ? { id: user.id, username: user.username } : null,
       sessionId: ws.sessionId,
-      workspace: path.basename(config.workspaceRoot),
-      previewState: previewService.getPreviewState(),
+      workspace: path.basename(ws.workspaceService.workspaceRoot),
+      previewState: ws.previewService.getPreviewState(),
     });
   });
 
@@ -231,14 +251,14 @@ async function handleMessage(ws, msg, user) {
     case "permission.resolve":
     case "permission_resolve":
       if (payload?.permissionId) {
-        permissionEngine.resolvePermission(payload.permissionId, payload.granted, payload.reason);
+        permissionEngine.resolvePermission(payload.permissionId, payload.granted, payload.reason, ws.workspaceId);
       }
       break;
 
     // Shell Providers Query
     case "shells.list":
     case "terminal_shells":
-      sendMessage(ws, "terminal.shells", { shells: LocalBackend.detectAvailableShells() });
+      sendMessage(ws, "terminal.shells", { shells: config.executionRuntime === "docker" ? ["bash", "sh"] : config.executionRuntime === "remote" ? [] : LocalBackend.detectAvailableShells() });
       break;
 
     // Hybrid Workstation Bridge Handlers
@@ -259,22 +279,22 @@ async function handleMessage(ws, msg, user) {
     // Live Application Preview Controls
     case "preview.start":
     case "preview_start":
-      await previewService.startPreview(payload);
+      await ws.previewService.startPreview({ ...payload, cwd: ws.workspaceService.workspaceRoot });
       break;
 
     case "preview.stop":
     case "preview_stop":
-      await previewService.stopPreview();
+      await ws.previewService.stopPreview();
       break;
 
     case "preview.restart":
     case "preview_restart":
-      await previewService.restartPreview();
+      await ws.previewService.restartPreview();
       break;
 
     case "preview.status":
     case "preview_status":
-      sendMessage(ws, "preview.status", previewService.getPreviewState());
+      sendMessage(ws, "preview.status", ws.previewService.getPreviewState());
       break;
 
     case "file_read":
@@ -291,9 +311,11 @@ async function handleMessage(ws, msg, user) {
     case "terminal_init":
     case "terminal.init":
       await executionService.spawnInteractiveSession(ws.sessionId, {
-        shellType: payload?.shell || "powershell",
+        shellType: payload?.shell || "bash",
         cols: payload?.cols || 80,
         rows: payload?.rows || 24,
+        workspaceDir: ws.workspaceService.workspaceRoot,
+        workspaceId: ws.workspaceId,
         ws,
       });
       break;
@@ -397,7 +419,9 @@ async function handleChat(ws, payload, user) {
       conversationHistory: sanitizedHistory,
       model: model || undefined,
       systemPrompt: systemPrompt || undefined,
-      workspaceDir: config.workspaceRoot,
+      workspaceDir: ws.workspaceService.workspaceRoot,
+      workspaceId: ws.workspaceId,
+      userId: ws.userId,
       sessionId,
       signal: abortController.signal,
       onEvent: (event) => {
@@ -456,15 +480,8 @@ async function handleFileRead(ws, payload) {
   }
 
   try {
-    const resolved = path.resolve(config.workspaceRoot, filePath);
-
-    if (!resolved.startsWith(path.resolve(config.workspaceRoot))) {
-      sendMessage(ws, "error", { message: "Access denied: path outside workspace" });
-      return;
-    }
-
-    const content = await fs.readFile(resolved, "utf8");
-    sendMessage(ws, "file_content", { path: filePath, content });
+    const result = await ws.workspaceService.readFile(filePath);
+    sendMessage(ws, "file_content", { path: result.path, content: result.content });
   } catch (err) {
     sendMessage(ws, "error", { message: `File read failed: ${err.message}` });
   }
@@ -481,27 +498,11 @@ async function handleFileSave(ws, payload) {
   }
 
   try {
-    const resolved = path.resolve(config.workspaceRoot, filePath);
-
-    if (!resolved.startsWith(path.resolve(config.workspaceRoot))) {
-      sendMessage(ws, "error", { message: "Access denied: path outside workspace" });
-      return;
-    }
-
-    await fs.mkdir(path.dirname(resolved), { recursive: true });
-    await fs.writeFile(resolved, content, "utf8");
-
-    // Emit lightweight metadata event
-    eventBus.publish(EVENT_TOPICS.FILE_CHANGED, {
-      path: filePath,
-      operation: "modify",
-      version: Date.now(),
-    }, {
+    const result = await ws.workspaceService.writeFile(filePath, content, {
       source: "ui",
-      actor: "user",
+      actor: ws.userId,
     });
-
-    sendMessage(ws, "file_saved", { path: filePath, size: Buffer.byteLength(content) });
+    sendMessage(ws, "file_saved", { path: result.path, size: result.size });
   } catch (err) {
     sendMessage(ws, "error", { message: `File save failed: ${err.message}` });
   }

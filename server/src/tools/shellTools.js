@@ -5,7 +5,7 @@
  * in isolated AGENT_BACKGROUND mode via ExecutionService & ProcessSupervisor.
  */
 
-import path from "path";
+import { getWorkspaceService } from "../services/workspaceService.js";
 import { registerTool } from "./index.js";
 import { config } from "../config/env.js";
 import { executionService } from "../services/executionService.js";
@@ -73,6 +73,7 @@ export function registerShellTools() {
         payload: { command: args.command, working_dir: args.working_dir, shell: args.shell },
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
 
       if (!perm.granted) {
@@ -80,15 +81,13 @@ export function registerShellTools() {
       }
 
       // 2. Resolve working directory
-      const baseDir = ctx.workspaceDir || config.workspaceRoot;
-      const cwd = args.working_dir ? path.resolve(baseDir, args.working_dir) : baseDir;
-
-      // 3. Sandbox boundary validation
-      const resolvedCwd = path.resolve(cwd);
-      const resolvedWorkspace = path.resolve(baseDir);
-      if (!resolvedCwd.startsWith(resolvedWorkspace)) {
+      const workspace = getWorkspaceService(ctx.userId);
+      const baseDir = workspace.workspaceRoot;
+      const target = workspace.resolvePath(args.working_dir || ".");
+      if (!target.safe) {
         return { success: false, error: "Access denied: Target directory is outside the workspace root." };
       }
+      const resolvedCwd = target.resolved;
 
       // 4. Generate unique correlation operationId
       const operationId = `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -98,6 +97,7 @@ export function registerShellTools() {
       const result = await executionService.execute({
         command: args.command,
         cwd: resolvedCwd,
+        workspaceDir: baseDir,
         mode: "AGENT_BACKGROUND",
         operationId,
         turnId: ctx.turnId || null,

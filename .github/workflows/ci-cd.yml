@@ -40,13 +40,7 @@ jobs:
 
       - name: Verify Code Syntax & Exports
         run: |
-          node --check server/src/server.js
-          node --check server/src/services/llmService.js
-          node --check server/src/services/clusterManager.js
-          node --check server/src/services/kafkaService.js
-          node --check server/src/db/shardManager.js
-          node --check server/src/routes/authRoutes.js
-          node --check server/src/routes/githubRoutes.js
+          find server/src -type f -name "*.js" -print0 | xargs -0 -n1 node --check
 
   # ============================================================================
   # 2. Build, Push Docker Container & Deploy to Google Cloud Platform

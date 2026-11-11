@@ -18,6 +18,7 @@ import { logger } from "../config/logger.js";
 import { terminalContextService } from "./terminalContextService.js";
 import { worldStateService } from "./worldStateService.js";
 import { ContextSelector } from "./contextSelector.js";
+import { getWorkspaceService } from "./workspaceService.js";
 
 /** Default system prompt */
 const DEFAULT_SYSTEM_PROMPT = `You are ATH Agent — the fully autonomous AI software engineer embedded in ATH IDE. You have COMPLETE tool access. NEVER say you lack tools or cannot execute something.
@@ -130,7 +131,7 @@ function compactContext(messages, maxTokenBudget = 85000) {
  * Write Antigravity-style plan and chat history logs directly to the user's workspace
  * so they appear in the file explorer.
  */
-async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir) {
+async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir, userId) {
   if (!workspaceDir) return;
   try {
     // 1. Create/update chat_session.md
@@ -138,7 +139,8 @@ async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDi
       .map((msg) => `### **${msg.role === "user" ? "👤 User" : "🤖 Assistant"}**\n${msg.content}\n`)
       .join("\n---\n\n");
     const chatSessionContent = `# 💬 ATH IDE Chat Session\n\n*Updated: ${new Date().toLocaleString()}*\n\n## Current Prompts & Messages\n\n${historyText}\n### **👤 User**\n${message}\n`;
-    await fs.writeFile(path.resolve(workspaceDir, "chat_session.md"), chatSessionContent, "utf8");
+    if (userId) await getWorkspaceService(userId).writeFile("chat_session.md", chatSessionContent, { source: "agent", actor: "agent" });
+    else await fs.writeFile(path.resolve(workspaceDir, "chat_session.md"), chatSessionContent, "utf8");
 
     // 2. Determine if user prompt is requesting architectural changes/plans
     const lowercaseMsg = message.toLowerCase();
@@ -147,15 +149,18 @@ async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDi
     if (needsPlan) {
       // Create implementation_plan.md
       const planContent = `# 📋 Workspace Implementation Plan\n\n*Auto-generated plan for: "${message}"*\n\n## Goal Description\n${message}\n\n## User Review Required\n> [!NOTE]\n> Review the generated plan files in the workspace. Mark tasks as complete in task.md.\n\n## Proposed Changes\n- [NEW] Code modifications based on AI instructions\n- Interactive terminal tests to verify output\n`;
-      await fs.writeFile(path.resolve(workspaceDir, "implementation_plan.md"), planContent, "utf8");
+      if (userId) await getWorkspaceService(userId).writeFile("implementation_plan.md", planContent, { source: "agent", actor: "agent" });
+      else await fs.writeFile(path.resolve(workspaceDir, "implementation_plan.md"), planContent, "utf8");
 
       // Create task.md
       const taskContent = `# 🎯 Task Checklist\n\n- [ ] Analyze user prompt: "${message.slice(0, 50)}..."\n- [ ] Run design phase and review dependencies\n- [ ] Write new code blocks and verify implementation\n- [ ] Run terminal-based execution tests\n`;
-      await fs.writeFile(path.resolve(workspaceDir, "task.md"), taskContent, "utf8");
+      if (userId) await getWorkspaceService(userId).writeFile("task.md", taskContent, { source: "agent", actor: "agent" });
+      else await fs.writeFile(path.resolve(workspaceDir, "task.md"), taskContent, "utf8");
       
       // Create walkthrough.md
       const walkthroughContent = `# 🚶 Workspace Walkthrough\n\n*Auto-generated walkthrough summary*\n\n## Changes Made\n- Initialized meta files in workspace explorer\n- Ready for coding actions\n`;
-      await fs.writeFile(path.resolve(workspaceDir, "walkthrough.md"), walkthroughContent, "utf8");
+      if (userId) await getWorkspaceService(userId).writeFile("walkthrough.md", walkthroughContent, { source: "agent", actor: "agent" });
+      else await fs.writeFile(path.resolve(workspaceDir, "walkthrough.md"), walkthroughContent, "utf8");
     }
   } catch (err) {
     logger.warn(`Failed to write workspace meta files: ${err.message}`);
@@ -184,13 +189,15 @@ export async function runAgent({
   systemPrompt,
   model,
   workspaceDir,
+  workspaceId,
+  userId,
   sessionId,
   maxIterations = 15,
   signal,
   onEvent,
 }) {
   // Auto-generate workspace plan and chat logs
-  await writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir);
+  await writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir, userId);
 
   // Build messages array
   const messages = [];
@@ -244,7 +251,7 @@ export async function runAgent({
       data: { turn: iteration, maxTurns: maxIterations, turnId: currentTurnId },
     });
 
-    const toolContext = { workspaceDir, sessionId, turnId: currentTurnId, signal };
+    const toolContext = { workspaceDir, workspaceId, userId, sessionId, turnId: currentTurnId, signal };
 
     let textContent = "";
     let pendingToolCalls = [];

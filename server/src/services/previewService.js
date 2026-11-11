@@ -24,7 +24,8 @@ const URL_PATTERNS = [
 ];
 
 class PreviewService {
-  constructor() {
+  constructor(workspaceId = "system") {
+    this.workspaceId = workspaceId;
     this.state = {
       status: "stopped", // 'stopped' | 'starting' | 'running' | 'failed'
       command: null,
@@ -57,6 +58,10 @@ class PreviewService {
     shell = "powershell",
     timeout = 30000,
   } = {}) {
+    if (!config.isDev) {
+      throw new Error("Live preview must be proxied from the isolated workspace container; host-process previews are disabled in production.");
+    }
+
     // 1. Stop any currently active preview server
     await this.stopPreview();
 
@@ -76,6 +81,7 @@ class PreviewService {
       cwd,
       timestamp: this.state.startedAt,
     }, {
+      workspaceId: this.workspaceId,
       source: "preview",
       actor: "agent",
     });
@@ -202,6 +208,7 @@ class PreviewService {
       pid: this.state.pid,
       command: this.state.command,
     }, {
+      workspaceId: this.workspaceId,
       source: "preview",
       actor: "agent",
     });
@@ -243,6 +250,7 @@ class PreviewService {
       eventBus.publish(EVENT_TOPICS.PREVIEW_STOPPED, {
         timestamp: Date.now(),
       }, {
+        workspaceId: this.workspaceId,
         source: "preview",
         actor: "system",
       });
@@ -279,6 +287,7 @@ class PreviewService {
       port,
       timestamp: Date.now(),
     }, {
+      workspaceId: this.workspaceId,
       source: "preview",
       actor: "agent",
     });
@@ -295,4 +304,17 @@ class PreviewService {
   }
 }
 
+const previewServices = new Map();
+
+export function getPreviewService(workspaceId) {
+  if (typeof workspaceId !== "string" || !workspaceId) {
+    throw new Error("A workspace identity is required for preview.");
+  }
+  if (!previewServices.has(workspaceId)) {
+    previewServices.set(workspaceId, new PreviewService(workspaceId));
+  }
+  return previewServices.get(workspaceId);
+}
+
+// Retained for trusted system health reporting only.
 export const previewService = new PreviewService();
