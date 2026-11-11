@@ -75,6 +75,15 @@ export function initWebSocketServer(httpServer) {
   eventBus.subscribe(EVENT_TOPICS.FILE_CHANGED, (envelope) => {
     broadcastScoped("file.changed", envelope);
   });
+  eventBus.subscribe(EVENT_TOPICS.FILE_CREATED, (envelope) => {
+    broadcastScoped("file.created", envelope);
+  });
+  eventBus.subscribe(EVENT_TOPICS.FILE_DELETED, (envelope) => {
+    broadcastScoped("file.deleted", envelope);
+  });
+  eventBus.subscribe(EVENT_TOPICS.FILE_RENAMED, (envelope) => {
+    broadcastScoped("file.renamed", envelope);
+  });
 
   // 2. Agent Background Command Lifecycle
   eventBus.subscribe(EVENT_TOPICS.AGENT_COMMAND_STARTED, (envelope) => {
