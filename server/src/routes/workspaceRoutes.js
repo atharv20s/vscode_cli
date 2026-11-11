@@ -14,6 +14,7 @@ import {
   execCommand,
 } from "../controllers/fileController.js";
 import { LocalBackend } from "../services/backends/localBackend.js";
+import { config } from "../config/env.js";
 
 const router = Router();
 
@@ -27,7 +28,7 @@ router.post("/exec", requireAuth, execCommand);
 
 // Shell Provider Route
 router.get("/terminal/shells", requireAuth, (req, res) => {
-  const shells = LocalBackend.detectAvailableShells();
+  const shells = config.executionRuntime === "docker" ? ["bash", "sh"] : LocalBackend.detectAvailableShells();
   res.json({ shells });
 });
 
