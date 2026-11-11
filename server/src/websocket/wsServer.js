@@ -258,7 +258,7 @@ async function handleMessage(ws, msg, user) {
     // Shell Providers Query
     case "shells.list":
     case "terminal_shells":
-      sendMessage(ws, "terminal.shells", { shells: LocalBackend.detectAvailableShells() });
+      sendMessage(ws, "terminal.shells", { shells: ["docker", "remote"].includes(config.executionRuntime) ? ["bash", "sh"] : LocalBackend.detectAvailableShells() });
       break;
 
     // Hybrid Workstation Bridge Handlers
