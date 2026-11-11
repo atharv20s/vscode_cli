@@ -308,9 +308,12 @@ export function registerFileTools() {
       const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       const raw = (args.path || args.file || args.filename || "index.html").trim();
       const filePath = raw.replace(/^\/+/, "").replace(/^preview\//, "");
-      const { previewService } = await import("../services/previewService.js");
-      
-      const previewUrl = `/preview/${filePath}`;
+      const { getPreviewService } = await import("../services/previewService.js");
+      const previewService = getPreviewService(ctx.workspaceId);
+      const safeTarget = getWorkspaceService(ctx.userId).resolvePath(filePath);
+      if (!safeTarget.safe) return { success: false, error: "Preview path is outside your workspace." };
+
+      const previewUrl = `/preview/${encodeURIComponent(filePath).replace(/%2F/gi, "/")}`;
       previewService.setReady(previewUrl, 3001);
 
       return {
