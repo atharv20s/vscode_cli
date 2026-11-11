@@ -127,7 +127,7 @@ export function validateConfig() {
   }
 
   if (config.executionRuntime === "remote") {
-    if (!config.executionWorkerUrl) errors.push("EXECUTION_WORKER_URL is required when EXECUTION_RUNTIME=remote.");
+    if (!config.executionWorkerUrl) errors.push("EXECUTION_WORKER_URL is required when EXECUTION_RUNTIME=remote.");\n    else if (!config.executionWorkerUrl.startsWith("https://")) errors.push("EXECUTION_WORKER_URL must use HTTPS.");
     if (config.workerSharedSecret.length < 32) errors.push("WORKER_SHARED_SECRET must contain at least 32 characters when EXECUTION_RUNTIME=remote.");
   }
 
