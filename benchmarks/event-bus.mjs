@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import { EventEmitter } from "node:events";
+import { eventBus } from "../server/src/websocket/eventBus.js";
 
 const arg = (name, fallback) => {
   const item = process.argv.find((value) => value.startsWith(`--${name}=`));
@@ -8,22 +8,22 @@ const arg = (name, fallback) => {
   return value;
 };
 const count = arg("events", 100000);
-const bus = new EventEmitter();
+
 const samples = new Array(count);
 let received = 0;
-bus.on("task", (event) => {
+eventBus.subscribe("benchmark.event", (event) => {
   samples[event.id] = performance.now() - event.startedAt;
   received++;
 });
 const started = performance.now();
 for (let id = 0; id < count; id++) {
-  bus.emit("task", { id, startedAt: performance.now() });
+  eventBus.publish("benchmark.event", { id, startedAt: performance.now() });
 }
 const elapsedMs = performance.now() - started;
 const sorted = samples.filter(Number.isFinite).sort((a, b) => a - b);
 const percentile = (p) => sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)] ?? null;
 console.log(JSON.stringify({
-  benchmark: "in-process-eventemitter",
+  benchmark: "ath-ide-event-bus-in-process",
   eventsRequested: count,
   eventsReceived: received,
   failures: count - received,
