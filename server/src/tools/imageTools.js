@@ -52,6 +52,7 @@ export function registerImageTools() {
         payload: args,
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
       });
       if (!perm.granted) return { success: false, error: perm.reason };
 
