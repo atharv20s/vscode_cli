@@ -28,7 +28,7 @@ router.post("/exec", requireAuth, execCommand);
 
 // Shell Provider Route
 router.get("/terminal/shells", requireAuth, (req, res) => {
-  const shells = config.executionRuntime === "docker" ? ["bash", "sh"] : LocalBackend.detectAvailableShells();
+  const shells = ["docker", "remote"].includes(config.executionRuntime) ? ["bash", "sh"] : LocalBackend.detectAvailableShells();
   res.json({ shells });
 });
 
