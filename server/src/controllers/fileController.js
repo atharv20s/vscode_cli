@@ -2,22 +2,7 @@
  * File Controller — Workspace file operations via REST.
  */
 
-import fs from "fs/promises";
-import path from "path";
-import { config } from "../config/env.js";
-import { eventBus } from "../websocket/eventBus.js";
 import { getWorkspaceService } from "../services/workspaceService.js";
-
-/**
- * Resolve path safely within workspace using workspaceService.
- */
-function safePath(filePath, workspaceService) {
-  const result = workspaceService.resolvePath(filePath);
-  if (!result.safe) {
-    return null;
-  }
-  return result.resolved;
-}
 
 /**
  * GET /api/workspace/files?path=.
