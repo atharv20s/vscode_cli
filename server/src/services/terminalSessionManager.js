@@ -67,6 +67,12 @@ class TerminalSessionManager {
     const workspaceId = options.workspaceId || "default";
     const backendType = options.backendType || (options.remoteHost ? "remote_ssh" : "local");
 
+    // Do not spawn shells inside the shared API container in production. The
+    // remote SSH adapter is not yet a per-user isolated runtime either.
+    if (!config.isDev) {
+      throw new Error("Isolated Linux workspace runtime is not configured. Terminal startup is temporarily unavailable.");
+    }
+
     const session = {
       sessionId,
       workspaceId,
