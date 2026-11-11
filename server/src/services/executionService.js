@@ -79,7 +79,7 @@ class ExecutionService {
     // workspace. Never fall back to the API host's shell.
     if (config.executionRuntime === "docker") {
       const { dockerWorkspaceRuntime } = await import("./dockerWorkspaceRuntime.js");
-      return dockerWorkspaceRuntime.execute({
+      const result = await dockerWorkspaceRuntime.execute({
         workspaceId,
         workspaceDir,
         cwd,
@@ -87,6 +87,7 @@ class ExecutionService {
         timeout,
         signal,
       });
+      return { ...result, operationId };
     }
 
     // Fail closed when no isolated execution provider is configured.
