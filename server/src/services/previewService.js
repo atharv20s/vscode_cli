@@ -83,6 +83,7 @@ class PreviewService {
     }, {
       workspaceId: this.workspaceId,
       workspaceId: this.workspaceId,
+      workspaceId: this.workspaceId,
       source: "preview",
       actor: "agent",
     });
@@ -250,6 +251,7 @@ class PreviewService {
       eventBus.publish(EVENT_TOPICS.PREVIEW_STOPPED, {
         timestamp: Date.now(),
       }, {
+        workspaceId: this.workspaceId,
         source: "preview",
         actor: "system",
       });
