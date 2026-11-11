@@ -12,7 +12,7 @@ const count = arg("events", 100000);
 const samples = new Array(count);
 let received = 0;
 eventBus.subscribe("benchmark.event", (event) => {
-  samples[event.id] = performance.now() - event.startedAt;
+  samples[event.payload.id] = performance.now() - event.payload.startedAt;
   received++;
 });
 const started = performance.now();
