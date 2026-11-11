@@ -11,6 +11,7 @@ import { WebSocketServer } from "ws";
 import { verifyToken } from "../middleware/auth.js";
 import { runAgent } from "../services/agentService.js";
 import { config } from "../config/env.js";
+import { getWorkspaceService } from "../services/workspaceService.js";
 import { logger } from "../config/logger.js";
 import {
   addConnection,
@@ -149,7 +150,10 @@ export function initWebSocketServer(httpServer) {
       return;
     }
 
-    addConnection(ws, user || { id: "anonymous", username: "anonymous" });
+    ws.userId = user?.id || ws.sessionId;
+    ws.workspaceService = getWorkspaceService(ws.userId);
+
+    addConnection(ws, user || { id: ws.userId, username: "guest" });
 
     ws.on("pong", () => {
       ws.isAlive = true;
@@ -190,7 +194,7 @@ export function initWebSocketServer(httpServer) {
       message: "Connected to Agentic CLI Server",
       user: user ? { id: user.id, username: user.username } : null,
       sessionId: ws.sessionId,
-      workspace: path.basename(config.workspaceRoot),
+      workspace: path.basename(ws.workspaceService.workspaceRoot),
       previewState: previewService.getPreviewState(),
     });
   });
@@ -397,7 +401,7 @@ async function handleChat(ws, payload, user) {
       conversationHistory: sanitizedHistory,
       model: model || undefined,
       systemPrompt: systemPrompt || undefined,
-      workspaceDir: config.workspaceRoot,
+      workspaceDir: ws.workspaceService.workspaceRoot,
       sessionId,
       signal: abortController.signal,
       onEvent: (event) => {
@@ -456,15 +460,8 @@ async function handleFileRead(ws, payload) {
   }
 
   try {
-    const resolved = path.resolve(config.workspaceRoot, filePath);
-
-    if (!resolved.startsWith(path.resolve(config.workspaceRoot))) {
-      sendMessage(ws, "error", { message: "Access denied: path outside workspace" });
-      return;
-    }
-
-    const content = await fs.readFile(resolved, "utf8");
-    sendMessage(ws, "file_content", { path: filePath, content });
+    const result = await ws.workspaceService.readFile(filePath);
+    sendMessage(ws, "file_content", { path: result.path, content: result.content });
   } catch (err) {
     sendMessage(ws, "error", { message: `File read failed: ${err.message}` });
   }
@@ -481,27 +478,11 @@ async function handleFileSave(ws, payload) {
   }
 
   try {
-    const resolved = path.resolve(config.workspaceRoot, filePath);
-
-    if (!resolved.startsWith(path.resolve(config.workspaceRoot))) {
-      sendMessage(ws, "error", { message: "Access denied: path outside workspace" });
-      return;
-    }
-
-    await fs.mkdir(path.dirname(resolved), { recursive: true });
-    await fs.writeFile(resolved, content, "utf8");
-
-    // Emit lightweight metadata event
-    eventBus.publish(EVENT_TOPICS.FILE_CHANGED, {
-      path: filePath,
-      operation: "modify",
-      version: Date.now(),
-    }, {
+    const result = await ws.workspaceService.writeFile(filePath, content, {
       source: "ui",
-      actor: "user",
+      actor: ws.userId,
     });
-
-    sendMessage(ws, "file_saved", { path: filePath, size: Buffer.byteLength(content) });
+    sendMessage(ws, "file_saved", { path: result.path, size: result.size });
   } catch (err) {
     sendMessage(ws, "error", { message: `File save failed: ${err.message}` });
   }
