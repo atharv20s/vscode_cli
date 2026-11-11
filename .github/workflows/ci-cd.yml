@@ -41,6 +41,12 @@ jobs:
       - name: Verify Code Syntax & Exports
         run: |
           find server/src -type f -name "*.js" -print0 | xargs -0 -n1 node --check
+          find benchmarks -type f -name "*.mjs" -print0 | xargs -0 -n1 node --check
+
+      - name: Run unit tests
+        run: |
+          cd server
+          npm test
 
   # ============================================================================
   # 2. Build, Push Docker Container & Deploy to Google Cloud Platform
