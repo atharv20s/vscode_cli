@@ -48,7 +48,8 @@ export const config = {
   // Isolated execution runtime (Docker Engine must be available on the worker host)
   executionRuntime: (process.env.EXECUTION_RUNTIME || "disabled").toLowerCase(),
   dockerBinary: process.env.DOCKER_BIN || "docker",
-  dockerImage: process.env.DOCKER_WORKSPACE_IMAGE || "node:22-bookworm-slim",
+  dockerImage: process.env.DOCKER_WORKSPACE_IMAGE || "ath-ide-workspace:local",
+  dockerWorkspaceNetwork: process.env.DOCKER_WORKSPACE_NETWORK || "none",
   dockerWorkspaceUid: parseInt(process.env.DOCKER_WORKSPACE_UID || "1000", 10),
   dockerWorkspaceGid: parseInt(process.env.DOCKER_WORKSPACE_GID || "1000", 10),
 
@@ -121,6 +122,10 @@ export function validateConfig() {
 
   if (!["disabled", "docker"].includes(config.executionRuntime)) {
     errors.push("EXECUTION_RUNTIME must be either disabled or docker.");
+  }
+
+  if (!["none", "bridge"].includes(config.dockerWorkspaceNetwork)) {
+    errors.push("DOCKER_WORKSPACE_NETWORK must be none or bridge.");
   }
 
   if (!Number.isInteger(config.dockerWorkspaceUid) || config.dockerWorkspaceUid < 1 || !Number.isInteger(config.dockerWorkspaceGid) || config.dockerWorkspaceGid < 1) {
