@@ -118,29 +118,11 @@ export async function moveFile(req, res) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'from' or 'to' path" });
   }
 
-  const resolvedFrom = safePath(from, workspaceService);
-  const resolvedTo = safePath(to, workspaceService);
-  if (!resolvedFrom || !resolvedTo) {
-    return res.status(403).json({ error: "Forbidden", message: "Path outside workspace" });
-  }
-
   try {
-    await fs.mkdir(path.dirname(resolvedTo), { recursive: true });
-    await fs.rename(resolvedFrom, resolvedTo);
-
-    eventBus.publish("file.changed", {
-      from,
-      to,
-      path: to,
-      operation: "move",
-      version: Date.now(),
-    }, {
-      source: "fs",
-      actor: "user",
-    });
-
-    res.json({ success: true, from, to });
+    const result = await workspaceService.renameFile(from, to);
+    res.json({ success: true, from: result.from, to: result.to });
   } catch (err) {
+    if (err.message?.includes("Access denied")) return res.status(403).json({ error: "Forbidden", message: err.message });
     res.status(500).json({ error: "InternalError", message: err.message });
   }
 }
@@ -155,25 +137,11 @@ export async function createFolder(req, res) {
     return res.status(400).json({ error: "BadRequest", message: "Missing folder path" });
   }
 
-  const resolved = safePath(folderPath, workspaceService);
-  if (!resolved) {
-    return res.status(403).json({ error: "Forbidden", message: "Path outside workspace" });
-  }
-
   try {
-    await fs.mkdir(resolved, { recursive: true });
-
-    eventBus.publish("file.changed", {
-      path: folderPath,
-      operation: "create_folder",
-      version: Date.now(),
-    }, {
-      source: "fs",
-      actor: "user",
-    });
-
-    res.json({ success: true, path: folderPath });
+    const result = await workspaceService.createDirectory(folderPath);
+    res.json({ success: true, path: result.path });
   } catch (err) {
+    if (err.message?.includes("Access denied")) return res.status(403).json({ error: "Forbidden", message: err.message });
     res.status(500).json({ error: "InternalError", message: err.message });
   }
 }
