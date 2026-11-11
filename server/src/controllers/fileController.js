@@ -6,12 +6,12 @@ import fs from "fs/promises";
 import path from "path";
 import { config } from "../config/env.js";
 import { eventBus } from "../websocket/eventBus.js";
-import { workspaceService } from "../services/workspaceService.js";
+import { getWorkspaceService } from "../services/workspaceService.js";
 
 /**
  * Resolve path safely within workspace using workspaceService.
  */
-function safePath(filePath) {
+function safePath(filePath, workspaceService) {
   const result = workspaceService.resolvePath(filePath);
   if (!result.safe) {
     return null;
@@ -23,6 +23,7 @@ function safePath(filePath) {
  * GET /api/workspace/files?path=.
  */
 export async function listFiles(req, res) {
+  const workspaceService = getWorkspaceService(req.user.id);
   const dirPath = req.query.path || ".";
   try {
     const data = await workspaceService.listDirectory(dirPath);
@@ -42,6 +43,7 @@ export async function listFiles(req, res) {
  * GET /api/workspace/file?path=src/main.js
  */
 export async function readFile(req, res) {
+  const workspaceService = getWorkspaceService(req.user.id);
   const filePath = req.query.path;
   if (!filePath) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'path' query parameter" });
@@ -65,6 +67,7 @@ export async function readFile(req, res) {
  * POST /api/workspace/file { path, content }
  */
 export async function writeFile(req, res) {
+  const workspaceService = getWorkspaceService(req.user.id);
   const { path: filePath, content } = req.body;
   if (!filePath || content === undefined) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'path' or 'content'" });
@@ -85,6 +88,7 @@ export async function writeFile(req, res) {
  * DELETE /api/workspace/file?path=old-file.txt
  */
 export async function deleteFile(req, res) {
+  const workspaceService = getWorkspaceService(req.user.id);
   const filePath = req.query.path;
   if (!filePath) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'path' query parameter" });
@@ -108,13 +112,14 @@ export async function deleteFile(req, res) {
  * POST /api/workspace/move { from, to }
  */
 export async function moveFile(req, res) {
+  const workspaceService = getWorkspaceService(req.user.id);
   const { from, to } = req.body;
   if (!from || !to) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'from' or 'to' path" });
   }
 
-  const resolvedFrom = safePath(from);
-  const resolvedTo = safePath(to);
+  const resolvedFrom = safePath(from, workspaceService);
+  const resolvedTo = safePath(to, workspaceService);
   if (!resolvedFrom || !resolvedTo) {
     return res.status(403).json({ error: "Forbidden", message: "Path outside workspace" });
   }
@@ -144,12 +149,13 @@ export async function moveFile(req, res) {
  * POST /api/workspace/folder { path }
  */
 export async function createFolder(req, res) {
+  const workspaceService = getWorkspaceService(req.user.id);
   const { path: folderPath } = req.body;
   if (!folderPath) {
     return res.status(400).json({ error: "BadRequest", message: "Missing folder path" });
   }
 
-  const resolved = safePath(folderPath);
+  const resolved = safePath(folderPath, workspaceService);
   if (!resolved) {
     return res.status(403).json({ error: "Forbidden", message: "Path outside workspace" });
   }
@@ -176,6 +182,7 @@ export async function createFolder(req, res) {
  * POST /api/workspace/exec — Execute shell command via ExecutionService in workspace.
  */
 export async function execCommand(req, res) {
+  const workspaceService = getWorkspaceService(req.user.id);
   const { command, shell = "powershell" } = req.body;
   if (!command || typeof command !== "string") {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'command' in request body" });
