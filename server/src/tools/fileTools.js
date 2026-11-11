@@ -6,7 +6,7 @@
  */
 
 import { registerTool } from "./index.js";
-import { workspaceService } from "../services/workspaceService.js";
+import { getWorkspaceService } from "../services/workspaceService.js";
 import { permissionEngine } from "../services/permissionEngine.js";
 
 export function registerFileTools() {
@@ -29,6 +29,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       // Permission Check
       const perm = await permissionEngine.checkPermission({
         resource: "file",
@@ -66,6 +67,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       const filePath = args.path || args.filePath || args.file || args.filename || "index.html";
       const fileContent = args.content !== undefined ? args.content : (args.data !== undefined ? args.data : (args.code !== undefined ? args.code : (args.text !== undefined ? args.text : "")));
 
@@ -115,6 +117,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       // Permission Check
       const perm = await permissionEngine.checkPermission({
         resource: "file",
@@ -166,6 +169,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       const targetPath = args.path || args.file || args.filename || args.filePath;
       if (!targetPath) return { success: false, error: "Missing required 'path' parameter." };
 
@@ -211,6 +215,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       const filePath = args.path || args.file || args.filename || args.filePath;
       if (!filePath) return { success: false, error: "Missing 'path' parameter for compilation." };
 
@@ -300,6 +305,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       const raw = (args.path || args.file || args.filename || "index.html").trim();
       const filePath = raw.replace(/^\/+/, "").replace(/^preview\//, "");
       const { previewService } = await import("../services/previewService.js");
@@ -332,6 +338,7 @@ export function registerFileTools() {
       },
     },
     async (args, ctx = {}) => {
+      const workspaceService = getWorkspaceService(ctx.userId || ctx.workspaceId);
       const dirPath = args.path || ".";
       try {
         const result = await workspaceService.listDirectory(dirPath);
