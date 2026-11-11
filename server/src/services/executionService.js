@@ -7,7 +7,6 @@
  * - AGENT_INTERACTIVE: Dedicated interactive agent PTY shell.
  */
 
-import path from "path";
 import { logger } from "../config/logger.js";
 import { config } from "../config/env.js";
 import { terminalSessionManager } from "./terminalSessionManager.js";
