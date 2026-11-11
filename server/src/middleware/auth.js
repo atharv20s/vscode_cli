@@ -143,7 +143,7 @@ export function previewAuth(req, res, next) {
     }
     req.user = { id: decoded.sub };
     req.previewWorkspaceId = decoded.workspaceId;
-    req.previewPath = segments.join("/") || "index.html";
+    req.previewPath = segments.map(segment => decodeURIComponent(segment)).join("/") || "index.html";
     next();
   } catch {
     return res.status(401).json({ error: "InvalidOrExpiredPreviewToken" });
