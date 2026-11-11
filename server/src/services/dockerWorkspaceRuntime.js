@@ -61,7 +61,7 @@ class DockerWorkspaceRuntime {
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
         "--user", `${uid}:${gid}`,
         "-e", "HOME=/tmp",
-        "--network", "bridge",
+        "--network", config.dockerWorkspaceNetwork,
         "-v", `${workspaceDir}:/workspace:rw`,
         "-w", "/workspace",
         config.dockerImage,
