@@ -97,6 +97,7 @@ class TerminalSessionManager {
         session.backendInstance = backend;
         const ptyProcess = await backend.spawnShell({
           sessionId, workspaceId, workspaceDir: cwd, cols, rows, ws: options.ws,
+          onExit: (code) => this._handleSessionExit(sessionId, code),
         });
         session.pid = ptyProcess?.pid || null;
         session.state = "ready";
