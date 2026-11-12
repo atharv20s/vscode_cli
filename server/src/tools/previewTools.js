@@ -135,7 +135,7 @@ export function registerPreviewTools() {
       const state = previewService.getPreviewState();
       if (state.status === "running" && ctx.userId && ctx.workspaceKey && config.previewPublicUrl) {
         const token = generatePreviewToken(ctx.userId, ctx.workspaceKey);
-        state.url = config.previewPublicUrl.replace(/\/$/, "") + "/preview/" + token + "/";
+        state.url = config.previewPublicUrl.replace(/\/$/, "") + "/preview/" + generatePreviewToken(ctx.userId, ctx.workspaceKey, state.port) + "/";
       }
       return {
         success: true,
