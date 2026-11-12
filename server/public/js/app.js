@@ -306,6 +306,10 @@ class App {
         document.querySelectorAll(".sidebar-view").forEach((v) => v.classList.remove("active"));
         const targetView = document.getElementById(`view-${view}`);
         if (targetView) targetView.classList.add("active");
+        const sidebar = document.getElementById("primary-sidebar");
+        if (sidebar && window.matchMedia("(max-width: 640px)").matches) {
+          sidebar.classList.add("mobile-open");
+        }
       });
     });
 
@@ -1516,6 +1520,22 @@ class App {
     shareButton.addEventListener("click", () => this.shareRepositoryAgentTask(task.id));
     card.appendChild(shareButton);
 
+    const manageSharesButton = document.createElement("button");
+    manageSharesButton.type = "button";
+    manageSharesButton.className = "secondary-btn repo-task-share-button";
+    manageSharesButton.textContent = "Manage access";
+    manageSharesButton.addEventListener("click", () => this.manageRepositoryAgentShares(task.id, card));
+    card.appendChild(manageSharesButton);
+
+    if (["queued", "cloning", "running", "testing", "reviewing", "repairing", "publishing", "cancel_requested"].includes(task.status)) {
+      const cancelButton = document.createElement("button");
+      cancelButton.type = "button";
+      cancelButton.className = "secondary-btn repo-task-share-button";
+      cancelButton.textContent = "Cancel task";
+      cancelButton.addEventListener("click", () => this.cancelRepositoryAgentTask(task.id));
+      card.appendChild(cancelButton);
+    }
+
     const lastEvent = Array.isArray(task.events) ? [...task.events].reverse().find(event => event.type === "status" || event.type === "error") : null;
     if (lastEvent?.data?.message) {
       const message = document.createElement("div");
@@ -1523,6 +1543,24 @@ class App {
       message.textContent = lastEvent.data.message;
       card.appendChild(message);
     }
+    const rounds = (task.rounds || []).slice(-6);
+    if (rounds.length) {
+      const roundList = document.createElement("div");
+      roundList.className = "repo-task-rounds";
+      roundList.style.cssText = "display:grid;gap:4px;margin-top:8px;";
+      for (const round of rounds) {
+        const item = document.createElement("div");
+        item.style.cssText = "display:flex;justify-content:space-between;gap:8px;color:var(--text-dim);font-size:11px;";
+        const role = document.createElement("span");
+        role.textContent = "Round " + round.round_number + " · " + round.agent_role.replaceAll("_", " ");
+        const state = document.createElement("span");
+        state.textContent = round.status;
+        item.append(role,state);
+        roundList.appendChild(item);
+      }
+      card.appendChild(roundList);
+    }
+
     if (task.error) {
       const error = document.createElement("div");
       error.style.cssText = "color:#f87171;margin-top:5px;white-space:pre-wrap;";
@@ -1546,6 +1584,72 @@ class App {
       status.textContent = "Repository agent task cancelled.";
     }
     return card;
+  }
+
+  async cancelRepositoryAgentTask(taskId) {
+    const status = document.getElementById("repo-agent-status");
+    try {
+      const response = await fetch("/api/github/agent-tasks/" + encodeURIComponent(taskId), {
+        method: "DELETE",
+        headers: { Authorization: "Bearer " + (this.token || "") },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Unable to cancel task.");
+      if (status) status.textContent = "Cancellation requested. The worker will stop at its next safe checkpoint.";
+      await this.renderRepositoryAgentTask(data.task);
+    } catch (error) {
+      if (status) status.textContent = error.message;
+    }
+  }
+
+  async manageRepositoryAgentShares(taskId, card) {
+    const status = document.getElementById("repo-agent-status");
+    try {
+      const response = await fetch("/api/github/agent-tasks/" + encodeURIComponent(taskId) + "/shares", {
+        headers: { Authorization: "Bearer " + (this.token || "") },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Unable to load share permissions.");
+      let section = card.querySelector(".repo-task-share-list");
+      if (!section) {
+        section = document.createElement("div");
+        section.className = "repo-task-share-list";
+        section.style.cssText = "margin-top:8px;padding-top:8px;border-top:1px solid var(--border-subtle);";
+        card.appendChild(section);
+      }
+      section.replaceChildren();
+      const shares = Array.isArray(data.shares) ? data.shares : [];
+      if (!shares.length) {
+        section.textContent = "No share links have been created for this task.";
+        return;
+      }
+      for (const share of shares) {
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;margin:5px 0;";
+        const label = document.createElement("span");
+        label.textContent = share.permission + " · " + (share.revoked_at ? "revoked" : "active") + (share.expires_at ? " · expires " + new Date(share.expires_at).toLocaleString() : "");
+        row.appendChild(label);
+        if (!share.revoked_at) {
+          const revoke = document.createElement("button");
+          revoke.type = "button";
+          revoke.className = "secondary-btn";
+          revoke.textContent = "Revoke";
+          revoke.addEventListener("click", async () => {
+            const result = await fetch("/api/github/shares/" + encodeURIComponent(share.id), {
+              method: "DELETE",
+              headers: { Authorization: "Bearer " + (this.token || "") },
+            });
+            if (!result.ok) throw new Error("Unable to revoke share link.");
+            await this.manageRepositoryAgentShares(taskId,card);
+            if (status) status.textContent = "Share access revoked.";
+          });
+          row.appendChild(revoke);
+        }
+        section.appendChild(row);
+      }
+    } catch (error) {
+      if (status) status.textContent = error.message;
+    }
   }
 
   async shareRepositoryAgentTask(taskId) {
