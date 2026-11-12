@@ -17,12 +17,12 @@ import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 const IGNORED_DIRS = new Set(["node_modules", ".git", ".worktrees", "dist", "build", ".next", ".cache"]);
 
 class WorkspaceService {
-  constructor(root = config.workspaceRoot, workspaceId = "system") {
+  constructor(root = config.workspaceRoot, workspaceId = "system", options = {}) {
     this.workspaceRoot = path.resolve(root);
     this.workspaceId = workspaceId;
     this.watcher = null;
     this._recentInternalMutations = new Map(); // path -> timestamp
-    this._initWatcher();
+    if (options.watch !== false) this._initWatcher();
   }
 
   /**
@@ -372,7 +372,7 @@ export function createScopedWorkspaceService(root, workspaceId) {
   }
   const resolvedRoot = path.resolve(root);
   fs.mkdirSync(resolvedRoot, { recursive: true, mode: 0o700 });
-  return new WorkspaceService(resolvedRoot, String(workspaceId));
+  return new WorkspaceService(resolvedRoot, String(workspaceId), { watch: false });
 }
 
 /**
