@@ -86,11 +86,15 @@ export async function getRepoTree(accessToken, owner, repo, branch = "main") {
       ref: `heads/${branch}`,
     });
 
-    const treeSha = refData.object.sha;
+    const commitResponse = await octokit.git.getCommit({
+      owner,
+      repo,
+      commit_sha: refData.object.sha,
+    });
     const { data: treeData } = await octokit.git.getTree({
       owner,
       repo,
-      tree_sha: treeSha,
+      tree_sha: commitResponse.data.tree.sha,
       recursive: "true",
     });
 
