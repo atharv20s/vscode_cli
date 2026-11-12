@@ -1694,7 +1694,7 @@ class App {
     content.textContent = "Loading shared task…";
 
     try {
-      const response = await fetch("/api/github/shares/" + encodeURIComponent(token));
+      const response = await fetch("/api/github/shares", { headers: { "X-ATH-Share-Token": token } });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || "This share link is invalid, expired or revoked.");
       const task = data.task;
@@ -1782,9 +1782,9 @@ class App {
           try {
             const endpoint = permission === "edit" ? "instructions" : "comments";
             const key = permission === "edit" ? "instruction" : "body";
-            const result = await fetch("/api/github/shares/" + encodeURIComponent(token) + "/" + endpoint, {
+            const result = await fetch("/api/github/shares/" + endpoint, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: { "Content-Type": "application/json", "X-ATH-Share-Token": token },
               body: JSON.stringify({ [key]: value, authorLabel: name.value.trim() || "Collaborator" }),
             });
             const payload = await result.json().catch(() => ({}));
