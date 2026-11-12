@@ -6,7 +6,7 @@ function pool() { return getPostgresPool(); }
 export async function countActiveRepoTasks(userId) {
   if (pool()) {
     const result = await pool().query(
-      "SELECT COUNT(*)::int AS count FROM repo_agent_tasks WHERE user_id = $1 AND status IN ('queued','cloning','running','testing','reviewing','publishing')",
+      "SELECT COUNT(*)::int AS count FROM repo_agent_tasks WHERE user_id = $1 AND status IN ('queued','cloning','running','testing','reviewing','repairing','publishing','cancel_requested')",
       [userId]
     );
     return result.rows[0]?.count || 0;
