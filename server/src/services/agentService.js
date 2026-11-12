@@ -298,13 +298,18 @@ export async function runAgent({
 
           case "usage":
             totalTokens += event.data.totalTokens || 0;
+            onEvent({ type: "usage", data: event.data });
+            break;
+
+          case "model_selected":
+            onEvent({ type: "model_selected", data: event.data });
             break;
 
           case "error":
             gotError = true;
             let errMsg = event.data?.message || "An unexpected error occurred.";
             if (errMsg.includes("402") || errMsg.includes("credits") || errMsg.includes("in-flight")) {
-              errMsg = "⚠️ OpenRouter Credit Limit: OpenRouter requires available credits for 'mistralai/devstral-2512'. Please top up $1 on openrouter.ai/credits or switch to 🟢 Low Usage mode.";
+              errMsg = "The configured AI provider rejected this request because of insufficient credits or a rate limit. Check provider billing/limits or explicitly configure an available fallback model.";
             }
             onEvent({ type: "error", data: { ...event.data, message: errMsg } });
             break;
