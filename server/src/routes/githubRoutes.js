@@ -14,6 +14,7 @@ import {
   createRepositoryAgentTask,
   getRepositoryAgentTask,
   getRepositoryAgentTasks,
+  getRepositoryAgentWorkerPool,
   cancelRepositoryAgentTask,
 } from "../controllers/githubController.js";
 
