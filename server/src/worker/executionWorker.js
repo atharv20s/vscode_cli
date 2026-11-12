@@ -11,6 +11,7 @@ import fs from "fs";
 import path from "path";
 import { config, validateConfig } from "../config/env.js";
 import { dockerWorkspaceRuntime } from "../services/dockerWorkspaceRuntime.js";
+import { getWorkspaceSnapshot, putWorkspaceSnapshot } from "../services/workspaceObjectStore.js";
 import { execFileSync as dockerExecFileSync } from "child_process";
 
 const app = express();
@@ -203,6 +204,21 @@ async function readWorkspace(root) {
   return output;
 }
 
+async function persistWorkspaceSnapshot(workspaceId, root) {
+  const files = await readWorkspace(root);
+  await putWorkspaceSnapshot(workspaceId, { version: 1, updatedAt: new Date().toISOString(), files });
+}
+
+async function restoreWorkspaceSnapshotIfEmpty(workspaceId, root) {
+  await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
+  const existing = await readWorkspace(root);
+  if (existing.length) return false;
+  const snapshot = await getWorkspaceSnapshot(workspaceId);
+  if (!snapshot) return false;
+  await replaceWorkspace(root, snapshot.files);
+  return true;
+}
+
 async function measureWorkspaceBytes(root) {
   let total = 0;
   async function walk(dir) {
@@ -222,6 +238,7 @@ async function syncWorkspace(workspaceId, files) {
   const root = workspaceRootFor(workspaceId);
   return withWorkspaceLock(workspaceId, () => withWorkspaceFileLock(workspaceId, async () => {
     await replaceWorkspace(root, files);
+    await persistWorkspaceSnapshot(workspaceId, root);
     return { workspaceId, syncedFiles: files.length };
   }));
 }
@@ -234,7 +251,7 @@ app.post("/v1/workspace/pull", express.raw({ type: "application/json", limit: "1
     if (!safeWorkspaceId(input.workspaceId)) return res.status(400).json({ error: "Invalid workspace identity." });
     const files = await withWorkspaceLock(input.workspaceId, () => withWorkspaceFileLock(input.workspaceId, async () => {
       const root = workspaceRootFor(input.workspaceId);
-      await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
+      await restoreWorkspaceSnapshotIfEmpty(input.workspaceId, root);
       return readWorkspace(root);
     }));
     return res.json({ success: true, workspaceId: input.workspaceId, files });
@@ -280,6 +297,7 @@ app.post("/v1/execute", express.raw({ type: "application/json", limit: "20mb" })
         workspaceId, workspaceDir: root, cwd: resolvedCwd, command, timeout,
       });
       const quotaBytes = Math.max(64 * 1024 * 1024, Number(process.env.WORKER_WORKSPACE_QUOTA_BYTES || 1073741824));
+      await persistWorkspaceSnapshot(workspaceId, root);
       const usedBytes = await measureWorkspaceBytes(root);
       if (usedBytes > quotaBytes) {
         return {
@@ -558,9 +576,15 @@ async function attachPersistentTerminal(ws, { workspaceId, sessionId, cols, rows
     }
   });
 
+  const snapshotInterval = setInterval(() => {
+    persistWorkspaceSnapshot(workspaceId, root).catch(error => console.warn("Workspace snapshot persistence failed:", error.message));
+  }, 60000);
+  snapshotInterval.unref?.();
   ws.on("close", () => {
+    clearInterval(snapshotInterval);
     // Detach the PTY client only. Do not kill the tmux session.
     try { terminal?.kill(); } catch {}
+    persistWorkspaceSnapshot(workspaceId, root).catch(error => console.warn("Workspace snapshot persistence failed:", error.message));
   });
   ws.on("error", () => {
     try { terminal?.kill(); } catch {}
