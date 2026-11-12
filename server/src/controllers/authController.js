@@ -195,7 +195,6 @@ export async function login(req, res) {
     username: user.username,
     email: user.email,
     avatarUrl: user.avatar_url,
-    githubAccessToken: user.github_access_token,
     hasGithub: Boolean(user.github_access_token),
   };
   const tokens = generateTokenPair(userPayload);
@@ -208,7 +207,6 @@ export async function login(req, res) {
     accessToken: tokens.accessToken,
     refreshToken: tokens.refreshToken,
     expiresIn: tokens.expiresIn,
-    githubToken: user.github_access_token,
     user: userPayload,
   });
 }
@@ -239,7 +237,6 @@ export async function refreshAccessToken(req, res) {
     email: user.email,
     avatarUrl: user.avatar_url,
     githubId: user.github_id,
-    githubAccessToken: user.github_access_token,
     sessionId: decoded.sessionId,
     hasGithub: Boolean(user.github_access_token),
   };
@@ -307,8 +304,7 @@ export async function connectGithubToken(req, res) {
       updateUserProfile(userId, {
         avatarUrl: githubUser.avatar_url,
         githubId: githubUser.id,
-        githubAccessToken: cleanToken,
-      });
+        });
       user = findUserById(userId);
     }
 
@@ -336,7 +332,6 @@ export async function connectGithubToken(req, res) {
         avatarUrl: githubUser.avatar_url,
         hasGithub: true,
       },
-      githubToken: cleanToken,
     });
   } catch (err) {
     logger.error("GitHub connect error", { error: err.message });
@@ -395,13 +390,11 @@ export async function tokenLogin(req, res) {
       username: user.username,
       githubId: user.github_id,
       avatarUrl: user.avatar_url,
-      githubAccessToken: user.github_access_token,
     });
 
     res.json({
       success: true,
       token: jwtToken,
-      githubToken: token.trim(),
       user: {
         id: user.id,
         username: user.username,
@@ -481,11 +474,10 @@ export async function githubCallback(req, res) {
       username: user.username,
       githubId: user.github_id,
       avatarUrl: user.avatar_url,
-      githubAccessToken: user.github_access_token,
     });
 
     // 5. Redirect back to frontend IDE with tokens
-    res.redirect(`/?token=${jwtToken}&github_token=${githubAccessToken}`);
+    res.redirect(`/?token=${jwtToken}`);
   } catch (err) {
     logger.error("GitHub OAuth callback error", { error: err.message });
     res.status(500).redirect(`/?auth_error=${encodeURIComponent(err.message)}`);
@@ -500,13 +492,14 @@ export function getMe(req, res) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
+  const user = findUserById(req.user.id);
   res.json({
     user: {
       id: req.user.id,
       username: req.user.username,
       avatarUrl: req.user.avatarUrl,
       isGuest: Boolean(req.user.isGuest),
-      hasGithub: Boolean(req.user.githubAccessToken),
+      hasGithub: Boolean(user?.github_access_token),
     },
   });
 }
