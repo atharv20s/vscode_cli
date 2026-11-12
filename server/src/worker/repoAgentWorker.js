@@ -174,6 +174,9 @@ async function main() {
   }
   if (!config.redisUrl) throw new Error("REDIS_URL is required for the repository queue worker.");
   await bootDatabase();
+  if (!config.isDev && !getPostgresPool()) {
+    throw new Error("Production repository queue workers require the shared Postgres task store. SQLite is only supported for single-worker development.");
+  }
   initializeTools();
   await repoAgentQueue.connect();
   await repoAgentQueue.heartbeatWorker(WORKER_ID,{host:os.hostname(),pid:process.pid,currentTaskId:null});
