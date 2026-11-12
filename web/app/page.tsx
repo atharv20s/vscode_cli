@@ -2,7 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
-import { Activity, Bot, ChevronLeft, Code2, File, FilePlus2, Folder, Loader2, Play, Plus, RefreshCw, Save, Send, Server, SquareTerminal, Terminal, X } from "lucide-react";
+import { Activity, Bot, ChevronLeft, Code2, File, FilePlus2, Folder, Play, Plus, RefreshCw, Save, Send, SquareTerminal, X } from "lucide-react";
+import TerminalPanel from "@/components/TerminalPanel";
 import { api } from "@/lib/api";
 
 type WorkspaceSession = { id: string; name: string; createdAt: string };
@@ -49,8 +50,6 @@ export default function Home() {
   const [repoPrompt, setRepoPrompt] = useState("");
   const [repoBusy, setRepoBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<"chat" | "tasks">("chat");
-  const socketRef = useRef<WebSocket | null>(null);
-  const terminalSessionRef = useRef("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const refreshFiles = useCallback(async (directory = ".") => {
@@ -113,55 +112,6 @@ export default function Home() {
 
   useEffect(() => { initialize(); }, [initialize]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-
-  // Interactive PTY. The terminal ID is tab-scoped so several tabs can own
-  // independent terminal sessions within the same user's workspace.
-  useEffect(() => {
-    const token = api.getAccessToken();
-    if (!token || typeof window === "undefined") return;
-    if (!terminalSessionRef.current) {
-      terminalSessionRef.current = sessionStorage.getItem("ath_terminal_session") || crypto.randomUUID();
-      sessionStorage.setItem("ath_terminal_session", terminalSessionRef.current);
-    }
-    const configuredUrl = process.env.NEXT_PUBLIC_WS_URL;
-    const wsUrl = configuredUrl || ((window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.hostname + ":3001/ws");
-    const url = new URL(wsUrl);
-    url.searchParams.set("token", token);
-    url.searchParams.set("workspace", workspaceId);
-    url.searchParams.set("terminalSessionId", terminalSessionRef.current);
-    const socket = new WebSocket(url.toString());
-    socketRef.current = socket;
-    socket.onopen = () => setSocketReady(true);
-    socket.onmessage = event => {
-      let packet: any;
-      try { packet = JSON.parse(event.data); } catch { return; }
-      const payload = packet.payload || {};
-      if (packet.type === "connected") {
-        socket.send(JSON.stringify({ type: "terminal_init", payload: { shell: "bash", cols: 100, rows: 28 } }));
-        setTerminalConnected(true);
-        setTerminalOutput(prev => prev + "[terminal connected]\r\n");
-      } else if (packet.type === "terminal.output") {
-        setTerminalOutput(prev => (prev + (payload.text || payload.data || "")).slice(-50000));
-      } else if (packet.type === "terminal.exit" || packet.type === "terminal_exit") {
-        setTerminalOutput(prev => prev + "\r\n[terminal exited]\r\n");
-        setTerminalConnected(false);
-      } else if (packet.type === "preview.ready") {
-        setPreviewUrl(payload.url || "");
-      } else if (packet.type === "error") {
-        setTerminalOutput(prev => prev + "\r\n[error] " + (payload.message || "WebSocket error") + "\r\n");
-      }
-    };
-    socket.onclose = () => {
-      setSocketReady(false);
-      setTerminalConnected(false);
-      setTerminalOutput(prev => prev + "\r\n[terminal disconnected; reconnect by reloading the IDE]\r\n");
-    };
-    socket.onerror = () => setSocketReady(false);
-    return () => {
-      socket.close();
-      socketRef.current = null;
-    };
-  }, [workspaceId, apiStatus]);
 
   const changeWorkspace = async (id: string) => {
     api.setWorkspaceId(id);
@@ -287,17 +237,6 @@ export default function Home() {
     } finally { setBusy(false); }
   };
 
-  const sendTerminalInput = (event: React.FormEvent) => {
-    event.preventDefault();
-    const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      setTerminalOutput(prev => prev + "[terminal is disconnected]\r\n");
-      return;
-    }
-    socket.send(JSON.stringify({ type: "terminal_input", payload: { data: terminalInput + "\r" } }));
-    setTerminalInput("");
-  };
-
   const createRepoTask = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!selectedRepo || !repoPrompt.trim() || repoBusy) return;
@@ -359,10 +298,12 @@ export default function Home() {
             {activeFile ? <Editor height="100%" theme="vs-dark" language={languageFor(activeFile)} value={fileContent} onChange={value => setFileContent(value || "")} options={{ minimap: { enabled: false }, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false, tabSize: 2 }} /> :
               <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3"><Code2 size={38}/><div className="text-sm">Open a file or create a new one</div><button onClick={createFile} className="text-xs px-3 py-2 bg-indigo-600 text-white rounded">Create file</button></div>}
           </div>
-          {terminalVisible && <div className="h-52 shrink-0 border-t border-slate-800 bg-[#080c13] flex flex-col">
-            <div className="h-9 flex items-center justify-between px-3 border-b border-slate-800 text-[11px] text-slate-400 uppercase"><span className="flex items-center gap-2"><Terminal size={14}/>Interactive terminal</span><span className={terminalConnected ? "text-emerald-400" : "text-amber-400"}>{terminalConnected ? "Connected" : socketReady ? "Starting…" : "Disconnected"}</span></div>
-            <pre className="flex-1 overflow-auto whitespace-pre-wrap p-3 text-xs font-mono text-slate-300">{terminalOutput}</pre>
-            <form onSubmit={sendTerminalInput} className="flex gap-2 p-2 border-t border-slate-800"><span className="text-emerald-400 self-center">$</span><input value={terminalInput} onChange={event => setTerminalInput(event.target.value)} placeholder="Type a command and press Enter…" className="flex-1 bg-transparent outline-none text-xs font-mono"/><button className="text-indigo-300"><Play size={15}/></button></form>
+          {terminalVisible && <div className="h-60 shrink-0 border-t border-slate-800 bg-[#080c13] flex flex-col">
+            <div className="h-9 flex items-center justify-between px-3 border-b border-slate-800 text-[11px] text-slate-400 uppercase">
+              <span className="flex items-center gap-2"><SquareTerminal size={14}/>Interactive terminal</span>
+              <span className="text-slate-500">xterm.js · workspace PTY</span>
+            </div>
+            <div className="flex-1 min-h-0 p-2"><TerminalPanel workspaceId={workspaceId} apiStatus={apiStatus}/></div>
           </div>}
           {previewUrl && <div className="h-9 shrink-0 border-t border-slate-800 flex items-center px-3 text-xs text-emerald-300">Preview ready: <a className="ml-2 underline" href={previewUrl} target="_blank" rel="noreferrer">{previewUrl}</a></div>}
         </section>
