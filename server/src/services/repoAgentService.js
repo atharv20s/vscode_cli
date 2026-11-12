@@ -679,6 +679,37 @@ export async function getSharedRepoAgentTask(rawToken) {
   if (!share) return null;
   let events = [];
   try { events = Array.isArray(share.events_json) ? share.events_json : JSON.parse(share.events_json || "[]"); } catch {}
+  const publicEventTypes = new Set([
+    "status","queued","worker_claimed","context_built","agent_round",
+    "verification_start","verification_result","pull_request","retry_scheduled",
+  ]);
+  const safeEvents = events.filter(event => publicEventTypes.has(event.type)).slice(-80).map(event => {
+    const data = event.data || {};
+    if (event.type === "verification_result") {
+      return { at:event.at,type:event.type,data:{
+        check:data.name,command:data.command,success:data.success,
+        blocked:data.blocked,exitCode:data.exitCode,
+      }};
+    }
+    if (event.type === "agent_round") {
+      return { at:event.at,type:event.type,data:{
+        role:data.role,round:data.round,status:data.status,
+      }};
+    }
+    if (event.type === "context_built") {
+      return { at:event.at,type:event.type,data:{
+        fileCount:data.fileCount,retrievedFiles:data.retrievedFiles,
+        instructions:data.instructions,
+      }};
+    }
+    if (event.type === "pull_request") {
+      return { at:event.at,type:event.type,data:{url:data.url,number:data.number,draft:true} };
+    }
+    return { at:event.at,type:event.type,data:{
+      status:data.status,message:typeof data.message === "string" ? data.message.slice(0,500) : undefined,
+      attempt:data.attempt,maxAttempts:data.maxAttempts,workerId:data.workerId,
+    }};
+  });
   return {
     share: { id: share.id, permission: share.permission, expiresAt: share.expires_at },
     task: {
@@ -689,7 +720,7 @@ export async function getSharedRepoAgentTask(rawToken) {
       branch: share.branch,
       prompt: share.prompt,
       status: share.status,
-      events: events.slice(-80),
+      events: safeEvents,
       pullRequest: share.pr_url ? { url: share.pr_url, number: share.pr_number } : null,
       error: share.error || null,
       createdAt: share.task_created_at,
