@@ -133,22 +133,24 @@ export async function buildRepositoryContext(root, prompt, options = {}) {
 export function formatRepositoryContext(context, options = {}) {
   const budget = Math.max(2048, Number(options.maxTokens || config.llmContextBudgetTokens || 24000));
   const maxChars = Math.floor(budget * 3.5);
-  const parts = [
-    "## Repository inventory",
-    "Files discovered: " + context.fileCount + (context.truncated ? " (inventory capped)" : ""),
-    context.directoryMap,
-    "## Relevant dependency relationships",
-    (context.importEdges || []).slice(0, 120).map(edge => edge.from + " imports " + edge.to).join("\n"),
-  ];
-  for (const item of context.instructions || []) parts.push("## Project instructions: " + item.path + "\n" + item.content);
-  // Keep manifests and instructions first; selected implementation files are
-  // then admitted whole until the budget is reached, avoiding broken snippets.
-  const header = parts.join("\n\n");
-  let output = header.slice(0, Math.min(header.length, Math.floor(maxChars * 0.3)));
+  // Instructions and task-relevant files outrank a verbose directory listing.
+  let output = "";
+  for (const item of context.instructions || []) {
+    const section = "## Project instructions: " + item.path + "\\n" + item.content + "\\n\\n";
+    if (output.length + section.length > Math.floor(maxChars * 0.2)) break;
+    output += section;
+  }
+  const relationships = (context.importEdges || []).slice(0, 100)
+    .map(edge => edge.from + " imports " + edge.to).join("\\n");
+  const inventory = "## Repository inventory\\nFiles discovered: " + context.fileCount +
+    (context.truncated ? " (inventory capped)" : "") + "\\n" +
+    (context.directoryMap || "").slice(0, Math.floor(maxChars * 0.12));
+  const graph = relationships ? "\\n\\n## Relevant dependency relationships\\n" + relationships : "";
+  output += (output ? "\\n\\n" : "") + inventory + graph;
   for (const sample of context.samples || []) {
-    const section = "\n\n## Source: " + sample.path + "\n" + sample.content;
+    const section = "\\n\\n## Source: " + sample.path + "\\n" + sample.content;
     if (output.length + section.length > maxChars) continue;
     output += section;
   }
-  return output;
+  return output.slice(0,maxChars);
 }
