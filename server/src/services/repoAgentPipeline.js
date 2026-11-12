@@ -165,7 +165,13 @@ async function prepareDependencies({ root, workspaceId, context, signal, onEvent
       await fs.access(path.join(root,"requirements.txt")).then(()=>true).catch(()=>false)) {
     const hasPytest = await fs.access(path.join(root,".venv","bin","python")).then(()=>true).catch(()=>false);
     const hasVenv = await fs.access(path.join(root,".venv","Scripts","python.exe")).then(()=>true).catch(()=>false);
-    if (!hasPytest && !hasVenv && config.repoAgentNetwork === "bridge") {
+    if (!hasPytest && !hasVenv) {
+      if (config.repoAgentNetwork !== "bridge") {
+        return {
+          name:"python-dependency-install",command:"python -m pip install",success:false,blocked:true,
+          exitCode:null,output:"Python project dependencies are not prepared and REPO_AGENT_NETWORK=none blocks package downloads.",
+        };
+      }
       let command = "python -m pip install --user -e .";
       if (await fs.access(path.join(root,"requirements.txt")).then(()=>true).catch(()=>false)) {
         command = "python -m pip install --user -r requirements.txt";
@@ -181,6 +187,28 @@ async function prepareDependencies({ root, workspaceId, context, signal, onEvent
       onEvent?.({type:"dependency_install_result",data:normalized});
       if (!normalized.success) return normalized;
     }
+  }
+
+  if (context.samples.some(item=>item.path==="Cargo.toml") || context.samples.some(item=>item.path==="go.mod")) {
+    if (config.repoAgentNetwork !== "bridge") {
+      return {
+        name:"toolchain-dependency-install",command:"cargo fetch / go mod download",
+        success:false,blocked:true,exitCode:null,
+        output:"Rust/Go dependencies may require registry access. Configure a controlled egress proxy on the worker before verification.",
+      };
+    }
+    const command = context.samples.some(item=>item.path==="Cargo.toml")
+      ? "cargo fetch --locked"
+      : "go mod download";
+    const result = await dockerWorkspaceRuntime.execute({
+      workspaceId,workspaceDir:root,cwd:root,command,timeout:300000,signal,
+    });
+    const normalized = {
+      name:"toolchain-dependency-install",command,success:result.success===true,blocked:false,
+      exitCode:result.exitCode,output:String(result.output||"").slice(-12000),
+    };
+    onEvent?.({type:"dependency_install_result",data:normalized});
+    if (!normalized.success) return normalized;
   }
 
   return null;
