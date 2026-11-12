@@ -106,11 +106,6 @@ async function consumeMessage(message) {
     });
     const latest = await getRepoTask(message.taskId);
     if (lostLease) {
-      // Leave the Redis stream item pending. A healthy consumer will reclaim it.
-      return;
-    }
-
-    if (lostLease) {
       // Do not mutate or acknowledge a task after losing its distributed lease.
       return;
     } else if (controller.signal.aborted || latest?.cancel_requested) {
