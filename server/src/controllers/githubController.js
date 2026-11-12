@@ -72,14 +72,14 @@ export async function createRepositoryAgentTask(req, res) {
   }
 }
 
-export function getRepositoryAgentTask(req, res) {
-  const task = getRepoAgentTask(req.user.id, req.params.taskId);
+export async function getRepositoryAgentTask(req, res) {
+  const task = await getRepoAgentTask(req.user.id, req.params.taskId);
   if (!task) return res.status(404).json({ error: "TaskNotFound" });
   return res.json({ task: task });
 }
 
-export function getRepositoryAgentTasks(req, res) {
-  return res.json({ tasks: listRepoAgentTasks(req.user.id) });
+export async function getRepositoryAgentTasks(req, res) {
+  return res.json({ tasks: await listRepoAgentTasks(req.user.id) });
 }
 
 export async function cancelRepositoryAgentTask(req, res) {
