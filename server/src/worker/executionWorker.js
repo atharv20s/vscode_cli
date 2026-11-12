@@ -403,6 +403,64 @@ if ((process.env.WORKER_SHARED_SECRET || "").length < 32) throw new Error("WORKE
 const server = http.createServer(app);
 const terminalWss = new WebSocketServer({ noServer: true, maxPayload: 128 * 1024 });
 
+// Preview HMR/WebSocket upgrades are authenticated independently of Express,
+// then tunneled to the preview port inside the matching workspace container.
+server.on("upgrade", async (req, socket, head) => {
+  let parsed;
+  try { parsed = new URL(req.url, "http://" + (req.headers.host || "localhost")); }
+  catch { socket.destroy(); return; }
+  const match = parsed.pathname.match(/^\/v1\/preview\/([a-f0-9]{64})\/(\\d{4,5})(\/.*)?$/);
+  if (!match) return; // The terminal WebSocket handler owns its own route.
+  const workspaceId = match[1];
+  const port = Number(match[2]);
+  if (!validatePreviewPort(port) || !verifySignature({
+    method: req.method,
+    requestPath: req.url,
+    body: Buffer.alloc(0),
+    headers: req.headers,
+  })) {
+    socket.write("HTTP/1.1 401 Unauthorized\\r\\nConnection: close\\r\\n\\r\\n");
+    socket.destroy();
+    return;
+  }
+  try {
+    const address = await dockerWorkspaceRuntime.getContainerAddress(workspaceId);
+    const route = (match[3] || "/") + parsed.search;
+    const upstream = http.request({
+      hostname: address,
+      port,
+      method: "GET",
+      path: route,
+      headers: {
+        ...req.headers,
+        host: address + ":" + port,
+        "x-forwarded-host": req.headers.host || "",
+        "x-forwarded-proto": "https",
+      },
+    });
+    upstream.on("upgrade", (response, upstreamSocket, upstreamHead) => {
+      const status = "HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\\r\\n";
+      const headers = Object.entries(response.headers)
+        .map(([name, value]) => name + ": " + value + "\\r\\n").join("");
+      socket.write(status + headers + "\\r\\n");
+      if (upstreamHead?.length) socket.write(upstreamHead);
+      if (head?.length) upstreamSocket.write(head);
+      upstreamSocket.pipe(socket);
+      socket.pipe(upstreamSocket);
+    });
+    upstream.on("response", response => {
+      socket.write("HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\\r\\n");
+      for (const [name, value] of Object.entries(response.headers)) socket.write(name + ": " + value + "\\r\\n");
+      socket.write("\\r\\n");
+      response.pipe(socket);
+    });
+    upstream.on("error", () => socket.destroy());
+    upstream.end();
+  } catch {
+    socket.destroy();
+  }
+});
+
 function sendTerminal(ws, type, payload) {
   if (ws.readyState === 1) ws.send(JSON.stringify({ type, payload }));
 }
