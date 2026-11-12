@@ -28,7 +28,7 @@ const IGNORED_DIRS = new Set([
   ".git", "node_modules", ".next", "dist", "build", "coverage",
   ".cache", ".worktrees", ".agent-runs",
 ]);
-const SENSITIVE_FILE = /(^|\\/)(\\.env(?!\\.(example|sample|template)$)[^/]*|\\.npmrc|\\.pypirc|\\.netrc|id_rsa|id_ed25519)(\\/|$)|\\.(pem|key|p12|pfx)$/i;
+const SENSITIVE_FILE = /(^|\/)(\.env(?!\.(example|sample|template)$)[^/]*|\.npmrc|\.pypirc|\.netrc|id_rsa|id_ed25519)(\/|$)|\.(pem|key|p12|pfx)$/i;
 
 const REPO_AGENT_TOOLS = [
   "read_file", "write_file", "edit_file", "list_files",
@@ -220,7 +220,7 @@ async function scanWorkspace(repoPath, baseEntries) {
         if (!inside(repoPath, resolvedTarget)) {
           throw new Error("Agent created an external symlink at " + relative + "; refusing to publish it.");
         }
-        const buffer = Buffer.from(link.replace(/\\\\/g, "/"), "utf8");
+        const buffer = Buffer.from(link.replace(/\\/g, "/"), "utf8");
         scannedBytes += buffer.length;
         current.set(relative, { buffer: buffer, mode: "120000", sha: gitBlobSha(buffer) });
       } else if (stat.isFile()) {
