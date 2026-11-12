@@ -121,9 +121,9 @@ export function optionalAuth(req, res, next) {
  * Issue a short-lived, preview-only capability token. It cannot authenticate API
  * requests or open a WebSocket; it only grants read access to one workspace.
  */
-export function generatePreviewToken(userId, workspaceId) {
+export function generatePreviewToken(userId, workspaceId, port = null) {
   return jwt.sign(
-    { sub: userId, workspaceId, purpose: "workspace-preview" },
+    { sub: userId, workspaceId, port: Number.isInteger(Number(port)) ? Number(port) : null, purpose: "workspace-preview" },
     config.jwtSecret,
     { expiresIn: "24h", audience: "ath-ide-preview" }
   );
@@ -151,6 +151,9 @@ export function previewAuth(req, res, next) {
     if (!decoded) return res.status(401).json({ error: "InvalidPreviewToken" });
     req.user = { id: decoded.sub };
     req.previewWorkspaceId = decoded.workspaceId;
+    req.previewPort = Number.isInteger(decoded.port) && decoded.port >= 1024 && decoded.port <= 65535
+      ? decoded.port
+      : null;
     req.previewPath = segments.map(segment => decodeURIComponent(segment)).join("/") || "index.html";
     next();
   } catch {
