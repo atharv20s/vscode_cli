@@ -3,7 +3,7 @@ import path from "path";
 import { runAgent } from "./agentService.js";
 import { dockerWorkspaceRuntime } from "./dockerWorkspaceRuntime.js";
 import { buildRepositoryContext, formatRepositoryContext } from "./repoContextEngine.js";
-import { appendRepoTaskEvent, saveRepoContextRound } from "../db/repoAgentStore.js";
+import { appendRepoTaskEvent, saveRepoContextRound, listRepoContextRounds } from "../db/repoAgentStore.js";
 import { config } from "../config/env.js";
 
 const PLANNER_TOOLS = ["read_file","list_files"];
@@ -273,8 +273,19 @@ export async function runRepoAgentPipeline(options) {
   const { task, workspaceDir, workspaceId, workspaceService, signal, onEvent } = options;
   const context = await buildRepositoryContext(workspaceDir, task.prompt);
   const contextBlock = formatRepositoryContext(context);
+  const attempt = Number(task.attempt_count || 0);
+  const roundOffset = attempt * 10;
+  const previousRounds = attempt > 0 ? await listRepoContextRounds(task.id) : [];
+  const previousMemory = previousRounds
+    .filter(round => Number(round.round_number) < roundOffset)
+    .slice(-12)
+    .map(round => [
+      "ROUND " + round.round_number + " · " + round.agent_role + " · " + round.status,
+      String(round.output_summary || "").slice(0,1800),
+    ].join("\n"))
+    .join("\n\n");
   await saveRepoContextRound(task.id, {
-    roundNumber: 0,
+    roundNumber: roundOffset,
     role: "context_engineer",
     status: "completed",
     inputSummary: task.prompt,
@@ -299,16 +310,17 @@ export async function runRepoAgentPipeline(options) {
   const base = [
     "USER TASK:\n" + task.prompt,
     "\nREPOSITORY CONTEXT:\n" + contextBlock,
-  ].join("\n");
+    previousMemory ? "\nPERSISTED MEMORY FROM EARLIER WORKER ATTEMPTS:\n" + previousMemory : "",
+  ].filter(Boolean).join("\n");
 
   const plan = await runRole({
-    task, role: "planner", roundNumber: 1, workspaceDir, workspaceId,
+    task, role: "planner", roundNumber: roundOffset + 1, workspaceDir, workspaceId,
     workspaceService, tools: PLANNER_TOOLS, signal, onEvent,
     message: base + "\n\nInspect the actual project. Produce a focused implementation plan, identify likely files and existing conventions, note likely tests and acceptance criteria. Do not modify source files in this phase.",
   });
 
   let implementationSummary = await runRole({
-    task, role: "coder", roundNumber: 2, workspaceDir, workspaceId,
+    task, role: "coder", roundNumber: roundOffset + 2, workspaceDir, workspaceId,
     workspaceService, tools: CODER_TOOLS, signal, onEvent,
     message: base + "\n\nIMPLEMENTATION PLAN:\n" + plan + "\n\nImplement the request in the repository. Make coherent changes, preserve project conventions, and avoid unrelated refactors. Run quick checks available within the workspace. Do not say the task is complete until the verification agent has checked it.",
     maxIterations: 22,
@@ -321,7 +333,7 @@ export async function runRepoAgentPipeline(options) {
     if (signal?.aborted) throw new Error("Task cancelled.");
     await options.setStatus?.("testing");
     const tester = await runRole({
-      task, role: "tester", roundNumber: 3 + attempt * 2, workspaceDir, workspaceId,
+      task, role: "tester", roundNumber: roundOffset + 3 + attempt * 2, workspaceDir, workspaceId,
       workspaceService, tools: TESTER_TOOLS, signal, onEvent,
       message: base + "\n\nIMPLEMENTATION SUMMARY:\n" + implementationSummary +
         "\n\nRun the repository's most relevant tests/build checks that can run without downloading dependencies. Report exact commands and outputs. Do not edit source code in this phase. If there are no executable checks, explain precisely why.",
@@ -334,7 +346,7 @@ export async function runRepoAgentPipeline(options) {
     }
     await options.setStatus?.("reviewing");
     review = await runRole({
-      task, role: "reviewer", roundNumber: 4 + attempt * 2, workspaceDir, workspaceId,
+      task, role: "reviewer", roundNumber: roundOffset + 4 + attempt * 2, workspaceDir, workspaceId,
       workspaceService, tools: REVIEWER_TOOLS, signal, onEvent,
       message: base + "\n\nPLAN:\n" + plan +
         "\n\nIMPLEMENTATION:\n" + implementationSummary +
@@ -362,7 +374,7 @@ export async function runRepoAgentPipeline(options) {
       "\nTester report:\n" + tester,
     ].join("\n");
     implementationSummary = await runRole({
-      task, role: "repair_coder", roundNumber: 5 + attempt * 2, workspaceDir, workspaceId,
+      task, role: "repair_coder", roundNumber: roundOffset + 5 + attempt * 2, workspaceDir, workspaceId,
       workspaceService, tools: CODER_TOOLS, signal, onEvent,
       message: base + "\n\n" + repairInput,
       maxIterations: 16,
