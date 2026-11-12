@@ -357,6 +357,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     await fs.rm(taskDir, { recursive: true, force: true });
     await fs.mkdir(taskDir, { recursive: true, mode: 0o700 });
     await cloneRepository(token, task.owner, task.repo, task.base_branch, repoPath, taskDir);
+    await assertLease?.();
 
     if (abortSignal.aborted) {
       await patchTask(userId, taskId, { status: "cancelled" });
@@ -379,6 +380,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     // Publishing happens through GitHub's API. The agent does not need Git metadata.
     await fs.rm(path.join(repoPath, ".git"), { recursive: true, force: true });
 
+    await assertLease?.();
     const workspaceService = createScopedWorkspaceService(repoPath, workspaceId);
     // No local fallback: task code only runs when Docker isolation is available.
     await dockerWorkspaceRuntime.ensureContainer(workspaceId, repoPath, { network: config.repoAgentNetwork });
@@ -455,6 +457,10 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
   } catch (error) {
     if (error.leaseLost) { leaseLost = true; throw error; }
     if (/Quality gate/.test(error.message)) error.retryable = false;
+    try {
+      await dockerWorkspaceRuntime.stop(workspaceId);
+      await fs.rm(taskDir, { recursive: true, force: true });
+    } catch {}
     logger.error("Repository agent task failed", { taskId: taskId, userId: userId, error: error.message });
     await patchTask(userId, taskId, {
       status: abortSignal.aborted ? "cancelled" : "failed",
