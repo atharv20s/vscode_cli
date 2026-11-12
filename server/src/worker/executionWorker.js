@@ -11,7 +11,7 @@ import fs from "fs";
 import path from "path";
 import { config, validateConfig } from "../config/env.js";
 import { dockerWorkspaceRuntime } from "../services/dockerWorkspaceRuntime.js";
-import { getWorkspaceSnapshot, putWorkspaceSnapshot } from "../services/workspaceObjectStore.js";
+import { getWorkspaceSnapshot, isWorkspaceObjectStoreConfigured, putWorkspaceSnapshot } from "../services/workspaceObjectStore.js";
 import { execFileSync as dockerExecFileSync } from "child_process";
 
 const app = express();
@@ -22,6 +22,7 @@ const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
 const IGNORED = new Set([".git", "node_modules", ".next", "dist", "build", ".cache"]);
 const replayedNonces = new Map();
 const inFlight = new Map();
+if ((process.env.WORKSPACE_OBJECT_STORE_REQUIRED || "false").toLowerCase() === "true" && !isWorkspaceObjectStoreConfigured()) {\n  throw new Error("WORKSPACE_OBJECT_STORE_REQUIRED=true but durable object storage is not configured.");\n}
 
 function safeWorkspaceId(value) {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
