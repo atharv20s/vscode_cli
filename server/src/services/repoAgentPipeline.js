@@ -116,7 +116,9 @@ async function detectChecks(root, context) {
   if (context.samples.some(item => item.path === "Cargo.toml")) checks.push({ name: "cargo-test", command: "cargo test --locked", blocked: false });
   if (context.samples.some(item => item.path === "go.mod")) checks.push({ name: "go-test", command: "go test ./...", blocked: false });
   const hasPythonTests = context.filePaths?.some(name =>
-    /(^|\\/)(test_[^/]+\\.py|[^/]+_test\\.py)$/i.test(name)
+    name.split("/").some(part =>
+      (part.startsWith("test_") && part.endsWith(".py")) || part.endsWith("_test.py")
+    )
   );
   if (context.samples.some(item => item.path === "pyproject.toml") ||
       context.samples.some(item => item.path === "requirements.txt") ||
