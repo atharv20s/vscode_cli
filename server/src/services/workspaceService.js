@@ -16,10 +16,12 @@ import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 /** Ignored directories for watching and listing */
 const IGNORED_DIRS = new Set(["node_modules", ".git", ".worktrees", "dist", "build", ".next", ".cache"]);
 
-class WorkspaceService {
+export class WorkspaceService {
   constructor(root = config.workspaceRoot, workspaceId = "system", options = {}) {
     this.workspaceRoot = path.resolve(root);
     this.workspaceId = workspaceId;
+    this.quotaRoot = options.quotaRoot || this.workspaceRoot;
+    this.lockRoot = options.lockRoot || path.join(this.quotaRoot, ".ath-locks");
     this.watcher = null;
     this._recentInternalMutations = new Map(); // path -> timestamp
     if (options.watch !== false) this._initWatcher();
@@ -46,6 +48,11 @@ class WorkspaceService {
         resolved,
         relative: relativePath.split(path.sep).join("/"),
       };
+    }
+
+    // Internal locking metadata is not part of the user workspace API.
+    if (relativePath.split(path.sep).some((part) => part === ".ath-locks")) {
+      return { safe: false, resolved, relative: relativePath.split(path.sep).join("/") };
     }
 
     // Repository task agents must never inspect or mutate Git's control data.
@@ -97,6 +104,68 @@ class WorkspaceService {
     }
   }
 
+  async _withQuotaLock(callback) {
+    await fsp.mkdir(this.lockRoot, { recursive: true, mode: 0o700 });
+    const lockPath = path.join(this.lockRoot, "workspace-write.lock");
+    const started = Date.now();
+    let handle = null;
+    while (!handle) {
+      try {
+        handle = await fsp.open(lockPath, "wx", 0o600);
+        await handle.writeFile(JSON.stringify({ pid: process.pid, at: Date.now() }));
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        try {
+          const stat = await fsp.stat(lockPath);
+          if (Date.now() - stat.mtimeMs > 60000) {
+            await fsp.unlink(lockPath).catch(() => {});
+            continue;
+          }
+        } catch (statError) {
+          if (statError.code === "ENOENT") continue;
+          throw statError;
+        }
+        if (Date.now() - started > 10000) {
+          const busy = new Error("Workspace is busy with another save. Retry shortly.");
+          busy.code = "WORKSPACE_BUSY";
+          throw busy;
+        }
+        await new Promise(resolve => setTimeout(resolve, 30));
+      }
+    }
+    try { return await callback(); }
+    finally {
+      await handle.close().catch(() => {});
+      await fsp.unlink(lockPath).catch(() => {});
+    }
+  }
+
+  async _measureWorkspaceBytes(root = this.quotaRoot) {
+    let total = 0;
+    const stack = [root];
+    while (stack.length) {
+      const current = stack.pop();
+      let entries = [];
+      try { entries = await fsp.readdir(current, { withFileTypes: true }); }
+      catch (error) { if (error.code === "ENOENT") continue; throw error; }
+      for (const entry of entries) {
+        if (entry.name === ".ath-locks" || entry.name === ".ath-workspaces.json" || IGNORED_DIRS.has(entry.name)) continue;
+        const target = path.join(current, entry.name);
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory()) stack.push(target);
+        else if (entry.isFile()) {
+          const stat = await fsp.stat(target);
+          total += stat.size;
+        }
+      }
+    }
+    return total;
+  }
+
+  _version(content) {
+    return crypto.createHash("sha256").update(content).digest("hex");
+  }
+
   /**
    * Read file content with optional line slicing.
    */
@@ -105,6 +174,7 @@ class WorkspaceService {
     if (!safe) throw new Error(`Access denied: Path is outside workspace root (${filePath})`);
 
     const content = await fsp.readFile(resolved, "utf8");
+    const version = this._version(content);
 
     if (startLine || endLine) {
       const lines = content.split("\n");
@@ -116,6 +186,7 @@ class WorkspaceService {
         content: slice.map((line, i) => `${start + i + 1}: ${line}`).join("\n"),
         rawSlice: slice.join("\n"),
         totalLines: lines.length,
+        version,
       };
     }
 
@@ -123,6 +194,7 @@ class WorkspaceService {
       path: relative,
       content,
       size: Buffer.byteLength(content),
+      version,
     };
   }
 
@@ -131,30 +203,68 @@ class WorkspaceService {
    */
   async writeFile(filePath, content, options = {}) {
     const { safe, resolved, relative } = this.resolvePath(filePath);
-    if (!safe) throw new Error(`Access denied: Path is outside workspace root (${filePath})`);
+    if (!safe) throw new Error("Access denied: Path is outside workspace root (" + filePath + ")");
+    if (typeof content !== "string") throw new TypeError("Workspace files must be UTF-8 text.");
+    const bytes = Buffer.byteLength(content);
+    if (bytes > config.workspaceMaxFileBytes) {
+      const error = new Error("File exceeds the " + config.workspaceMaxFileBytes + " byte per-file limit.");
+      error.code = "WORKSPACE_FILE_TOO_LARGE";
+      throw error;
+    }
 
-    const isNew = !fs.existsSync(resolved);
-    await fsp.mkdir(path.dirname(resolved), { recursive: true });
-    await fsp.writeFile(resolved, content, "utf8");
-    this._alignRuntimeOwnership(resolved);
+    return this._withQuotaLock(async () => {
+      let current = null;
+      try { current = await fsp.readFile(resolved, "utf8"); }
+      catch (error) { if (error.code !== "ENOENT") throw error; }
+      const currentVersion = current === null ? null : this._version(current);
+      if (options.expectedVersion !== undefined && options.expectedVersion !== currentVersion) {
+        const error = new Error("This file changed in another session. Reload it before saving.");
+        error.code = "WORKSPACE_VERSION_CONFLICT";
+        error.currentVersion = currentVersion;
+        throw error;
+      }
+      if (options.mustNotExist && current !== null) {
+        const error = new Error("A file with this path already exists.");
+        error.code = "WORKSPACE_VERSION_CONFLICT";
+        error.currentVersion = currentVersion;
+        throw error;
+      }
 
-    this._recordInternalMutation(relative);
+      const used = await this._measureWorkspaceBytes();
+      const previousSize = current === null ? 0 : Buffer.byteLength(current);
+      if (used - previousSize + bytes > config.workspaceQuotaBytes) {
+        const error = new Error("Workspace storage quota exceeded (" + config.workspaceQuotaBytes + " bytes).");
+        error.code = "WORKSPACE_QUOTA_EXCEEDED";
+        throw error;
+      }
 
-    const eventType = isNew ? EVENT_TOPICS.FILE_CREATED : EVENT_TOPICS.FILE_CHANGED;
-    eventBus.publish(eventType, {
-      path: relative,
-      operation: isNew ? "create" : "modify",
-      version: Date.now(),
-      size: Buffer.byteLength(content),
-    }, {
-      workspaceId: this.workspaceId,
-      source: options.source || "fs",
-      actor: options.actor || "user",
-      turnId: options.turnId || null,
-      operationId: options.operationId || null,
+      await fsp.mkdir(path.dirname(resolved), { recursive: true });
+      const temporary = path.join(path.dirname(resolved), "." + path.basename(resolved) + "." + process.pid + "." + crypto.randomBytes(6).toString("hex") + ".tmp");
+      try {
+        await fsp.writeFile(temporary, content, { encoding: "utf8", mode: 0o600, flag: "wx" });
+        await fsp.rename(temporary, resolved);
+      } finally {
+        await fsp.unlink(temporary).catch(() => {});
+      }
+      this._alignRuntimeOwnership(resolved);
+      this._recordInternalMutation(relative);
+      const isNew = current === null;
+      const version = this._version(content);
+      eventBus.publish(isNew ? EVENT_TOPICS.FILE_CREATED : EVENT_TOPICS.FILE_CHANGED, {
+        path: relative,
+        operation: isNew ? "create" : "modify",
+        version: Date.now(),
+        contentVersion: version,
+        size: bytes,
+      }, {
+        workspaceId: this.workspaceId,
+        source: options.source || "fs",
+        actor: options.actor || "user",
+        turnId: options.turnId || null,
+        operationId: options.operationId || null,
+      });
+      return { success: true, path: relative, isNew, size: bytes, version };
     });
-
-    return { success: true, path: relative, isNew, size: Buffer.byteLength(content) };
   }
 
   /**
@@ -162,28 +272,39 @@ class WorkspaceService {
    */
   async deleteFile(filePath, options = {}) {
     const { safe, resolved, relative } = this.resolvePath(filePath);
-    if (!safe) throw new Error(`Access denied: Path is outside workspace root (${filePath})`);
-
-    await fsp.rm(resolved, { recursive: true, force: true });
-    this._recordInternalMutation(relative);
-
-    eventBus.publish(EVENT_TOPICS.FILE_DELETED, {
-      path: relative,
-      operation: "delete",
-      version: Date.now(),
-    }, {
-      workspaceId: this.workspaceId,
-      source: options.source || "fs",
-      actor: options.actor || "user",
+    if (!safe) throw new Error("Access denied: Path is outside workspace root (" + filePath + ")");
+    return this._withQuotaLock(async () => {
+      if (options.expectedVersion !== undefined) {
+        let current = null;
+        try { current = await fsp.readFile(resolved, "utf8"); }
+        catch (error) { if (error.code !== "ENOENT") throw error; }
+        const version = current === null ? null : this._version(current);
+        if (version !== options.expectedVersion) {
+          const error = new Error("This file changed in another session. Reload it before deleting.");
+          error.code = "WORKSPACE_VERSION_CONFLICT";
+          throw error;
+        }
+      }
+      await fsp.rm(resolved, { recursive: true, force: true });
+      this._recordInternalMutation(relative);
+      eventBus.publish(EVENT_TOPICS.FILE_DELETED, {
+        path: relative,
+        operation: "delete",
+        version: Date.now(),
+      }, {
+        workspaceId: this.workspaceId,
+        source: options.source || "fs",
+        actor: options.actor || "user",
+      });
+      return { success: true, path: relative };
     });
-
-    return { success: true, path: relative };
   }
 
   /**
    * Rename or move a file.
    */
   async renameFile(fromPath, toPath, options = {}) {
+    return this._withQuotaLock(async () => {
     const from = this.resolvePath(fromPath);
     const to = this.resolvePath(toPath);
 
@@ -387,20 +508,23 @@ export function getWorkspaceServiceForContext(ctx = {}) {
   return getWorkspaceService(ctx.userId || ctx.workspaceId);
 }
 
-export function getWorkspaceService(userId) {
-  if (typeof userId !== "string" || !userId.trim()) {
-    throw new Error("An authenticated workspace owner is required.");
-  }
-
+export function getWorkspaceService(userId, workspaceKey = "default") {
+  if (typeof userId !== "string" || !userId.trim()) throw new Error("An authenticated workspace owner is required.");
+  if (typeof workspaceKey !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(workspaceKey)) throw new Error("Invalid workspace identifier.");
   const ownerKey = crypto.createHash("sha256").update(userId).digest("hex");
-  if (!workspaceServices.has(ownerKey)) {
-    const root = path.join(config.workspaceRoot, "users", ownerKey);
+  const storageRoot = config.workspaceStorageRoot || config.workspaceRoot;
+  const ownerRoot = path.join(storageRoot, "users", ownerKey);
+  const root = workspaceKey === "default" ? ownerRoot : path.join(ownerRoot, "sessions", workspaceKey);
+  const cacheKey = ownerKey + ":" + workspaceKey;
+  if (!workspaceServices.has(cacheKey)) {
     fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-    fs.chmodSync(root, 0o700);
-    workspaceServices.set(ownerKey, new WorkspaceService(root, ownerKey));
+    try { fs.chmodSync(root, 0o700); } catch {}
+    workspaceServices.set(cacheKey, new WorkspaceService(root, cacheKey, {
+      quotaRoot: ownerRoot,
+      lockRoot: path.join(ownerRoot, ".ath-locks"),
+    }));
   }
-
-  return workspaceServices.get(ownerKey);
+  return workspaceServices.get(cacheKey);
 }
 
 // Retained for trusted internal/system operations only. Request handlers must
