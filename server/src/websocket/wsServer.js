@@ -487,6 +487,8 @@ async function handleChat(ws, payload, user) {
       systemPrompt: systemPrompt || undefined,
       workspaceDir: ws.workspaceService.workspaceRoot,
       workspaceId: ws.workspaceId,
+      workspaceKey: ws.workspaceKey,
+      workspaceService: ws.workspaceService,
       userId: ws.userId,
       sessionId,
       signal: abortController.signal,
