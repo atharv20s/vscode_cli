@@ -27,10 +27,11 @@ import { initMcpServers, shutdownMcpServers, getMcpStatus } from "./mcp/mcpClien
 import { initWebSocketServer } from "./websocket/wsServer.js";
 import { eventBus } from "./websocket/eventBus.js";
 import { generalLimiter } from "./middleware/rateLimiter.js";
-import { previewAuth, requireAuth } from "./middleware/auth.js";
+import { previewAuth, requireAuth, verifyPreviewToken } from "./middleware/auth.js";
 import { agentLimiter } from "./middleware/rateLimiter.js";
 import { streamChatCompletion } from "./services/llmService.js";
 import { getWorkspaceService } from "./services/workspaceService.js";
+import { proxyRemotePreview, proxyRemotePreviewUpgrade } from "./services/remoteExecutionWorker.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 
 // Routes
@@ -61,26 +62,37 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(express.json({ limit: "10mb", verify: (req, _res, buf) => { req.rawBody = Buffer.from(buf); } }));
+app.use(express.urlencoded({ extended: true, limit: "10mb", verify: (req, _res, buf) => { req.rawBody = Buffer.from(buf); } }));
 
 // 3. Private workspace preview. Never serve the shared workspace root.
 // Resolve every requested path through the symlink-aware workspace boundary
 // check before sending a file.
-app.use("/preview", previewAuth, (req, res) => {
+app.use("/preview", previewAuth, async (req, res) => {
   try {
     const workspace = getWorkspaceService(req.user.id, req.previewWorkspaceId);
     if (workspace.workspaceId !== crypto.createHash("sha256").update(req.user.id).digest("hex") + ":" + req.previewWorkspaceId) {
       return res.status(403).json({ error: "Forbidden" });
     }
+    if (config.executionRuntime === "remote") {
+      if (!req.previewPort) return res.status(400).json({ error: "PreviewPortMissing" });
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.setHeader("X-Robots-Tag", "noindex, nofollow");
+      return await proxyRemotePreview(req, res, {
+        workspaceId: workspace.workspaceId,
+        port: req.previewPort,
+        previewPath: req.previewPath,
+      });
+    }
     const relativePath = req.previewPath || "index.html";
     const target = workspace.resolvePath(relativePath);
     if (!target.safe) return res.status(403).json({ error: "Forbidden", message: "Preview path is outside your workspace." });
+    res.setHeader("Referrer-Policy", "no-referrer");
     return res.sendFile(target.resolved, { dotfiles: "deny" }, error => {
       if (error && !res.headersSent) res.status(error.statusCode || 404).end();
     });
   } catch (error) {
-    return res.status(400).json({ error: "InvalidPreviewPath" });
+    return res.status(400).json({ error: "InvalidPreviewPath", message: error.message });
   }
 });
 const publicDir = path.resolve(__dirname, "../public");
@@ -220,6 +232,37 @@ async function startServer() {
 
     // Initialize WebSocket Server
     initWebSocketServer(server);
+
+    // Preview WebSocket upgrades (Vite/Next HMR) use the same capability
+    // token and worker tunnel as HTTP assets. The preview runs on a separate
+    // PREVIEW_PUBLIC_URL origin, never the authenticated IDE origin.
+    server.on("upgrade", (req, socket, head) => {
+      let parsed;
+      try { parsed = new URL(req.url, "http://" + (req.headers.host || "localhost")); }
+      catch { socket.destroy(); return; }
+      if (!parsed.pathname.startsWith("/preview/")) return;
+      const segments = parsed.pathname.split("/").filter(Boolean);
+      const decoded = verifyPreviewToken(segments[1] || "");
+      if (!decoded || !Number.isInteger(decoded.port) || decoded.port < 1024 || decoded.port > 65535) {
+        socket.write("HTTP/1.1 401 Unauthorized\\r\\nConnection: close\\r\\n\\r\\n");
+        socket.destroy();
+        return;
+      }
+      try {
+        const workspace = getWorkspaceService(decoded.sub, decoded.workspaceId);
+        if (config.executionRuntime !== "remote") {
+          socket.write("HTTP/1.1 503 Preview Unavailable\\r\\nConnection: close\\r\\n\\r\\n");
+          socket.destroy();
+          return;
+        }
+        const previewPath = segments.slice(2).map(segment => decodeURIComponent(segment)).join("/");
+        proxyRemotePreviewUpgrade(req, socket, head, {
+          workspaceId: workspace.workspaceId,
+          port: decoded.port,
+          previewPath,
+        });
+      } catch { socket.destroy(); }
+    });
 
     // Initialize External MCP Servers in background
     initMcpServers().catch((err) => logger.warn("MCP init background error", { error: err.message }));
