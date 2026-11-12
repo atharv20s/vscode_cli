@@ -698,6 +698,13 @@ export async function listRepoAgentTasks(userId) {
 export async function cancelRepoAgentTask(userId, taskId) {
   const row = await rowForUser(userId, taskId);
   if (!row) return null;
+  // Cancellation is idempotent and must not overwrite a completed task state.
+  if (["review_ready","completed_no_changes","cancelled","failed"].includes(row.status)) {
+    return getRepoAgentTask(userId, taskId);
+  }
+  if (row.cancel_requested || row.status === "cancel_requested") {
+    return getRepoAgentTask(userId, taskId);
+  }
   await updateRepoTask(taskId, { cancel_requested: true, status: "cancel_requested" });
   try { await repoAgentQueue.requestCancellation(taskId); } catch {}
   await appendRepoTaskEvent(taskId, {
