@@ -18,9 +18,8 @@ import { repoAgentQueue } from "./repoAgentQueue.js";
 import { runRepoAgentPipeline } from "./repoAgentPipeline.js";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
-import { getWorkspaceService, createScopedWorkspaceService } from "./workspaceService.js";
+import { createScopedWorkspaceService } from "./workspaceService.js";
 import { dockerWorkspaceRuntime } from "./dockerWorkspaceRuntime.js";
-import { runAgent } from "./agentService.js";
 import { getOctokit } from "./githubService.js";
 
 const MAX_TREE_ENTRIES = 25000;
@@ -34,13 +33,6 @@ const IGNORED_DIRS = new Set([
   ".cache", ".worktrees", ".agent-runs",
 ]);
 const SENSITIVE_FILE = /(^|\/)(\.env(?!\.(example|sample|template)$)[^/]*|\.npmrc|\.pypirc|\.netrc|id_rsa|id_ed25519)(\/|$)|\.(pem|key|p12|pfx)$/i;
-
-const REPO_AGENT_TOOLS = [
-  "read_file", "write_file", "edit_file", "list_files",
-  "run_command", "create_plan", "update_plan",
-  "generate_readme", "generate_walkthrough", "generate_uml_diagram",
-];
-const activeTasks = new Map();
 
 function publicTask(row) {
   if (!row) return null;
@@ -346,8 +338,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
   const repoPath = task.workspace_path;
   const taskDir = path.dirname(repoPath);
   const workspaceId = "repo-agent-" + taskId;
-  const abortSignal = signal || activeTasks.get(taskId)?.abort?.signal || new AbortController().signal;
-  activeTasks.set(taskId, { userId: userId, abort: activeTasks.get(taskId)?.abort || null, workspaceId: workspaceId });
+  const abortSignal = signal || new AbortController().signal;
 
   try {
     await patchTask(userId, taskId, { status: "cloning" });
@@ -355,6 +346,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
       type: "status",
       data: { status: "cloning", message: "Cloning " + task.owner + "/" + task.repo },
     });
+    await fs.rm(taskDir, { recursive: true, force: true });
     await fs.mkdir(taskDir, { recursive: true, mode: 0o700 });
     await cloneRepository(token, task.owner, task.repo, task.base_branch, repoPath, taskDir);
 
@@ -429,6 +421,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
         type: "status",
         data: { status: "completed_no_changes", message: "No repository changes were produced; no PR was opened." },
       });
+      await fs.rm(taskDir, { recursive: true, force: true });
       return;
     }
 
@@ -448,6 +441,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
       type: "status",
       data: { status: "review_ready", message: "Draft PR opened. Human review is required before merge." },
     });
+    await fs.rm(taskDir, { recursive: true, force: true });
   } catch (error) {
     if (/Quality gate/.test(error.message)) error.retryable = false;
     logger.error("Repository agent task failed", { taskId: taskId, userId: userId, error: error.message });
@@ -460,7 +454,9 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     throw error;
   } finally {
     try { await dockerWorkspaceRuntime.stop(workspaceId); } catch {}
-    activeTasks.delete(taskId);
+    if (abortSignal.aborted) {
+      try { await fs.rm(taskDir, { recursive: true, force: true }); } catch {}
+    }
   }
 }
 
