@@ -1679,7 +1679,8 @@ class App {
   }
 
   async handleShareLink() {
-    const token = new URLSearchParams(window.location.search).get("share");
+    const token = window.__ATH_IDE_SHARE_TOKEN || new URLSearchParams(window.location.search).get("share");
+    window.__ATH_IDE_SHARE_TOKEN = null;
     if (!token) return;
     const appRoot = document.getElementById("app");
     const shareView = document.getElementById("repo-agent-share-view");
