@@ -314,7 +314,6 @@ export async function connectGithubToken(req, res) {
       email: user?.email || githubUser.email || `${githubUser.login}@github.user`,
       avatarUrl: githubUser.avatar_url,
       githubId: githubUser.id,
-      githubAccessToken: cleanToken,
       hasGithub: true,
     });
 
@@ -372,7 +371,6 @@ export async function tokenLogin(req, res) {
         username: githubUser.login,
         email: githubUser.email || `${githubUser.login}@github.user`,
         avatarUrl: githubUser.avatar_url,
-        githubAccessToken: token.trim(),
       });
       user = findUserById(userId);
     } else {
