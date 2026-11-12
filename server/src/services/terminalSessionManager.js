@@ -59,7 +59,18 @@ class TerminalSessionManager {
    * @returns {Promise<TerminalSession>}
    */
   async createSession(sessionId, options = {}) {
-    this.destroySession(sessionId);
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
+      if (existing.userId !== (options.userId || null) || existing.workspaceId !== (options.workspaceId || "default")) {
+        throw new Error("Terminal session ownership mismatch.");
+      }
+      existing.backendInstance?.attach?.(options.ws);
+      existing.ws = options.ws || null;
+      existing.lastActivityAt = Date.now();
+      existing.state = "ready";
+      this._emitStateChange(existing, "ready", { reconnected: true });
+      return existing;
+    }
 
     const cwd = options.workspaceDir || options.cwd || config.workspaceRoot;
     const shell = options.shellType || "powershell";
@@ -76,6 +87,8 @@ class TerminalSessionManager {
 
     const session = {
       sessionId,
+      userId: options.userId || null,
+      ws: options.ws || null,
       workspaceId,
       backend: backendType,
       cwd,
@@ -209,6 +222,22 @@ class TerminalSessionManager {
       this._emitStateChange(session, "disconnected");
       this.sessions.delete(sessionId);
       logger.info(`TerminalSessionManager: Destroyed session ${sessionId}`);
+    }
+  }
+
+  detachSession(sessionId, ws) {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.ws !== ws) return false;
+    session.backendInstance?.detach?.(ws);
+    session.ws = null;
+    session.lastActivityAt = Date.now();
+    return true;
+  }
+
+  cleanupIdleSessions(maxIdleMs = 30 * 60 * 1000) {
+    const now = Date.now();
+    for (const [sessionId, session] of this.sessions) {
+      if (!session.ws && now - session.lastActivityAt > maxIdleMs) this.destroySession(sessionId);
     }
   }
 

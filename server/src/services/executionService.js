@@ -46,6 +46,14 @@ class ExecutionService {
     return terminalSessionManager.destroySession(sessionId);
   }
 
+  detachInteractive(sessionId, ws) {
+    return terminalSessionManager.detachSession(sessionId, ws);
+  }
+
+  cleanupIdleSessions(maxIdleMs) {
+    return terminalSessionManager.cleanupIdleSessions(maxIdleMs);
+  }
+
   /**
    * Execute a command with the specified execution mode.
    * 

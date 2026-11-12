@@ -26,6 +26,7 @@ import { eventBus, EVENT_TOPICS } from "../../websocket/eventBus.js";
 export class LocalBackend {
   constructor() {
     this.ptyProcess = null;
+    this.ws = null;
   }
 
   /**
@@ -34,6 +35,7 @@ export class LocalBackend {
    * @returns {ShellProvider[]}
    */
   static detectAvailableShells() {
+    this.ws = ws || null;
     const isWindows = process.platform === "win32";
     const shells = [];
 
@@ -199,9 +201,7 @@ export class LocalBackend {
           actor: "user",
         });
 
-        if (ws) {
-          sendMessage(ws, "terminal.output", { text: data, sessionId });
-        }
+        if (this.ws) sendMessage(this.ws, "terminal.output", { text: data, sessionId });
       });
 
       this.ptyProcess.onExit(({ exitCode, signal }) => {
@@ -219,9 +219,9 @@ export class LocalBackend {
           actor: "system",
         });
 
-        if (ws) {
-          sendMessage(ws, "terminal.exit", { code: exitCode, sessionId });
-          sendMessage(ws, "terminal_exit", { code: exitCode, sessionId });
+        if (this.ws) {
+          sendMessage(this.ws, "terminal.exit", { code: exitCode, sessionId });
+          sendMessage(this.ws, "terminal_exit", { code: exitCode, sessionId });
         }
 
         if (typeof onExit === "function") {
@@ -274,6 +274,9 @@ export class LocalBackend {
     ];
     return blocked.some((b) => lower.includes(b));
   }
+
+  attach(ws) { this.ws = ws || null; }
+  detach(ws) { if (this.ws === ws) this.ws = null; }
 
   /**
    * Write input data/keystrokes to the shell's stdin.

@@ -6,6 +6,7 @@
  */
 
 import path from "path";
+import crypto from "crypto";
 import { WebSocketServer } from "ws";
 import { verifyToken } from "../middleware/auth.js";
 import { runAgent } from "../services/agentService.js";
@@ -45,7 +46,7 @@ export function initWebSocketServer(httpServer) {
     wss.clients.forEach((ws) => {
       if (ws.isAlive === false) {
         logger.warn("Terminating dead WebSocket connection");
-        executionService.killInteractive(ws.sessionId);
+        executionService.detachInteractive(ws.terminalSessionId, ws);
         removeConnection(ws);
         return ws.terminate();
       }
@@ -57,6 +58,7 @@ export function initWebSocketServer(httpServer) {
   // Idle cleanup
   const idleCleanupInterval = setInterval(() => {
     disconnectIdle();
+    executionService.cleanupIdleSessions(config.terminalIdleTtlMs);
   }, 5 * 60 * 1000);
 
   wss.on("close", () => {
@@ -145,7 +147,7 @@ export function initWebSocketServer(httpServer) {
 
   wss.on("connection", (ws, req) => {
     ws.isAlive = true;
-    ws.sessionId = `sess_${Math.random().toString(36).slice(2, 9)}`;
+    ws.sessionId = `conn_${crypto.randomUUID()}`;
 
     // Authenticate via query param: /ws?token=<jwt>
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -165,8 +167,16 @@ export function initWebSocketServer(httpServer) {
     }
 
     ws.userId = user?.id || ws.sessionId;
-    ws.workspaceService = getWorkspaceService(ws.userId);
+    const requestedWorkspace = url.searchParams.get("workspace") || "default";
+    try {
+      ws.workspaceService = getWorkspaceService(ws.userId, requestedWorkspace);
+    } catch {
+      ws.close(4003, "Invalid workspace");
+      return;
+    }
     ws.workspaceId = ws.workspaceService.workspaceId;
+    const requestedTerminalId = url.searchParams.get("terminalSessionId") || "";
+    ws.terminalSessionId = /^[a-f0-9-]{36}$/i.test(requestedTerminalId) ? requestedTerminalId : crypto.randomUUID();
     ws.previewService = getPreviewService(ws.workspaceId);
 
     addConnection(ws, user || { id: ws.userId, username: "guest" });
@@ -195,13 +205,13 @@ export function initWebSocketServer(httpServer) {
     });
 
     ws.on("close", () => {
-      executionService.killInteractive(ws.sessionId);
+      executionService.detachInteractive(ws.terminalSessionId, ws);
       removeConnection(ws);
     });
 
     ws.on("error", (err) => {
       logger.error("WebSocket error", { error: err.message });
-      executionService.killInteractive(ws.sessionId);
+      executionService.detachInteractive(ws.terminalSessionId, ws);
       removeConnection(ws);
     });
 
@@ -310,12 +320,13 @@ async function handleMessage(ws, msg, user) {
     // Terminal Session Lifecycle
     case "terminal_init":
     case "terminal.init":
-      await executionService.spawnInteractiveSession(ws.sessionId, {
+      await executionService.spawnInteractiveSession(ws.terminalSessionId, {
         shellType: payload?.shell || "bash",
         cols: payload?.cols || 80,
         rows: payload?.rows || 24,
         workspaceDir: ws.workspaceService.workspaceRoot,
         workspaceId: ws.workspaceId,
+        userId: ws.userId,
         ws,
       });
       break;
@@ -325,11 +336,12 @@ async function handleMessage(ws, msg, user) {
     case "terminal.input":
     case "terminal.keystroke":
       eventBus.publish(EVENT_TOPICS.TERMINAL_INPUT, {}, {
-        sessionId: ws.sessionId,
+        sessionId: ws.terminalSessionId,
+        workspaceId: ws.workspaceId,
         source: "ui",
         actor: "user",
       });
-      executionService.writeInteractive(ws.sessionId, payload?.data ?? payload?.command ?? "");
+      executionService.writeInteractive(ws.terminalSessionId, payload?.data ?? payload?.command ?? "");
       break;
 
     // Submitted Command (Enter pressed)
@@ -367,7 +379,7 @@ async function handleMessage(ws, msg, user) {
         source: "ui",
         actor: "user",
       });
-      executionService.resizeInteractive(ws.sessionId, payload?.cols, payload?.rows);
+      executionService.resizeInteractive(ws.terminalSessionId, payload?.cols, payload?.rows);
       break;
 
     default:
