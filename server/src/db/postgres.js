@@ -139,7 +139,72 @@ export async function initPostgres(connectionString) {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
 
-      -- 10. Performance Indexes
+      -- 10. Durable repository-agent tasks and collaboration.
+      CREATE TABLE IF NOT EXISTS repo_agent_tasks (
+        id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        owner VARCHAR(255) NOT NULL,
+        repo VARCHAR(255) NOT NULL,
+        base_branch VARCHAR(255) NOT NULL,
+        base_sha VARCHAR(64) NOT NULL,
+        branch VARCHAR(255) NOT NULL,
+        prompt TEXT NOT NULL,
+        workspace_path TEXT NOT NULL DEFAULT '',
+        status VARCHAR(40) NOT NULL DEFAULT 'queued',
+        events_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+        pr_url TEXT,
+        pr_number INTEGER,
+        error TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        worker_id VARCHAR(255),
+        lease_expires_at TIMESTAMPTZ,
+        cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS repo_agent_context_rounds (
+        id BIGSERIAL PRIMARY KEY,
+        task_id VARCHAR(64) NOT NULL REFERENCES repo_agent_tasks(id) ON DELETE CASCADE,
+        round_number INTEGER NOT NULL,
+        agent_role VARCHAR(32) NOT NULL,
+        status VARCHAR(24) NOT NULL,
+        input_summary TEXT,
+        output_summary TEXT,
+        evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(task_id, round_number, agent_role)
+      );
+
+      CREATE TABLE IF NOT EXISTS repo_agent_shares (
+        id VARCHAR(64) PRIMARY KEY,
+        task_id VARCHAR(64) NOT NULL REFERENCES repo_agent_tasks(id) ON DELETE CASCADE,
+        owner_user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash VARCHAR(64) NOT NULL UNIQUE,
+        permission VARCHAR(16) NOT NULL CHECK (permission IN ('view','comment','edit')),
+        expires_at TIMESTAMPTZ,
+        revoked_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS repo_agent_share_comments (
+        id BIGSERIAL PRIMARY KEY,
+        share_id VARCHAR(64) NOT NULL REFERENCES repo_agent_shares(id) ON DELETE CASCADE,
+        author_label VARCHAR(120) NOT NULL DEFAULT 'Collaborator',
+        body TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_repo_tasks_user_created
+        ON repo_agent_tasks(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_repo_tasks_status_created
+        ON repo_agent_tasks(status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_repo_rounds_task
+        ON repo_agent_context_rounds(task_id, round_number);
+      CREATE INDEX IF NOT EXISTS idx_repo_shares_task
+        ON repo_agent_shares(task_id, created_at DESC);
+
+      -- 11. Performance Indexes
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
       CREATE INDEX IF NOT EXISTS idx_users_github ON users(github_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
