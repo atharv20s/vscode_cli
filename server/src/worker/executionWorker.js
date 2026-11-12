@@ -353,9 +353,13 @@ async function startPreviewOnWorker(input) {
     const resolvedCwd = path.resolve(root, cwd);
     if (resolvedCwd !== root && !resolvedCwd.startsWith(root + path.sep)) throw new Error("Preview working directory escaped workspace.");
     const container = await dockerWorkspaceRuntime.ensureContainer(workspaceId, root);
-    const script = "nohup /bin/bash -lc 'echo $ > /tmp/ath-preview-" + port + ".pid; exec /bin/bash -lc \\"$ATH_PREVIEW_COMMAND\\"' > /tmp/ath-preview-" + port + ".log 2>&1 < /dev/null & echo $!";
+    await stopPreviewOnWorker(workspaceId, port);
+    const relativeCwd = path.relative(root, resolvedCwd).split(path.sep).join("/") || ".";
+    const containerCwd = relativeCwd === "." ? "/workspace" : "/workspace/" + relativeCwd;
+    const script = "nohup setsid /bin/bash -lc \\"$ATH_PREVIEW_COMMAND\\" > /tmp/ath-preview-" + port + ".log 2>&1 < /dev/null & echo $! > /tmp/ath-preview-" + port + ".pid; cat /tmp/ath-preview-" + port + ".pid";
     const pid = execDocker([
-      "exec", "-e", "ATH_PREVIEW_COMMAND=" + command,
+      "exec", "-w", containerCwd,
+      "-e", "ATH_PREVIEW_COMMAND=" + command,
       "-e", "PORT=" + port, "-e", "HOST=0.0.0.0", "-e", "HOSTNAME=0.0.0.0",
       container, "/bin/bash", "-lc", script,
     ], { encoding: "utf8" }).trim();
@@ -373,7 +377,7 @@ async function startPreviewOnWorker(input) {
 async function stopPreviewOnWorker(workspaceId, port) {
   if (!safeWorkspaceId(workspaceId) || !validatePreviewPort(port)) throw new Error("Invalid preview stop request.");
   const container = await dockerWorkspaceRuntime.ensureContainer(workspaceId, workspaceRootFor(workspaceId));
-  const script = "if [ -f /tmp/ath-preview-" + port + ".pid ]; then kill \\"$(cat /tmp/ath-preview-" + port + ".pid)\\" 2>/dev/null || true; rm -f /tmp/ath-preview-" + port + ".pid; fi";
+  const script = "if [ -f /tmp/ath-preview-" + port + ".pid ]; then pid=$(cat /tmp/ath-preview-" + port + ".pid); kill -TERM -- \"-$pid\" 2>/dev/null || kill -TERM \"$pid\" 2>/dev/null || true; sleep 0.2; kill -KILL -- \"-$pid\" 2>/dev/null || true; rm -f /tmp/ath-preview-" + port + ".pid; fi";
   try { execDocker(["exec", container, "/bin/bash", "-lc", script]); } catch {}
   return { success: true, stopped: true, port };
 }
