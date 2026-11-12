@@ -349,7 +349,7 @@ async function publishDraftPullRequest(options) {
   return { url: pr.data.html_url, number: pr.data.number, commitSha: commit.data.sha };
 }
 
-async function executeTask(task, token, octokit, baseTreeSha, baseEntries) {
+async function executeTask(task, token, octokit, baseTreeSha, baseEntries, protectedPaths) {
   const userId = task.user_id;
   const taskId = task.id;
   const repoPath = task.workspace_path;
@@ -367,6 +367,13 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries) {
     await fs.mkdir(taskDir, { recursive: true, mode: 0o700 });
     await cloneRepository(token, task.owner, task.repo, task.base_branch, repoPath, taskDir);
 
+    await removeProtectedFiles(repoPath, protectedPaths);
+    if (abort.signal.aborted) {
+      patchTask(userId, taskId, { status: "cancelled" });
+      appendEvent(userId, taskId, { type: "status", data: { status: "cancelled" } });
+      return;
+    }
+
     const gitEnv = gitAuthEnvironment(token);
     const clonedSha = await runProcess("git", ["rev-parse", "HEAD"], { cwd: repoPath, env: gitEnv });
     if (clonedSha !== task.base_sha) {
@@ -378,7 +385,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries) {
 
     const workspaceService = createScopedWorkspaceService(repoPath, workspaceId);
     // No local fallback: task code only runs when Docker isolation is available.
-    await dockerWorkspaceRuntime.ensureContainer(workspaceId, repoPath);
+    await dockerWorkspaceRuntime.ensureContainer(workspaceId, repoPath, { network: "none" });
     patchTask(userId, taskId, { status: "running" });
     appendEvent(userId, taskId, {
       type: "status",
@@ -554,8 +561,11 @@ export async function startRepoAgentTask(options) {
   }
 
   const baseEntries = new Map();
+  const protectedPaths = [];
   for (const item of treeResponse.data.tree || []) {
-    if (item.type === "blob" && !ignored(item.path)) {
+    if (item.type === "blob" && sensitive(item.path)) {
+      protectedPaths.push(item.path);
+    } else if (item.type === "blob" && !ignored(item.path)) {
       baseEntries.set(item.path, {
         sha: item.sha,
         mode: item.mode,
@@ -591,7 +601,7 @@ export async function startRepoAgentTask(options) {
     workspaceId: "repo-agent-" + taskId,
   });
   setImmediate(function () {
-    executeTask(task, token, octokit, baseTreeSha, baseEntries).catch(function (error) {
+    executeTask(task, token, octokit, baseTreeSha, baseEntries, protectedPaths).catch(function (error) {
       logger.error("Uncaught repository agent failure", { taskId: taskId, error: error.message });
       patchTask(userId, taskId, { status: "failed", error: error.message });
     });
