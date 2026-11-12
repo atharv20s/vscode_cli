@@ -310,22 +310,24 @@ export async function runRepoAgentPipeline(options) {
     },
   });
 
-  const base = [
+  const baseFor = (roleBudget) => [
     "USER TASK:\n" + task.prompt,
-    "\nREPOSITORY CONTEXT:\n" + contextBlock,
+    "\nREPOSITORY CONTEXT:\n" + formatRepositoryContext(context, {
+      maxTokens: Math.min(config.llmContextBudgetTokens, roleBudget),
+    }),
     previousMemory ? "\nPERSISTED MEMORY FROM EARLIER WORKER ATTEMPTS:\n" + previousMemory : "",
   ].filter(Boolean).join("\n");
 
   const plan = await runRole({
     task, role: "planner", roundNumber: roundOffset + 1, workspaceDir, workspaceId,
     workspaceService, tools: PLANNER_TOOLS, model: "reasoning", signal, onEvent,
-    message: base + "\n\nInspect the actual project. Produce a focused implementation plan, identify likely files and existing conventions, note likely tests and acceptance criteria. Do not modify source files in this phase.",
+    message: baseFor(16000) + "\n\nInspect the actual project. Produce a focused implementation plan, identify likely files and existing conventions, note likely tests and acceptance criteria. Do not modify source files in this phase.",
   });
 
   let implementationSummary = await runRole({
     task, role: "coder", roundNumber: roundOffset + 2, workspaceDir, workspaceId,
     workspaceService, tools: CODER_TOOLS, model: "coding", signal, onEvent,
-    message: base + "\n\nIMPLEMENTATION PLAN:\n" + plan + "\n\nImplement the request in the repository. Make coherent changes, preserve project conventions, and avoid unrelated refactors. Run quick checks available within the workspace. Do not say the task is complete until the verification agent has checked it.",
+    message: baseFor(30000) + "\n\nIMPLEMENTATION PLAN:\n" + plan + "\n\nImplement the request in the repository. Make coherent changes, preserve project conventions, and avoid unrelated refactors. Run quick checks available within the workspace. Do not say the task is complete until the verification agent has checked it.",
     maxIterations: 22,
   });
 
@@ -338,7 +340,7 @@ export async function runRepoAgentPipeline(options) {
     const tester = await runRole({
       task, role: "tester", roundNumber: roundOffset + 3 + attempt * 2, workspaceDir, workspaceId,
       workspaceService, tools: TESTER_TOOLS, model: "fast", signal, onEvent,
-      message: base + "\n\nIMPLEMENTATION SUMMARY:\n" + implementationSummary +
+      message: baseFor(14000) + "\n\nIMPLEMENTATION SUMMARY:\n" + implementationSummary +
         "\n\nRun the repository's most relevant tests/build checks that can run without downloading dependencies. Report exact commands and outputs. Do not edit source code in this phase. If there are no executable checks, explain precisely why.",
       maxIterations: 10,
     });
@@ -351,7 +353,7 @@ export async function runRepoAgentPipeline(options) {
     review = await runRole({
       task, role: "reviewer", roundNumber: roundOffset + 4 + attempt * 2, workspaceDir, workspaceId,
       workspaceService, tools: REVIEWER_TOOLS, model: "reasoning", signal, onEvent,
-      message: base + "\n\nPLAN:\n" + plan +
+      message: baseFor(20000) + "\n\nPLAN:\n" + plan +
         "\n\nIMPLEMENTATION:\n" + implementationSummary +
         "\n\nTESTER REPORT:\n" + tester +
         "\n\nDETERMINISTIC CHECK RESULTS:\n" + JSON.stringify(verification,null,2) +
@@ -379,7 +381,7 @@ export async function runRepoAgentPipeline(options) {
     implementationSummary = await runRole({
       task, role: "repair_coder", roundNumber: roundOffset + 5 + attempt * 2, workspaceDir, workspaceId,
       workspaceService, tools: CODER_TOOLS, model: "coding", signal, onEvent,
-      message: base + "\n\n" + repairInput,
+      message: baseFor(24000) + "\n\n" + repairInput,
       maxIterations: 16,
     });
   }
