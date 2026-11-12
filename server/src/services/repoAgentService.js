@@ -11,6 +11,12 @@ import fs from "fs/promises";
 import path from "path";
 import { spawn } from "child_process";
 import { getDatabase } from "../db/database.js";
+import {
+  countActiveRepoTasks, createRepoTask, getRepoTask, listRepoTasks,
+  updateRepoTask, appendRepoTaskEvent, getRepoTaskGithubToken,
+} from "../db/repoAgentStore.js";
+import { repoAgentQueue } from "./repoAgentQueue.js";
+import { runRepoAgentPipeline } from "./repoAgentPipeline.js";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { getWorkspaceService, createScopedWorkspaceService } from "./workspaceService.js";
@@ -40,7 +46,7 @@ const activeTasks = new Map();
 function publicTask(row) {
   if (!row) return null;
   let events = [];
-  try { events = JSON.parse(row.events_json || "[]"); } catch {}
+  try { events = Array.isArray(row.events_json) ? row.events_json : JSON.parse(row.events_json || "[]"); } catch {}
   return {
     id: row.id,
     owner: row.owner,
@@ -57,34 +63,20 @@ function publicTask(row) {
   };
 }
 
-function rowForUser(userId, taskId) {
-  return getDatabase().prepare(
-    "SELECT * FROM repo_agent_tasks WHERE id = ? AND user_id = ?"
-  ).get(taskId, userId);
+async function rowForUser(userId, taskId) {
+  return getRepoTask(taskId, userId);
 }
 
-function patchTask(userId, taskId, patch) {
-  const allowed = new Set(["status", "events_json", "pr_url", "pr_number", "error"]);
-  const entries = Object.entries(patch).filter(function (entry) { return allowed.has(entry[0]); });
-  if (!entries.length) return;
-  const assignments = entries.map(function (entry) { return entry[0] + " = ?"; }).join(", ");
-  getDatabase().prepare(
-    "UPDATE repo_agent_tasks SET " + assignments + ", updated_at = datetime('now') WHERE id = ? AND user_id = ?"
-  ).run.apply(null, entries.map(function (entry) { return entry[1]; }).concat([taskId, userId]));
-}
-
-function appendEvent(userId, taskId, event) {
-  const row = rowForUser(userId, taskId);
+async function patchTask(userId, taskId, patch) {
+  const row = await getRepoTask(taskId, userId);
   if (!row) return;
-  let events = [];
-  try { events = JSON.parse(row.events_json || "[]"); } catch {}
-  events.push({
-    at: new Date().toISOString(),
-    type: event.type,
-    data: event.data || {},
-  });
-  if (events.length > 300) events = events.slice(-300);
-  patchTask(userId, taskId, { events_json: JSON.stringify(events) });
+  await updateRepoTask(taskId, patch);
+}
+
+async function appendEvent(userId, taskId, event) {
+  const row = await getRepoTask(taskId, userId);
+  if (!row) return;
+  await appendRepoTaskEvent(taskId, event);
 }
 
 function runProcess(executable, args, options) {
