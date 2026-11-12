@@ -360,6 +360,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     await assertLease?.();
 
     if (abortSignal.aborted) {
+      await assertLease?.();
       await patchTask(userId, taskId, { status: "cancelled" });
       await appendEvent(userId, taskId, { type: "status", data: { status: "cancelled" } });
       return;
@@ -411,6 +412,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     });
 
     if (abortSignal.aborted) {
+      await assertLease?.();
       await patchTask(userId, taskId, { status: "cancelled" });
       await appendEvent(userId, taskId, { type: "status", data: { status: "cancelled" } });
       return;
@@ -473,7 +475,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     if (!leaseLost) {
       try { await dockerWorkspaceRuntime.stop(workspaceId); } catch {}
     }
-    if (abortSignal.aborted) {
+    if (abortSignal.aborted && !leaseLost) {
       try { await fs.rm(taskDir, { recursive: true, force: true }); } catch {}
     }
   }
