@@ -28,6 +28,7 @@ class App {
     await this.loadWorkspaceFiles();
     await this.loadMcpServers();
     this.checkAuthStatus();
+    this.handleShareLink();
   }
 
   /**
@@ -1479,7 +1480,7 @@ class App {
       if (list) list.replaceChildren();
       for (const task of tasks) {
         await this.renderRepositoryAgentTask(task);
-        if (["queued", "cloning", "running", "publishing"].includes(task.status)) {
+        if (["queued", "cloning", "running", "testing", "reviewing", "repairing", "publishing", "cancel_requested"].includes(task.status)) {
           this.pollRepositoryAgentTask(task.id);
         }
       }
@@ -1507,6 +1508,13 @@ class App {
     branch.style.cssText = "color:var(--text-dim);margin-top:4px;word-break:break-all;";
     branch.textContent = task.branch + " → " + task.baseBranch;
     card.append(heading, branch);
+
+    const shareButton = document.createElement("button");
+    shareButton.type = "button";
+    shareButton.className = "secondary-btn repo-task-share-button";
+    shareButton.textContent = "Share";
+    shareButton.addEventListener("click", () => this.shareRepositoryAgentTask(task.id));
+    card.appendChild(shareButton);
 
     const lastEvent = Array.isArray(task.events) ? [...task.events].reverse().find(event => event.type === "status" || event.type === "error") : null;
     if (lastEvent?.data?.message) {
@@ -1540,6 +1548,162 @@ class App {
     return card;
   }
 
+  async shareRepositoryAgentTask(taskId) {
+    const status = document.getElementById("repo-agent-status");
+    const permission = document.getElementById("repo-agent-share-permission")?.value || "view";
+    try {
+      const response = await fetch("/api/github/agent-tasks/" + encodeURIComponent(taskId) + "/shares", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + (this.token || ""),
+        },
+        body: JSON.stringify({ permission, expiresInHours: 168 }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Unable to create a share link.");
+      try {
+        await navigator.clipboard.writeText(data.url);
+        if (status) status.textContent = "Share link copied. Access: " + permission + ". Expires in 7 days.";
+      } catch {
+        window.prompt("Copy this task share link:", data.url);
+        if (status) status.textContent = "Share link created. Keep it private; anyone with it receives the selected access.";
+      }
+    } catch (error) {
+      if (status) status.textContent = error.message;
+    }
+  }
+
+  async handleShareLink() {
+    const token = new URLSearchParams(window.location.search).get("share");
+    if (!token) return;
+    const appRoot = document.getElementById("app");
+    const shareView = document.getElementById("repo-agent-share-view");
+    const content = document.getElementById("repo-share-content");
+    if (!shareView || !content) return;
+    if (appRoot) appRoot.hidden = true;
+    shareView.hidden = false;
+    content.textContent = "Loading shared task…";
+
+    try {
+      const response = await fetch("/api/github/shares/" + encodeURIComponent(token));
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "This share link is invalid, expired or revoked.");
+      const task = data.task;
+      const permission = data.share?.permission || "view";
+      content.replaceChildren();
+
+      const title = document.createElement("h1");
+      title.textContent = task.owner + "/" + task.repo;
+      const prompt = document.createElement("p");
+      prompt.className = "repo-share-prompt";
+      prompt.textContent = task.prompt;
+      const status = document.createElement("div");
+      status.className = "repo-share-status";
+      status.textContent = "Task status: " + task.status.replaceAll("_", " ") + " · " + permission + " access";
+      content.append(title,prompt,status);
+
+      if (task.pullRequest?.url) {
+        const pr = document.createElement("a");
+        pr.href = task.pullRequest.url;
+        pr.target = "_blank";
+        pr.rel = "noopener noreferrer";
+        pr.className = "repo-share-pr-link";
+        pr.textContent = "Open draft pull request #" + task.pullRequest.number;
+        content.appendChild(pr);
+      }
+      if (task.error) {
+        const error = document.createElement("pre");
+        error.className = "repo-share-error";
+        error.textContent = task.error;
+        content.appendChild(error);
+      }
+
+      const timeline = document.createElement("div");
+      timeline.className = "repo-share-timeline";
+      const heading = document.createElement("h2");
+      heading.textContent = "Agent activity";
+      timeline.appendChild(heading);
+      for (const event of (task.events || []).slice(-40)) {
+        const item = document.createElement("div");
+        item.className = "repo-share-event";
+        const label = document.createElement("strong");
+        label.textContent = event.type.replaceAll("_", " ");
+        const detail = document.createElement("span");
+        detail.textContent = event.data?.message || event.data?.summary || event.data?.agentRole || "";
+        item.append(label,detail);
+        timeline.appendChild(item);
+      }
+      content.appendChild(timeline);
+
+      const comments = document.createElement("section");
+      comments.className = "repo-share-comments";
+      const commentsTitle = document.createElement("h2");
+      commentsTitle.textContent = "Collaboration";
+      comments.appendChild(commentsTitle);
+      for (const comment of data.comments || []) {
+        const item = document.createElement("div");
+        item.className = "repo-share-comment";
+        const author = document.createElement("strong");
+        author.textContent = comment.author_label;
+        const body = document.createElement("p");
+        body.textContent = comment.body;
+        item.append(author,body);
+        comments.appendChild(item);
+      }
+
+      if (permission === "comment" || permission === "edit") {
+        const name = document.createElement("input");
+        name.type = "text";
+        name.maxLength = 120;
+        name.placeholder = "Your name (optional)";
+        name.className = "repo-share-input";
+        const note = document.createElement("textarea");
+        note.maxLength = permission === "edit" ? 8000 : 4000;
+        note.rows = 4;
+        note.className = "repo-share-input";
+        note.placeholder = permission === "edit" ? "Describe the code change the agent should make…" : "Add a comment…";
+        const submit = document.createElement("button");
+        submit.type = "button";
+        submit.className = "primary-btn";
+        submit.textContent = permission === "edit" ? "Submit follow-up agent task" : "Post comment";
+        submit.addEventListener("click", async () => {
+          const value = note.value.trim();
+          if (!value) return;
+          submit.disabled = true;
+          try {
+            const endpoint = permission === "edit" ? "instructions" : "comments";
+            const key = permission === "edit" ? "instruction" : "body";
+            const result = await fetch("/api/github/shares/" + encodeURIComponent(token) + "/" + endpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ [key]: value, authorLabel: name.value.trim() || "Collaborator" }),
+            });
+            const payload = await result.json().catch(() => ({}));
+            if (!result.ok) throw new Error(payload.message || "Unable to submit collaboration update.");
+            note.value = "";
+            if (permission === "edit") {
+              status.textContent = "Follow-up task " + payload.task.id + " queued for the repository owner’s connected GitHub account.";
+            } else {
+              status.textContent = "Comment posted.";
+            }
+          } catch (error) {
+            status.textContent = error.message;
+          } finally {
+            submit.disabled = false;
+          }
+        });
+        comments.append(name,note,submit);
+      }
+      content.appendChild(comments);
+    } catch (error) {
+      content.replaceChildren();
+      const message = document.createElement("p");
+      message.textContent = error.message;
+      content.appendChild(message);
+    }
+  }
+
   pollRepositoryAgentTask(taskId) {
     if (!taskId) return;
     const poll = async () => {
@@ -1551,7 +1715,7 @@ class App {
         const data = await response.json();
         const task = data.task;
         await this.renderRepositoryAgentTask(task);
-        if (["queued", "cloning", "running", "publishing"].includes(task.status)) {
+        if (["queued", "cloning", "running", "testing", "reviewing", "repairing", "publishing", "cancel_requested"].includes(task.status)) {
           this.repoAgentPollTimers = this.repoAgentPollTimers || new Map();
           const previous = this.repoAgentPollTimers.get(taskId);
           if (previous) clearTimeout(previous);
