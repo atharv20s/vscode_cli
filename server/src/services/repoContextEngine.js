@@ -3,6 +3,7 @@ import path from "path";
 
 const SKIP = new Set([".git","node_modules",".next","dist","build","coverage",".cache",".agent-runs"]);
 const INSTRUCTION_FILES = ["AGENTS.md","CLAUDE.md","GEMINI.md",".github/copilot-instructions.md"];
+const SENSITIVE_PATH = /(^|\/)(\.env(?!\.(example|sample|template)$)[^/]*|\.npmrc|\.pypirc|\.netrc|credentials?\.json|secrets?\.(json|ya?ml)|id_rsa|id_ed25519)(\/|$)|\.(pem|key|p12|pfx)$/i;
 const CONTEXT_FILES = [
   "README.md","package.json","pnpm-workspace.yaml","pyproject.toml","requirements.txt",
   "pytest.ini","Cargo.toml","go.mod","pom.xml","build.gradle","Makefile",
@@ -60,7 +61,7 @@ export async function buildRepositoryContext(root, prompt) {
     return { name, score };
   }).sort((a,b) => b.score-a.score || a.name.localeCompare(b.name));
 
-  const selected = new Set(CONTEXT_FILES.filter(name => files.includes(name)));
+  const selected = new Set(CONTEXT_FILES.filter(name => files.includes(name) && !SENSITIVE_PATH.test(name)));
   for (const item of ranked.slice(0, 18)) selected.add(item.name);
 
   const instructions = [];
@@ -80,7 +81,7 @@ export async function buildRepositoryContext(root, prompt) {
     try { scripts = JSON.parse(packageJson.content).scripts || {}; } catch {}
   }
 
-  const retrieved = ranked.filter(item => item.score > 0).slice(0, 24);
+  const retrieved = ranked.filter(item => item.score > 0 && !SENSITIVE_PATH.test(item.name)).slice(0, 24);
   return {
     generatedAt: new Date().toISOString(),
     fileCount: files.length,
