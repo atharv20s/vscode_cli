@@ -4,8 +4,8 @@ import path from "path";
 const SKIP = new Set([".git","node_modules",".next","dist","build","coverage",".cache",".agent-runs"]);
 const INSTRUCTION_FILES = ["AGENTS.md","CLAUDE.md","GEMINI.md",".github/copilot-instructions.md"];
 const CONTEXT_FILES = [
-  "README.md","package.json","pnpm-workspace.yaml","pyproject.toml",
-  "Cargo.toml","go.mod","pom.xml","build.gradle","Makefile",
+  "README.md","package.json","pnpm-workspace.yaml","pyproject.toml","requirements.txt",
+  "pytest.ini","Cargo.toml","go.mod","pom.xml","build.gradle","Makefile",
 ];
 
 function words(value) {
@@ -84,6 +84,7 @@ export async function buildRepositoryContext(root, prompt) {
   return {
     generatedAt: new Date().toISOString(),
     fileCount: files.length,
+    filePaths: files.filter(name => !name.endsWith("/")),
     truncated: visited >= 3000,
     directoryMap,
     instructions,
