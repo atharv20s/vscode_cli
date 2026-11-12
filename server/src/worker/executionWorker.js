@@ -502,6 +502,7 @@ function sendTerminal(ws, type, payload) {
 
 async function attachPersistentTerminal(ws, { workspaceId, sessionId, cols, rows }) {
   const root = workspaceRootFor(workspaceId);
+  await restoreWorkspaceSnapshotIfEmpty(workspaceId, root);
   await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
   const container = await dockerWorkspaceRuntime.ensureContainer(workspaceId, root);
   const tmuxSession = "ath-" + sessionId.replace(/[^a-f0-9]/gi, "").slice(0, 32);
@@ -588,7 +589,9 @@ async function attachPersistentTerminal(ws, { workspaceId, sessionId, cols, rows
     persistWorkspaceSnapshot(workspaceId, root).catch(error => console.warn("Workspace snapshot persistence failed:", error.message));
   });
   ws.on("error", () => {
+    clearInterval(snapshotInterval);
     try { terminal?.kill(); } catch {}
+    persistWorkspaceSnapshot(workspaceId, root).catch(error => console.warn("Workspace snapshot persistence failed:", error.message));
   });
 }
 
