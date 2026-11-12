@@ -142,7 +142,7 @@ async function consumeMessage(message) {
     } else if (controller.signal.aborted || latest?.cancel_requested) {
       await updateRepoTask(message.taskId,{status:"cancelled",error:"Task cancelled."}).catch(()=>{});
       await repoAgentQueue.ack(message.id);
-    } else if ((message.attempt || 0) + 1 < MAX_ATTEMPTS) {
+    } else if (error.retryable !== false && (message.attempt || 0) + 1 < MAX_ATTEMPTS) {
       const nextAttempt = (message.attempt || 0) + 1;
       await updateRepoTask(message.taskId,{status:"queued",error:error.message,worker_id:null,lease_expires_at:null});
       await appendRepoTaskEvent(message.taskId,{
