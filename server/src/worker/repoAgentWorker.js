@@ -94,6 +94,15 @@ async function consumeMessage(message) {
       workerId:WORKER_ID,
       leaseToken:lease,
       signal:controller.signal,
+      assertLease: async () => {
+        const owned = await repoAgentQueue.ownsLease(message.taskId,lease);
+        if (!owned) {
+          lostLease = true;
+          const error = new Error("Repository task lease was lost.");
+          error.leaseLost = true;
+          throw error;
+        }
+      },
     });
     const latest = await getRepoTask(message.taskId);
     if (lostLease) {
