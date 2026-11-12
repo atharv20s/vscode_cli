@@ -13,6 +13,7 @@ const WORKER_ID = "repo-agent-" + os.hostname() + "-" + process.pid + "-" + cryp
 const LEASE_MS = Number(process.env.REPO_AGENT_LEASE_MS || 120000);
 const MAX_ATTEMPTS = Number(process.env.REPO_AGENT_MAX_ATTEMPTS || 3);
 const sleep = ms => new Promise(resolve => setTimeout(resolve,ms));
+let currentTaskId = null;
 
 async function bootDatabase() {
   if (config.databaseUrl) await initPostgres(config.databaseUrl);
@@ -28,6 +29,7 @@ async function consumeMessage(message) {
   if (!lease) return;
 
   const controller = new AbortController();
+  currentTaskId = message.taskId;
   let lostLease = false;
   let cancellationTimer = null;
   let heartbeatTimer = null;
@@ -131,12 +133,14 @@ async function consumeMessage(message) {
       await repoAgentQueue.ack(message.id);
     } else {
       await updateRepoTask(message.taskId,{status:"failed",error:error.message,worker_id:null,lease_expires_at:null}).catch(()=>{});
+      await repoAgentQueue.deadLetter(message.taskId,message.attempt,error.message).catch(()=>{});
       await appendRepoTaskEvent(message.taskId,{type:"error",data:{message:error.message}}).catch(()=>{});
       await repoAgentQueue.ack(message.id);
     }
   } finally {
     clearInterval(heartbeatTimer);
     clearInterval(cancellationTimer);
+    currentTaskId = null;
     await repoAgentQueue.releaseLease(message.taskId,lease).catch(()=>{});
   }
 }
@@ -151,6 +155,12 @@ async function main() {
   await bootDatabase();
   initializeTools();
   await repoAgentQueue.connect();
+  await repoAgentQueue.heartbeatWorker(WORKER_ID,{host:os.hostname(),pid:process.pid,currentTaskId:null});
+  const workerHeartbeatTimer = setInterval(() => {
+    repoAgentQueue.heartbeatWorker(WORKER_ID,{host:os.hostname(),pid:process.pid,currentTaskId}).catch(error => {
+      logger.warn("Repository worker heartbeat failed",{workerId:WORKER_ID,error:error.message});
+    });
+  },10000);
 
   logger.info("Repository agent worker started",{
     workerId:WORKER_ID,
@@ -175,6 +185,8 @@ async function main() {
     }
   }
 
+  clearInterval(workerHeartbeatTimer);
+  await repoAgentQueue.unregisterWorker(WORKER_ID).catch(()=>{});
   await repoAgentQueue.close();
   if (getPostgresPool()) await getPostgresPool().end().catch(()=>{});
   closeDatabase();
