@@ -193,13 +193,16 @@ export async function runAgent({
   userId,
   sessionId,
   workspaceService = null,
+  persistWorkspaceMeta = true,
   allowedTools = null,
   maxIterations = 15,
   signal,
   onEvent,
 }) {
-  // Auto-generate workspace plan and chat logs
-  await writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir, userId, workspaceService);
+  // General IDE chats write workspace meta files; isolated repo tasks opt out.
+  if (persistWorkspaceMeta) {
+    await writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir, userId, workspaceService);
+  }
 
   // Build messages array
   const messages = [];
