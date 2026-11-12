@@ -384,6 +384,7 @@ async function startPreviewOnWorker(input) {
   const root = workspaceRootFor(workspaceId);
   return withWorkspaceLock(workspaceId, () => withWorkspaceFileLock(workspaceId, async () => {
     await replaceWorkspace(root, files);
+    await persistWorkspaceSnapshot(workspaceId, root);
     const resolvedCwd = path.resolve(root, cwd);
     if (resolvedCwd !== root && !resolvedCwd.startsWith(root + path.sep)) throw new Error("Preview working directory escaped workspace.");
     const container = await dockerWorkspaceRuntime.ensureContainer(workspaceId, root);
