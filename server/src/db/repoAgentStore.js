@@ -86,17 +86,37 @@ export async function updateRepoTask(taskId, patch) {
 }
 
 export async function appendRepoTaskEvent(taskId, event) {
-  const row = await getRepoTask(taskId);
-  if (!row) return;
-  let events = [];
-  try { events = Array.isArray(row.events_json) ? row.events_json : JSON.parse(row.events_json || "[]"); } catch {}
-  events.push({
+  const safeEvent = {
     at: new Date().toISOString(),
     type: String(event.type || "event").slice(0,64),
     data: event.data && typeof event.data === "object" ? event.data : {},
+  };
+
+  if (pool()) {
+    await pool().query(
+      "UPDATE repo_agent_tasks SET events_json = COALESCE(events_json,'[]'::jsonb) || $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+      [JSON.stringify([safeEvent]),taskId]
+    );
+    await pool().query(
+      "UPDATE repo_agent_tasks SET events_json = (SELECT COALESCE(jsonb_agg(value ORDER BY ordinal), '[]'::jsonb) FROM jsonb_array_elements(events_json) WITH ORDINALITY AS item(value,ordinal) WHERE ordinal > GREATEST(jsonb_array_length(events_json)-300,0)) WHERE id=$1",
+      [taskId]
+    );
+    return;
+  }
+
+  const db = getDatabase();
+  const append = db.transaction(() => {
+    const row = db.prepare("SELECT events_json FROM repo_agent_tasks WHERE id=?").get(taskId);
+    if (!row) return;
+    let events = [];
+    try { events = JSON.parse(row.events_json || "[]"); } catch {}
+    events.push(safeEvent);
+    if (events.length > 300) events = events.slice(-300);
+    db.prepare(
+      "UPDATE repo_agent_tasks SET events_json=?,updated_at=datetime('now') WHERE id=?"
+    ).run(JSON.stringify(events),taskId);
   });
-  if (events.length > 300) events = events.slice(-300);
-  await updateRepoTask(taskId, { events_json: events });
+  append();
 }
 
 export async function getRepoTaskGithubToken(taskId) {
