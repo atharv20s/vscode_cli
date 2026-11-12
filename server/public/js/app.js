@@ -19,6 +19,10 @@ class App {
 
   async init() {
     this.handleUrlAuth();
+    if (window.__ATH_IDE_SHARE_TOKEN || new URLSearchParams(window.location.hash.slice(1)).has("share")) {
+      await this.handleShareLink();
+      return;
+    }
     await this.ensureUserToken();
     this.setupEventListeners();
     this.initResizers();
@@ -28,7 +32,6 @@ class App {
     await this.loadWorkspaceFiles();
     await this.loadMcpServers();
     this.checkAuthStatus();
-    this.handleShareLink();
   }
 
   /**
@@ -1686,7 +1689,7 @@ class App {
     const shareView = document.getElementById("repo-agent-share-view");
     const content = document.getElementById("repo-share-content");
     if (!shareView || !content) return;
-    if (appRoot) appRoot.hidden = true;
+    if (appRoot) appRoot.style.display = "none";
     shareView.hidden = false;
     content.textContent = "Loading shared task…";
 
