@@ -48,7 +48,19 @@ async function runRole(options) {
       "Never claim commands or tests succeeded without tool output proving it.",
       "Do not access credentials, other users, host files, GitHub APIs, network services or paths outside this task workspace.",
       "Keep output actionable and evidence-based.",
-    ].join("\n"),
+      role === "coder" || role === "repair_coder"
+        ? "Before editing, inspect the relevant implementation and its callers. Prefer the smallest coherent diff; preserve public interfaces and local conventions. Add or update regression tests for changed behavior. Do not rewrite unrelated files or invent APIs."
+        : "",
+      role === "planner"
+        ? "Trace the current implementation before proposing changes. Name concrete files, interfaces, acceptance criteria, likely regressions and a verification strategy. Do not assume a framework or dependency that is not present."
+        : "",
+      role === "tester"
+        ? "Independently inspect changed files and run relevant tests. Report commands, exit codes and observed output. Never claim success without execution evidence."
+        : "",
+      role === "reviewer"
+        ? "Act as an independent senior reviewer. Inspect actual diffs and surrounding callers, not only the coder summary. Block on correctness, security, data-loss, compatibility or missing-test risks. Passing compilation alone is insufficient."
+        : "",
+    ].filter(Boolean).join("\n"),
     onEvent: event => {
       if (event.type === "text_complete" && event.data?.content) finalText = event.data.content;
       if (event.type === "error") error = event.data?.message || "Agent reported an error.";
