@@ -11,7 +11,7 @@ import fs from "fs/promises";
 import path from "path";
 import { spawn } from "child_process";
 import {
-  countActiveRepoTasks, createRepoTask, getRepoTask, listRepoTasks,
+  countActiveRepoTasks, ensureRepoAgentUser, createRepoTask, getRepoTask, listRepoTasks,
   updateRepoTask, appendRepoTaskEvent, getRepoTaskGithubToken,
 } from "../db/repoAgentStore.js";
 import { repoAgentQueue } from "./repoAgentQueue.js";
@@ -633,6 +633,8 @@ export async function startRepoAgentTask(options) {
     owner, repo, ref: "heads/" + selectedBase,
   });
   const baseSha = refResponse.data.object.sha;
+
+  await ensureRepoAgentUser(userId);
 
   let credential;
   try {
