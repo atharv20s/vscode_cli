@@ -31,7 +31,7 @@ const IGNORED_DIRS = new Set([
 const SENSITIVE_FILE = /(^|\\/)(\\.env(?!\\.(example|sample|template)$)[^/]*|\\.npmrc|\\.pypirc|\\.netrc|id_rsa|id_ed25519)(\\/|$)|\\.(pem|key|p12|pfx)$/i;
 
 const REPO_AGENT_TOOLS = [
-  "read_file", "write_file", "edit_file", "delete_file", "list_files",
+  "read_file", "write_file", "edit_file", "list_files",
   "run_command", "create_plan", "update_plan",
   "generate_readme", "generate_walkthrough", "generate_uml_diagram",
 ];
