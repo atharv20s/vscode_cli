@@ -153,7 +153,7 @@ export async function executeOnRemoteWorker({ workspaceId, workspaceDir, cwd, co
   const result = await postWorkerJson("/v1/execute", {
     workspaceId: workspaceRuntimeKey(workspaceId), files, cwd: relativeCwd, command, timeout,
   }, { timeoutMs: timeout + 30000, signal });
-  await applyFiles(workspaceDir, result.files);
+  await applyWorkspaceFiles(workspaceDir, result.files);
   return result.execution;
 }
 
