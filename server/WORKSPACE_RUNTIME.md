@@ -137,3 +137,28 @@ detached PTYs are terminated after `TERMINAL_IDLE_TTL_MS`.
   broker and an authenticated preview reverse proxy.
 - This branch does not provision infrastructure, run migrations against a
   hosted DB, or activate any paid service.
+
+
+## Redis-backed cross-instance workspace events
+
+The API event bus can fan out workspace notifications between API replicas using
+Redis Pub/Sub. Set the same `REDIS_URL` on every API instance. Set
+`REQUIRE_DISTRIBUTED_EVENTS=true` in production to make missing or unavailable
+Redis a startup failure rather than silently operating with process-local events.
+
+The transport publishes validated event envelopes on the internal
+`ath:workspace-events:v1` channel, rejects oversized/malformed messages, and
+de-duplicates local Redis echoes by event ID. WebSocket subscribers still scope
+events to their authenticated workspace identity. Keep Redis private to the
+application network and use TLS (`rediss://`) for managed/shared deployments.
+
+This is notification fan-out, not a durable event log and not a workspace
+storage system. Redis Pub/Sub is at-most-once: a replica disconnected during an
+event will not replay it. Clients must reload authoritative workspace metadata
+and file contents after reconnect. The filesystem or future object-storage
+adapter remains the source of truth.
+
+This closes the cross-replica event notification gap only. Interactive PTYs are
+still process/worker-affine and do not survive worker restarts; authenticated
+preview proxying and shared durable workspace storage remain separate
+production blockers.

@@ -23,6 +23,7 @@ export const config = {
   // Database (PostgreSQL / Neon / Supabase or SQLite fallback)
   databaseUrl: process.env.DATABASE_URL || "",
   redisUrl: process.env.REDIS_URL || "",
+  requireDistributedEvents: (process.env.REQUIRE_DISTRIBUTED_EVENTS || "false").toLowerCase() === "true",
 
   // LLM Providers and explicit quality tiers
   defaultLlmProvider: (process.env.DEFAULT_LLM_PROVIDER || (process.env.OPENROUTER_API_KEY ? "openrouter" : process.env.MISTRAL_API_KEY ? "mistral" : "openai")).toLowerCase(),
@@ -130,6 +131,10 @@ export const config = {
 export function validateConfig() {
   const warnings = [];
   const errors = [];
+
+  if (config.requireDistributedEvents && !config.redisUrl) {
+    errors.push("REDIS_URL is required when REQUIRE_DISTRIBUTED_EVENTS=true.");
+  }
 
   if (!config.openrouterKey && !config.openaiKey && !config.mistralKey) {
     warnings.push(

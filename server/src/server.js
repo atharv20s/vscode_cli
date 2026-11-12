@@ -25,6 +25,7 @@ import { initPostgres } from "./db/postgres.js";
 import { initializeTools } from "./tools/index.js";
 import { initMcpServers, shutdownMcpServers, getMcpStatus } from "./mcp/mcpClient.js";
 import { initWebSocketServer } from "./websocket/wsServer.js";
+import { eventBus } from "./websocket/eventBus.js";
 import { generalLimiter } from "./middleware/rateLimiter.js";
 import { previewAuth, requireAuth } from "./middleware/auth.js";
 import { agentLimiter } from "./middleware/rateLimiter.js";
@@ -207,6 +208,9 @@ async function startServer() {
     initDatabase();
     logger.info("Database subsystem initialized successfully");
 
+    // Initialize cross-instance workspace event fan-out before registering WebSocket listeners.
+    await eventBus.initialize({ redisUrl: config.redisUrl, required: config.requireDistributedEvents });
+
     // Initialize Built-in Agent Tools
     initializeTools();
     logger.info("Agent tool registry initialized");
@@ -286,6 +290,10 @@ async function handleShutdown(signal) {
 
   try {
     await shutdownMcpServers();
+  } catch {}
+
+  try {
+    await eventBus.shutdown();
   } catch {}
 
   try {
