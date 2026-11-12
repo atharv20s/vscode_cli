@@ -23,6 +23,7 @@ const MAX_CHANGED_FILES = 200;
 const MAX_CHANGED_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_CHANGED_BYTES = 12 * 1024 * 1024;
 const MAX_SCAN_BYTES = 150 * 1024 * 1024;
+const MAX_ACTIVE_TASKS_PER_USER = 2;
 const IGNORED_DIRS = new Set([
   ".git", "node_modules", ".next", "dist", "build", "coverage",
   ".cache", ".worktrees", ".agent-runs",
@@ -217,14 +218,14 @@ async function scanWorkspace(repoPath, baseEntries) {
     const relative = pair[0];
     const item = pair[1];
     const base = baseEntries.get(relative);
-    if (base && base.sha === item.sha && base.mode === item.mode) continue;
+    if (base && base.sha === item.sha) continue;
     if (sensitive(relative)) {
       throw new Error("Refusing to include a sensitive file in the PR: " + relative);
     }
     if (item.buffer.length > MAX_CHANGED_FILE_BYTES) {
       throw new Error("Changed file " + relative + " exceeds the 2 MiB per-file publishing limit.");
     }
-    changes.push({ path: relative, mode: item.mode, type: "blob", content: item.buffer });
+    changes.push({ path: relative, mode: base?.mode || item.mode, type: "blob", content: item.buffer });
   }
 
   for (const pair of baseEntries.entries()) {
@@ -358,6 +359,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries) {
     });
 
     let finalText = "";
+    let agentFailed = false;
     await runAgent({
       message: task.prompt,
       conversationHistory: [],
@@ -367,6 +369,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries) {
       sessionId: "repo-task-" + taskId,
       workspaceService: workspaceService,
       allowedTools: REPO_AGENT_TOOLS,
+      persistWorkspaceMeta: false,
       maxIterations: 15,
       signal: abort.signal,
       systemPrompt: [
@@ -380,6 +383,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries) {
         "Never claim tests passed unless you ran them and observed a successful exit code. Summarize the changes and exact verification performed.",
       ].join("\n"),
       onEvent: function (event) {
+        if (event.type === "error") agentFailed = true;
         if (event.type === "text_complete" && event.data && event.data.content) {
           finalText = event.data.content;
         }
@@ -393,6 +397,9 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries) {
       return;
     }
 
+    if (agentFailed) {
+      throw new Error("The model agent reported an execution error. No PR was created; inspect events and retry.");
+    }
     patchTask(userId, taskId, { status: "publishing" });
     appendEvent(userId, taskId, {
       type: "status",
