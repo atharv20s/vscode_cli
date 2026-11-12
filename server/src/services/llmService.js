@@ -105,9 +105,9 @@ export async function streamChatCompletion({ messages, tools, model = "coding", 
 }
 export function getAvailableModels() {
   return Object.entries(MODEL_PRESETS).map(([key,preset]) => {
-    const selected = Object.entries(PROVIDER_MODELS).find(([provider,models]) =>
-      providerKey(provider) && models[preset.tier]
-    );
+    const providerOrder = [config.defaultLlmProvider, ...config.llmFallbackProviders];
+    const selected = providerOrder.map(provider => [provider, PROVIDER_MODELS[provider]])
+      .find(([provider,models]) => providerKey(provider) && models?.[preset.tier]);
     return {
       key,
       id: selected?.[1][preset.tier] || "",
