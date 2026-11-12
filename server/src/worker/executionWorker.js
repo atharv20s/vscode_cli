@@ -3,11 +3,15 @@
  * HMAC authentication binds each request to its HTTP method, path and body.
  */
 import express from "express";
+import http from "http";
 import crypto from "crypto";
+import pty from "node-pty";
+import { WebSocketServer } from "ws";
 import fs from "fs";
 import path from "path";
 import { config, validateConfig } from "../config/env.js";
 import { dockerWorkspaceRuntime } from "../services/dockerWorkspaceRuntime.js";
+import { execFileSync as dockerExecFileSync } from "child_process";
 
 const app = express();
 const PORT = Number(process.env.WORKER_PORT || 8081);
@@ -281,4 +285,157 @@ if (errors.length) throw new Error("Worker configuration invalid: " + errors.joi
 if (config.executionRuntime !== "docker") throw new Error("Execution worker requires EXECUTION_RUNTIME=docker.");
 if ((process.env.WORKER_SHARED_SECRET || "").length < 32) throw new Error("WORKER_SHARED_SECRET must contain at least 32 characters.");
 
-app.listen(PORT, "0.0.0.0", () => console.log(`ATH IDE persistent execution worker listening on port ${PORT}`));
+
+const server = http.createServer(app);
+const terminalWss = new WebSocketServer({ noServer: true, maxPayload: 128 * 1024 });
+
+function sendTerminal(ws, type, payload) {
+  if (ws.readyState === 1) ws.send(JSON.stringify({ type, payload }));
+}
+
+async function attachPersistentTerminal(ws, { workspaceId, sessionId, cols, rows }) {
+  const root = workspaceRootFor(workspaceId);
+  await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
+  const container = await dockerWorkspaceRuntime.ensureContainer(workspaceId, root);
+  const tmuxSession = "ath-" + sessionId.replace(/[^a-f0-9]/gi, "").slice(0, 32);
+
+  // tmux lives inside the long-lived workspace container. Killing this worker
+  // process or dropping a browser WebSocket only detaches the client; the
+  // shell/process tree remains available for the next authenticated attach.
+  try {
+    execDocker(["exec", container, "tmux", "has-session", "-t", tmuxSession]);
+  } catch {
+    execDocker(["exec", container, "tmux", "new-session", "-d", "-s", tmuxSession, "-c", "/workspace"]);
+  }
+
+  let terminal;
+  try {
+    const captured = execDocker(["exec", container, "tmux", "capture-pane", "-p", "-t", tmuxSession, "-S", "-200"], { encoding: "utf8" });
+    if (captured) sendTerminal(ws, "terminal.output", { text: captured + "\r\n", sessionId, replayed: true });
+  } catch {}
+
+  try {
+    terminal = pty.spawn(config.dockerBinary, [
+      "exec", "-it", "-e", "TERM=xterm-256color",
+      container, "tmux", "attach-session", "-t", tmuxSession,
+    ], {
+      name: "xterm-256color",
+      cols: Math.max(20, Math.min(300, Number(cols) || 80)),
+      rows: Math.max(5, Math.min(120, Number(rows) || 24)),
+      cwd: root,
+      env: { ...process.env, TERM: "xterm-256color" },
+    });
+  } catch (error) {
+    sendTerminal(ws, "terminal.state", { sessionId, state: "error", error: error.message });
+    ws.close(1011, "Terminal attach failed");
+    return;
+  }
+
+  sendTerminal(ws, "terminal.state", { sessionId, state: "ready", reconnected: true });
+  terminal.onData(data => sendTerminal(ws, "terminal.output", { text: data, sessionId }));
+  terminal.onExit(({ exitCode }) => {
+    sendTerminal(ws, "terminal.state", { sessionId, state: "exited", exitCode });
+    if (ws.readyState === 1) ws.close(1000, "Terminal exited");
+  });
+
+  ws.on("message", raw => {
+    let message;
+    try { message = JSON.parse(raw.toString("utf8")); }
+    catch { sendTerminal(ws, "error", { message: "Invalid terminal message." }); return; }
+    const payload = message.payload || {};
+    switch (message.type) {
+      case "terminal.input":
+      case "terminal_input":
+      case "terminal.keystroke":
+        if (typeof payload.data === "string" && payload.data.length <= 16384) terminal.write(payload.data);
+        break;
+      case "terminal.paste":
+        if (typeof payload.text === "string" && payload.text.length <= 65536) terminal.write(payload.text);
+        break;
+      case "terminal.resize": {
+        const nextCols = Math.max(20, Math.min(300, Number(payload.cols) || 80));
+        const nextRows = Math.max(5, Math.min(120, Number(payload.rows) || 24));
+        try { terminal.resize(nextCols, nextRows); } catch {}
+        break;
+      }
+      case "terminal.kill":
+        try { terminal.kill(); } catch {}
+        try { execDocker(["exec", container, "tmux", "kill-session", "-t", tmuxSession]); } catch {}
+        break;
+      case "ping":
+        sendTerminal(ws, "pong", { timestamp: Date.now() });
+        break;
+      default:
+        sendTerminal(ws, "error", { message: "Unsupported remote terminal message." });
+    }
+  });
+
+  ws.on("close", () => {
+    // Detach the PTY client only. Do not kill the tmux session.
+    try { terminal?.kill(); } catch {}
+  });
+  ws.on("error", () => {
+    try { terminal?.kill(); } catch {}
+  });
+}
+
+function execDocker(args, options = {}) {
+  const { execFileSync } = requireDockerExec();
+  return execFileSync(config.dockerBinary, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 15000,
+    ...options,
+  });
+}
+
+function requireDockerExec() {
+  // Use the already configured Docker binary without shell interpolation.
+  return { execFileSync: dockerExecFileSync };
+}
+
+
+server.on("upgrade", async (req, socket, head) => {
+  let parsed;
+  try { parsed = new URL(req.url, "http://worker"); }
+  catch { socket.destroy(); return; }
+  if (parsed.pathname !== "/v1/terminal") return;
+
+  if (!verifySignature({
+    method: "GET",
+    requestPath: req.url,
+    body: Buffer.alloc(0),
+    headers: req.headers,
+  })) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
+  const workspaceId = parsed.searchParams.get("workspaceId");
+  const sessionId = parsed.searchParams.get("sessionId");
+  const cols = parsed.searchParams.get("cols");
+  const rows = parsed.searchParams.get("rows");
+  if (!safeWorkspaceId(workspaceId) || !/^[a-f0-9-]{36}$/i.test(sessionId || "")) {
+    socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
+  try {
+    const root = workspaceRootFor(workspaceId);
+    await dockerWorkspaceRuntime.ensureContainer(workspaceId, root);
+    terminalWss.handleUpgrade(req, socket, head, ws => {
+      attachPersistentTerminal(ws, { workspaceId, sessionId, cols, rows })
+        .catch(error => {
+          sendTerminal(ws, "terminal.state", { sessionId, state: "error", error: error.message });
+          ws.close(1011, "Terminal setup failed");
+        });
+    });
+  } catch {
+    socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+  }
+});
+
+server.listen(PORT, "0.0.0.0", () => console.log(`ATH IDE persistent execution worker listening on port ${PORT}`));
+

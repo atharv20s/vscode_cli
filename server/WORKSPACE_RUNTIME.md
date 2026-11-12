@@ -162,3 +162,31 @@ This closes the cross-replica event notification gap only. Interactive PTYs are
 still process/worker-affine and do not survive worker restarts; authenticated
 preview proxying and shared durable workspace storage remain separate
 production blockers.
+
+
+## Persistent cloud execution and terminal recovery
+
+The remote API now hashes the full logical workspace identity before sending it
+to the worker. The worker keeps a stable directory at
+`WORKSPACE_ROOT/remote-users/<workspace-hash>` and reuses the same Docker
+container across command requests. API snapshots are synchronized incrementally:
+only changed files are replaced, only previously synchronized files that were
+deleted by the API are removed, and runtime caches such as `node_modules`,
+`.next` and `dist` are preserved. The worker no longer destroys a container
+before each command.
+
+Interactive terminal sessions use `tmux` inside the long-lived container. The
+browser WebSocket is only an attach/detach transport; disconnecting it leaves
+the tmux session and its shell/process tree alive. A new authenticated tunnel
+with the same terminal UUID attaches to the existing session and replays the
+last 200 terminal lines. This survives an API or execution-worker process
+restart while the Docker Engine and workspace container remain available. A
+host/VM restart is a different failure domain: files and dependencies persist
+on the worker disk, but arbitrary in-memory processes inside a restarted
+container cannot be restored automatically.
+
+The worker stores a small atomic manifest of files synchronized from the API,
+uses an inter-process lock file for workspace mutations, and applies a
+best-effort disk quota after command execution. Enforce hard disk limits at the
+worker host/filesystem layer (for example, XFS project quotas) before accepting
+untrusted workloads at scale.
