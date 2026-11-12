@@ -17,6 +17,7 @@ import {
 import { repoAgentQueue } from "./repoAgentQueue.js";
 import { runRepoAgentPipeline } from "./repoAgentPipeline.js";
 import { config } from "../config/env.js";
+import { getPostgresPool } from "../db/postgres.js";
 import { logger } from "../config/logger.js";
 import { createScopedWorkspaceService } from "./workspaceService.js";
 import { dockerWorkspaceRuntime } from "./dockerWorkspaceRuntime.js";
@@ -558,6 +559,11 @@ export async function startRepoAgentTask(options) {
 
   if (!config.redisUrl && !process.env.REDIS_URL) {
     const error = new Error("Redis task queue is not configured. Set REDIS_URL to enable asynchronous repository agents.");
+    error.statusCode = 503;
+    throw error;
+  }
+  if (!config.isDev && !getPostgresPool()) {
+    const error = new Error("Cloud repository agents require the shared Postgres task store. Configure DATABASE_URL; local SQLite fallback is only supported for single-worker development.");
     error.statusCode = 503;
     throw error;
   }
