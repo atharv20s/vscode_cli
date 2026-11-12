@@ -84,6 +84,10 @@ export function initDatabase() {
       pr_url TEXT,
       pr_number INTEGER,
       error TEXT,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      worker_id TEXT,
+      lease_expires_at TEXT,
+      cancel_requested INTEGER NOT NULL DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -146,6 +150,10 @@ export function initDatabase() {
   const migrations = [
     "ALTER TABLE users ADD COLUMN password_hash TEXT;",
     "ALTER TABLE conversations ADD COLUMN user_id TEXT;",
+    "ALTER TABLE repo_agent_tasks ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0;",
+    "ALTER TABLE repo_agent_tasks ADD COLUMN worker_id TEXT;",
+    "ALTER TABLE repo_agent_tasks ADD COLUMN lease_expires_at TEXT;",
+    "ALTER TABLE repo_agent_tasks ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0;",
     "CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);",
   ];
   for (const migration of migrations) {
