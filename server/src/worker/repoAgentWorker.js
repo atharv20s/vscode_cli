@@ -92,11 +92,19 @@ async function consumeMessage(message) {
 
     const result = await processRepoAgentTask(message.taskId,{
       workerId:WORKER_ID,
+      leaseToken:lease,
       signal:controller.signal,
     });
     const latest = await getRepoTask(message.taskId);
+    if (lostLease) {
+      // Leave the Redis stream item pending. A healthy consumer will reclaim it.
+      return;
+    }
 
-    if (controller.signal.aborted || latest?.cancel_requested) {
+    if (lostLease) {
+      // Do not mutate or acknowledge a task after losing its distributed lease.
+      return;
+    } else if (controller.signal.aborted || latest?.cancel_requested) {
       await updateRepoTask(message.taskId,{status:"cancelled"});
       await appendRepoTaskEvent(message.taskId,{type:"status",data:{status:"cancelled"}});
       await repoAgentQueue.ack(message.id);
@@ -109,6 +117,7 @@ async function consumeMessage(message) {
         type:"worker_final_failure",
         data:{message:latest?.error || "Quality gate failed; no PR was created."},
       });
+      await repoAgentQueue.deadLetter(message.taskId,message.attempt,latest?.error || "Quality gate failed").catch(()=>{});
       await repoAgentQueue.ack(message.id);
       return;
     }
@@ -118,10 +127,13 @@ async function consumeMessage(message) {
       taskId:message.taskId,workerId:WORKER_ID,attempt:message.attempt,error:error.message,
     });
     const latest = await getRepoTask(message.taskId).catch(()=>null);
-    if (controller.signal.aborted || latest?.cancel_requested) {
+    if (lostLease) {
+      // Leave it pending for XAUTOCLAIM after its lease expires.
+      return;
+    } else if (controller.signal.aborted || latest?.cancel_requested) {
       await updateRepoTask(message.taskId,{status:"cancelled",error:"Task cancelled."}).catch(()=>{});
       await repoAgentQueue.ack(message.id);
-    } else if ((message.attempt || 0) + 1 < MAX_ATTEMPTS && !lostLease) {
+    } else if ((message.attempt || 0) + 1 < MAX_ATTEMPTS) {
       const nextAttempt = (message.attempt || 0) + 1;
       await updateRepoTask(message.taskId,{status:"queued",error:error.message,worker_id:null,lease_expires_at:null});
       await appendRepoTaskEvent(message.taskId,{
