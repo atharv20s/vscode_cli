@@ -51,7 +51,7 @@ export class WorkspaceService {
     }
 
     // Internal locking metadata is not part of the user workspace API.
-    if (relativePath.split(path.sep).some((part) => part === ".ath-locks")) {
+    if (relativePath.split(path.sep).some((part) => part === ".ath-locks" || part === ".ath-workspaces.json")) {
       return { safe: false, resolved, relative: relativePath.split(path.sep).join("/") };
     }
 
@@ -117,7 +117,7 @@ export class WorkspaceService {
         if (error.code !== "EEXIST") throw error;
         try {
           const stat = await fsp.stat(lockPath);
-          if (Date.now() - stat.mtimeMs > 60000) {
+          if (Date.now() - stat.mtimeMs > 300000) {
             await fsp.unlink(lockPath).catch(() => {});
             continue;
           }
@@ -133,8 +133,14 @@ export class WorkspaceService {
         await new Promise(resolve => setTimeout(resolve, 30));
       }
     }
+    const heartbeat = setInterval(() => {
+      const now = new Date();
+      fsp.utimes(lockPath, now, now).catch(() => {});
+    }, 10000);
+    heartbeat.unref?.();
     try { return await callback(); }
     finally {
+      clearInterval(heartbeat);
       await handle.close().catch(() => {});
       await fsp.unlink(lockPath).catch(() => {});
     }
@@ -149,7 +155,7 @@ export class WorkspaceService {
       try { entries = await fsp.readdir(current, { withFileTypes: true }); }
       catch (error) { if (error.code === "ENOENT") continue; throw error; }
       for (const entry of entries) {
-        if (entry.name === ".ath-locks" || entry.name === ".ath-workspaces.json" || IGNORED_DIRS.has(entry.name)) continue;
+        if (entry.name === ".ath-locks" || entry.name === ".ath-workspaces.json") continue;
         const target = path.join(current, entry.name);
         if (entry.isSymbolicLink()) continue;
         if (entry.isDirectory()) stack.push(target);
@@ -312,6 +318,11 @@ export class WorkspaceService {
       throw new Error("Access denied: Paths must reside within the workspace root.");
     }
 
+    if (fs.existsSync(to.resolved)) {
+      const error = new Error("Destination already exists. Choose a different path.");
+      error.code = "WORKSPACE_VERSION_CONFLICT";
+      throw error;
+    }
     await fsp.mkdir(path.dirname(to.resolved), { recursive: true });
     await fsp.rename(from.resolved, to.resolved);
     this._alignRuntimeOwnership(to.resolved);
@@ -332,6 +343,7 @@ export class WorkspaceService {
     });
 
     return { success: true, from: from.relative, to: to.relative };
+    });
   }
 
   /**

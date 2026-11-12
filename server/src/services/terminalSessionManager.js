@@ -9,6 +9,7 @@
 import { logger } from "../config/logger.js";
 import { config } from "../config/env.js";
 import { eventBus } from "../websocket/eventBus.js";
+import { sendMessage } from "../websocket/connectionManager.js";
 import { LocalBackend } from "./backends/localBackend.js";
 import { RemoteSSHBackend } from "./backends/remoteSSHBackend.js";
 import { DockerBackend } from "./backends/dockerBackend.js";
@@ -68,6 +69,7 @@ class TerminalSessionManager {
       existing.ws = options.ws || null;
       existing.lastActivityAt = Date.now();
       existing.state = "ready";
+      if (existing.outputBuffer && existing.ws) sendMessage(existing.ws, "terminal.output", { text: existing.outputBuffer, sessionId });
       this._emitStateChange(existing, "ready", { reconnected: true });
       return existing;
     }
@@ -89,6 +91,7 @@ class TerminalSessionManager {
       sessionId,
       userId: options.userId || null,
       ws: options.ws || null,
+      outputBuffer: "",
       workspaceId,
       backend: backendType,
       cwd,
@@ -110,6 +113,7 @@ class TerminalSessionManager {
         session.backendInstance = backend;
         const ptyProcess = await backend.spawnShell({
           sessionId, workspaceId, workspaceDir: cwd, cols, rows, ws: options.ws,
+          onData: data => this._handleSessionOutput(sessionId, data),
           onExit: (code) => this._handleSessionExit(sessionId, code),
         });
         session.pid = ptyProcess?.pid || null;
@@ -151,6 +155,7 @@ class TerminalSessionManager {
         rows,
         cwd,
         ws: options.ws,
+        onData: data => this._handleSessionOutput(sessionId, data),
         onExit: (code) => {
           this._handleSessionExit(sessionId, code);
         },
@@ -176,8 +181,9 @@ class TerminalSessionManager {
    * @param {string} sessionId
    * @param {string} data
    */
-  write(sessionId, data) {
+  write(sessionId, data, userId = null, workspaceId = null) {
     const session = this.sessions.get(sessionId);
+    if (session && userId && (session.userId !== userId || session.workspaceId !== workspaceId)) throw new Error("Terminal session access denied.");
     if (!session || !session.backendInstance) {
       logger.warn(`TerminalSessionManager: Write failed - session not found: ${sessionId}`);
       return false;
@@ -195,9 +201,11 @@ class TerminalSessionManager {
    * @param {number} cols
    * @param {number} rows
    */
-  resize(sessionId, cols, rows) {
+  resize(sessionId, cols, rows, userId = null, workspaceId = null) {
     const session = this.sessions.get(sessionId);
+    if (session && userId && (session.userId !== userId || session.workspaceId !== workspaceId)) throw new Error("Terminal session access denied.");
     if (session && session.backendInstance) {
+      session.lastActivityAt = Date.now();
       session.cols = cols || session.cols;
       session.rows = rows || session.rows;
       session.backendInstance.resize(sessionId, session.cols, session.rows);
@@ -223,6 +231,13 @@ class TerminalSessionManager {
       this.sessions.delete(sessionId);
       logger.info(`TerminalSessionManager: Destroyed session ${sessionId}`);
     }
+  }
+
+  _handleSessionOutput(sessionId, data) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.outputBuffer = (session.outputBuffer + data).slice(-262144);
+    if (session.ws) sendMessage(session.ws, "terminal.output", { text: data, sessionId });
   }
 
   detachSession(sessionId, ws) {

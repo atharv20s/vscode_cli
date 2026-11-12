@@ -27,6 +27,7 @@ export class LocalBackend {
   constructor() {
     this.ptyProcess = null;
     this.ws = null;
+    this.onData = null;
   }
 
   /**
@@ -35,7 +36,6 @@ export class LocalBackend {
    * @returns {ShellProvider[]}
    */
   static detectAvailableShells() {
-    this.ws = ws || null;
     const isWindows = process.platform === "win32";
     const shells = [];
 
@@ -143,7 +143,9 @@ export class LocalBackend {
    * @param {Function} [params.onExit]
    * @returns {Promise<any>} The spawned PTY process
    */
-  async spawnShell({ sessionId, workspaceId = "default", shellType = "powershell", cols = 80, rows = 24, cwd, ws, onExit }) {
+  async spawnShell({ sessionId, workspaceId = "default", shellType = "powershell", cols = 80, rows = 24, cwd, ws, onExit, onData }) {
+    this.ws = ws || null;
+    this.onData = typeof onData === "function" ? onData : null;
     const isWindows = process.platform === "win32";
     const sessionCwd = cwd || config.workspaceRoot;
     const available = LocalBackend.detectAvailableShells();
@@ -201,7 +203,8 @@ export class LocalBackend {
           actor: "user",
         });
 
-        if (this.ws) sendMessage(this.ws, "terminal.output", { text: data, sessionId });
+        if (this.onData) this.onData(data);
+        else if (this.ws) sendMessage(this.ws, "terminal.output", { text: data, sessionId });
       });
 
       this.ptyProcess.onExit(({ exitCode, signal }) => {
