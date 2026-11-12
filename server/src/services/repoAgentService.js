@@ -539,6 +539,7 @@ export async function processRepoAgentTask(taskId, options = {}) {
     branch: row.branch,
     prompt: row.prompt,
     workspace_path: repoPath,
+    attempt_count: row.attempt_count || 0,
   };
   const assertLease = options.assertLease || (async () => {
     const owned = await repoAgentQueue.ownsLease(taskId, options.leaseToken);
@@ -682,7 +683,15 @@ export async function createRepoAgentShare(userId, taskId, permission = "view", 
   const task = await rowForUser(userId, taskId);
   if (!task) return null;
   const rawToken = crypto.randomBytes(32).toString("base64url");
-  const expiresAt = expiresInHours === 0 ? null : new Date(Date.now() + Math.min(Math.max(expiresInHours,1),720) * 3600000).toISOString();
+  const requestedExpiry = Number(expiresInHours);
+  if (!Number.isFinite(requestedExpiry) || requestedExpiry < 0) {
+    const error = new Error("Share expiry must be zero (no expiry) or a positive number of hours.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const expiresAt = requestedExpiry === 0
+    ? null
+    : new Date(Date.now() + Math.min(Math.max(requestedExpiry,1),720) * 3600000).toISOString();
   const saved = await createRepoShare({
     id: crypto.randomUUID(),
     taskId,
@@ -750,7 +759,7 @@ export async function getSharedRepoAgentTask(rawToken) {
       status: share.status,
       events: safeEvents,
       pullRequest: share.pr_url ? { url: share.pr_url, number: share.pr_number } : null,
-      error: share.error || null,
+      error: share.status === "failed" ? "The agent task failed. Ask the owner to inspect the private task log." : null,
       createdAt: share.task_created_at,
     },
     comments: await listRepoShareComments(share.id),
