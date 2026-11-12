@@ -1679,7 +1679,7 @@ class App {
   }
 
   async handleShareLink() {
-    const token = window.__ATH_IDE_SHARE_TOKEN || new URLSearchParams(window.location.search).get("share");
+    const token = window.__ATH_IDE_SHARE_TOKEN || new URLSearchParams(window.location.hash.slice(1)).get("share") || new URLSearchParams(window.location.search).get("share");
     window.__ATH_IDE_SHARE_TOKEN = null;
     if (!token) return;
     const appRoot = document.getElementById("app");
