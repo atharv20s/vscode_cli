@@ -66,7 +66,7 @@ export async function collectWorkspaceFiles(root) {
   return files;
 }
 
-async function applyFiles(root, returnedFiles) {
+export async function applyWorkspaceFiles(root, returnedFiles) {
   if (!Array.isArray(returnedFiles) || returnedFiles.length > MAX_FILES) throw new Error("Execution worker returned an invalid workspace snapshot.");
   const next = new Map();
   let total = 0;
@@ -131,13 +131,18 @@ async function postWorkerJson(route, payload, { timeoutMs = 90000, signal } = {}
   }
 }
 
-export async function syncWorkspaceOnRemote({ workspaceId, workspaceDir, signal }) {
+export async function syncWorkspaceOnRemote({ workspaceId, workspaceDir, signal, initialOnly = false }) {
   if (!path.isAbsolute(workspaceDir)) throw new Error("Workspace directory must be absolute.");
   const files = await collectWorkspaceFiles(workspaceDir);
   return postWorkerJson("/v1/workspace/sync", {
     workspaceId: workspaceRuntimeKey(workspaceId),
     files,
+    initialOnly: initialOnly === true,
   }, { timeoutMs: 90000, signal });
+}
+
+export async function ensureRemoteWorkspace({ workspaceId, workspaceDir, signal }) {
+  return syncWorkspaceOnRemote({ workspaceId, workspaceDir, signal, initialOnly: true });
 }
 
 export async function executeOnRemoteWorker({ workspaceId, workspaceDir, cwd, command, timeout = 45000, signal }) {
