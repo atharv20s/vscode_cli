@@ -1,3 +1,4 @@
+import https from "https";
 /**
  * Cloud API -> dedicated execution worker client.
  *
@@ -149,4 +150,95 @@ export async function executeOnRemoteWorker({ workspaceId, workspaceDir, cwd, co
   }, { timeoutMs: timeout + 30000, signal });
   await applyFiles(workspaceDir, result.files);
   return result.execution;
+}
+
+
+export async function startRemotePreview({ workspaceId, workspaceDir, cwd, command, port = 3000, signal }) {
+  if (!path.isAbsolute(workspaceDir)) throw new Error("Workspace directory must be absolute.");
+  const relativeCwd = path.relative(workspaceDir, cwd || workspaceDir).split(path.sep).join("/") || ".";
+  if (relativeCwd === ".." || relativeCwd.startsWith("../") || path.isAbsolute(relativeCwd)) {
+    throw new Error("Preview working directory is outside the workspace.");
+  }
+  const files = await collectWorkspaceFiles(workspaceDir);
+  return postWorkerJson("/v1/preview/start", {
+    workspaceId: workspaceRuntimeKey(workspaceId),
+    files,
+    cwd: relativeCwd,
+    command,
+    port: Number(port) || 3000,
+  }, { timeoutMs: 90000, signal });
+}
+
+export async function stopRemotePreview({ workspaceId, port }) {
+  return postWorkerJson("/v1/preview/stop", {
+    workspaceId: workspaceRuntimeKey(workspaceId),
+    port: Number(port),
+  }, { timeoutMs: 30000 });
+}
+
+function createPreviewRoute(workspaceId, port, previewPath, search = "") {
+  const suffix = String(previewPath || "").split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  return "/v1/preview/" + workspaceRuntimeKey(workspaceId) + "/" + Number(port) + "/" + suffix + search;
+}
+
+export async function proxyRemotePreview(req, res, { workspaceId, port, previewPath }) {
+  const { url, secret } = workerConfig();
+  const original = new URL(req.originalUrl, "http://preview.local");
+  const route = createPreviewRoute(workspaceId, port, previewPath, original.search);
+  const body = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.alloc(0);
+  const headers = {};
+  for (const name of ["accept", "accept-language", "content-type", "range", "if-none-match", "if-modified-since", "cache-control", "user-agent"]) {
+    if (req.headers[name]) headers[name] = req.headers[name];
+  }
+  const init = {
+    method: req.method,
+    headers: { ...headers, ...signWorkerRequest(req.method, route, body, secret) },
+  };
+  if (!["GET", "HEAD"].includes(req.method.toUpperCase())) init.body = body;
+  const response = await fetch(new URL(route, url), init);
+  res.status(response.status);
+  for (const [name, value] of response.headers) {
+    if (["connection", "transfer-encoding", "content-encoding", "content-length", "keep-alive"].includes(name.toLowerCase())) continue;
+    res.setHeader(name, value);
+  }
+  for await (const chunk of response.body || []) res.write(chunk);
+  res.end();
+}
+
+export function proxyRemotePreviewUpgrade(req, socket, head, { workspaceId, port, previewPath }) {
+  const { url, secret } = workerConfig();
+  const original = new URL(req.url, "http://preview.local");
+  const route = createPreviewRoute(workspaceId, port, previewPath, original.search);
+  const target = new URL(route, url);
+  const headers = {
+    ...req.headers,
+    host: target.host,
+    ...signWorkerRequest("GET", route, Buffer.alloc(0), secret),
+  };
+  const upstream = https.request({
+    hostname: target.hostname,
+    port: target.port || 443,
+    path: target.pathname + target.search,
+    method: "GET",
+    headers,
+  });
+  upstream.on("upgrade", (response, upstreamSocket, upstreamHead) => {
+    const statusLine = "HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\r\n";
+    const responseHeaders = Object.entries(response.headers)
+      .filter(([name]) => name.toLowerCase() !== "connection")
+      .map(([name, value]) => name + ": " + value + "\r\n").join("");
+    socket.write(statusLine + responseHeaders + "Connection: Upgrade\r\n\r\n");
+    if (upstreamHead && upstreamHead.length) socket.write(upstreamHead);
+    if (head && head.length) upstreamSocket.write(head);
+    upstreamSocket.pipe(socket);
+    socket.pipe(upstreamSocket);
+  });
+  upstream.on("response", response => {
+    socket.write("HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\r\n");
+    for (const [name, value] of Object.entries(response.headers)) socket.write(name + ": " + value + "\r\n");
+    socket.write("\r\n");
+    response.pipe(socket);
+  });
+  upstream.on("error", () => socket.destroy());
+  upstream.end();
 }
