@@ -101,12 +101,14 @@ export function validateConfig() {
   const warnings = [];
   const errors = [];
 
-  if (!config.openrouterKey && !config.openaiKey) {
+  if (!config.openrouterKey && !config.openaiKey && !config.mistralKey) {
     warnings.push(
       "No LLM API key found. Set OPENROUTER_API_KEY or OPENAI_API_KEY in your .env file."
     );
   }
 
+  if (!["openrouter","mistral","openai"].includes(config.defaultLlmProvider)) errors.push("DEFAULT_LLM_PROVIDER must be openrouter, mistral or openai.");
+  for (const provider of config.llmFallbackProviders) if (!["openrouter","mistral","openai"].includes(provider)) errors.push("Unsupported LLM fallback provider: " + provider);
   if (!config.tavilyKey) {
     warnings.push(
       "TAVILY_API_KEY not set -- web search will be unavailable. Get a free key at https://tavily.com"
