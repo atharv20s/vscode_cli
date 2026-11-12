@@ -1,22 +1,18 @@
 /**
- * API Client with Automatic Access & Refresh Token Interceptor
- *
- * Implements silent token rotation:
- * 1. Attaches Bearer Access Token to all outgoing requests
- * 2. On 401 Unauthorized, automatically calls POST /api/auth/refresh
- * 3. Rotates tokens and transparently retries original request
+ * Authenticated API client. Token refresh is single-flight so parallel 401
+ * responses retry with one rotated token rather than racing or hanging.
  */
-
 class ApiClient {
   private accessToken: string | null = null;
   private refreshToken: string | null = null;
-  private isRefreshing = false;
-  private refreshSubscribers: ((token: string) => void)[] = [];
+  private refreshPromise: Promise<string> | null = null;
+  private workspaceId = "default";
 
   constructor() {
     if (typeof window !== "undefined") {
       this.accessToken = localStorage.getItem("ath_access_token");
       this.refreshToken = localStorage.getItem("ath_refresh_token");
+      this.workspaceId = localStorage.getItem("ath_workspace_id") || "default";
     }
   }
 
@@ -38,73 +34,68 @@ class ApiClient {
     }
   }
 
-  getAccessToken() {
-    return this.accessToken;
+  getAccessToken() { return this.accessToken; }
+
+  setWorkspaceId(id: string) {
+    this.workspaceId = id || "default";
+    if (typeof window !== "undefined") localStorage.setItem("ath_workspace_id", this.workspaceId);
+  }
+
+  getWorkspaceId() { return this.workspaceId; }
+
+  private async refreshAccessToken(): Promise<string> {
+    if (!this.refreshToken) throw new Error("Session expired. Sign in again.");
+    if (!this.refreshPromise) {
+      this.refreshPromise = (async () => {
+        const response = await fetch("/api/auth/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refreshToken: this.refreshToken }),
+        });
+        if (!response.ok) throw new Error("Session refresh failed. Sign in again.");
+        const data = await response.json();
+        if (!data.accessToken || !data.refreshToken) throw new Error("Invalid token refresh response.");
+        this.setTokens(data.accessToken, data.refreshToken);
+        return data.accessToken as string;
+      })().finally(() => { this.refreshPromise = null; });
+    }
+    return this.refreshPromise;
   }
 
   async fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
-    const headers = new Headers(options.headers || {});
-
-    if (this.accessToken && !headers.has("Authorization")) {
-      headers.set("Authorization", `Bearer ${this.accessToken}`);
-    }
-
-    if (!headers.has("Content-Type") && !(options.body instanceof FormData)) {
-      headers.set("Content-Type", "application/json");
-    }
-
-    let response = await fetch(url, { ...options, headers });
-
-    // Auto-refresh token if 401 Unauthorized
-    if (response.status === 401 && this.refreshToken) {
-      if (!this.isRefreshing) {
-        this.isRefreshing = true;
-        try {
-          const newTokens = await this.refreshTokens();
-          this.isRefreshing = false;
-          this.onRefreshed(newTokens.accessToken);
-        } catch (err) {
-          this.isRefreshing = false;
-          this.clearTokens();
-          throw err;
-        }
+    const request = (token: string | null) => {
+      const headers = new Headers(options.headers || {});
+      if (token && !headers.has("Authorization")) headers.set("Authorization", "Bearer " + token);
+      if (this.workspaceId && !headers.has("X-Workspace-Id")) headers.set("X-Workspace-Id", this.workspaceId);
+      if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
       }
+      return fetch(url, { ...options, headers });
+    };
 
-      // Wait for active refresh
-      return new Promise<Response>((resolve) => {
-        this.subscribeTokenRefresh((newToken: string) => {
-          headers.set("Authorization", `Bearer ${newToken}`);
-          resolve(fetch(url, { ...options, headers }));
-        });
-      });
+    let response = await request(this.accessToken);
+    if (response.status !== 401 || !this.refreshToken) return response;
+    try {
+      const token = await this.refreshAccessToken();
+      response = await request(token);
+      if (response.status === 401) this.clearTokens();
+      return response;
+    } catch (error) {
+      this.clearTokens();
+      throw error;
     }
-
-    return response;
   }
 
-  private subscribeTokenRefresh(cb: (token: string) => void) {
-    this.refreshSubscribers.push(cb);
-  }
-
-  private onRefreshed(token: string) {
-    this.refreshSubscribers.forEach((cb) => cb(token));
-    this.refreshSubscribers = [];
-  }
-
-  private async refreshTokens(): Promise<{ accessToken: string; refreshToken: string }> {
-    const res = await fetch("/api/auth/refresh", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshToken: this.refreshToken }),
-    });
-
-    if (!res.ok) {
-      throw new Error("Failed to refresh session");
+  async json<T = any>(url: string, options: RequestInit = {}): Promise<T> {
+    const response = await this.fetchWithAuth(url, options);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(body.message || body.error || "Request failed (" + response.status + ")");
+      (error as any).status = response.status;
+      (error as any).payload = body;
+      throw error;
     }
-
-    const data = await res.json();
-    this.setTokens(data.accessToken, data.refreshToken);
-    return data;
+    return body as T;
   }
 }
 

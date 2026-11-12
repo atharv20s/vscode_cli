@@ -1,273 +1,407 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import {
-  Terminal,
-  Cpu,
-  Layers,
-  Radio,
-  Sparkles,
-  GitBranch,
-  FolderGit2,
-  Play,
-  Send,
-  CheckCircle2,
-  Database,
-  Server,
-  Zap,
-} from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Editor from "@monaco-editor/react";
+import { Activity, Bot, ChevronLeft, Code2, File, FilePlus2, Folder, Loader2, Play, Plus, RefreshCw, Save, Send, Server, SquareTerminal, Terminal, X } from "lucide-react";
 import { api } from "@/lib/api";
 
+type WorkspaceSession = { id: string; name: string; createdAt: string };
+type FileEntry = { name: string; path: string; isDirectory: boolean; size: number };
+type ChatMessage = { role: "user" | "assistant"; content: string; activity?: string[] };
+type ModelOption = { key: string; name: string; tier: string; provider: string; id: string; configured: boolean; multimodal?: boolean };
+type RepoOption = { full_name: string; name: string; owner: { login: string }; default_branch: string };
+type AgentTask = { id: string; owner: string; repo: string; status: string; pr_url?: string; error?: string };
+
+const languageFor = (file: string) => {
+  const ext = file.split(".").pop()?.toLowerCase() || "";
+  const map: Record<string, string> = { ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript", json: "json", py: "python", html: "html", css: "css", md: "markdown", yml: "yaml", yaml: "yaml", rs: "rust", go: "go", sql: "sql", sh: "shell", ps1: "powershell" };
+  return map[ext] || "plaintext";
+};
+
 export default function Home() {
-  const [clusterNodes, setClusterNodes] = useState<any[]>([]);
-  const [kafkaStatus, setKafkaStatus] = useState<any>(null);
-  const [user, setUser] = useState<any>(null);
-  const [inputPrompt, setInputPrompt] = useState("");
-  const [timeline, setTimeline] = useState<any[]>([
-    {
-      role: "assistant",
-      content:
-        "Welcome to **ATH IDE Next.js Studio**! Connected to distributed cluster with Kafka queues, database sharding, and multi-tier LLM failover.",
-    },
-  ]);
+  const [apiStatus, setApiStatus] = useState("Connecting…");
+  const [workerStatus, setWorkerStatus] = useState("Not configured");
+  const [workspaceId, setWorkspaceId] = useState("default");
+  const [sessions, setSessions] = useState<WorkspaceSession[]>([]);
+  const [files, setFiles] = useState<FileEntry[]>([]);
+  const [currentDir, setCurrentDir] = useState(".");
+  const [activeFile, setActiveFile] = useState("");
+  const [fileContent, setFileContent] = useState("");
+  const [savedContent, setSavedContent] = useState("");
+  const [fileVersion, setFileVersion] = useState<string | null>(null);
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [model, setModel] = useState("devstral");
+  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "Welcome to ATH IDE. Chat, file editing, model discovery, workspace sessions and your terminal connect to the backend." }]);
+  const [prompt, setPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [terminalOutput, setTerminalOutput] = useState("Connecting to the workspace terminal…\r\n");
+  const [terminalInput, setTerminalInput] = useState("");
+  const [terminalConnected, setTerminalConnected] = useState(false);
+  const [terminalVisible, setTerminalVisible] = useState(true);
+  const [socketReady, setSocketReady] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [notice, setNotice] = useState("");
+  const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [repos, setRepos] = useState<RepoOption[]>([]);
+  const [selectedRepo, setSelectedRepo] = useState("");
+  const [tasks, setTasks] = useState<AgentTask[]>([]);
+  const [repoPrompt, setRepoPrompt] = useState("");
+  const [repoBusy, setRepoBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState<"chat" | "tasks">("chat");
+  const socketRef = useRef<WebSocket | null>(null);
+  const terminalSessionRef = useRef("");
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    // 1. Auto-provision guest or resume session
-    const initAuth = async () => {
-      try {
-        const guestRes = await fetch("/api/auth/guest", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        });
-        if (guestRes.ok) {
-          const data = await guestRes.json();
-          api.setTokens(data.accessToken || data.token, data.refreshToken || "");
-          setUser(data.user);
-        }
-      } catch (err) {
-        console.warn("Guest auth error", err);
-      }
-    };
-
-    // 2. Poll cluster nodes and Kafka state
-    const fetchCluster = async () => {
-      try {
-        const [nodeRes, kafkaRes] = await Promise.all([
-          fetch("/api/cluster/nodes"),
-          fetch("/api/kafka/status"),
-        ]);
-        if (nodeRes.ok) {
-          const data = await nodeRes.json();
-          setClusterNodes(data.nodes || []);
-        }
-        if (kafkaRes.ok) {
-          const data = await kafkaRes.json();
-          setKafkaStatus(data);
-        }
-      } catch (err) {
-        console.warn("Cluster poll error", err);
-      }
-    };
-
-    initAuth();
-    fetchCluster();
-    const timer = setInterval(fetchCluster, 8000);
-    return () => clearInterval(timer);
+  const refreshFiles = useCallback(async (directory = ".") => {
+    const data = await api.json<{ entries: FileEntry[] }>("/api/workspace/files?path=" + encodeURIComponent(directory));
+    setFiles(data.entries || []);
   }, []);
 
-  const handleSendPrompt = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputPrompt.trim()) return;
+  const loadTasks = useCallback(async () => {
+    try {
+      const data = await api.json<{ tasks: AgentTask[] }>("/api/github/agent-tasks");
+      setTasks(data.tasks || []);
+    } catch { /* GitHub integration is optional until connected. */ }
+  }, []);
 
-    setTimeline((prev) => [
-      ...prev,
-      { role: "user", content: inputPrompt },
-      {
-        role: "assistant",
-        content: `Executing agent loop via distributed queue for: "${inputPrompt}"...`,
-      },
-    ]);
-    setInputPrompt("");
+  const initialize = useCallback(async () => {
+    try {
+      if (!api.getAccessToken()) {
+        const guest = await fetch("/api/auth/guest", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const auth = await guest.json();
+        if (!guest.ok || !auth.accessToken) throw new Error(auth.message || "Could not initialize guest authentication.");
+        api.setTokens(auth.accessToken, auth.refreshToken || "");
+      }
+
+      const health = await api.json<any>("/api/health");
+      setApiStatus(health.status === "ok" ? "API online" : "API degraded");
+      const [modelData, sessionData] = await Promise.all([
+        api.json<any>("/api/agent/models"),
+        api.json<any>("/api/workspace/sessions"),
+      ]);
+      const modelList = (modelData.models || []) as ModelOption[];
+      setModels(modelList);
+      const configured = modelList.find(item => item.configured);
+      if (configured) setModel(configured.key);
+
+      const list = (sessionData.sessions || []) as WorkspaceSession[];
+      setSessions(list);
+      const saved = api.getWorkspaceId();
+      const selected = list.some(item => item.id === saved) ? saved : "default";
+      api.setWorkspaceId(selected);
+      setWorkspaceId(selected);
+      await refreshFiles(".");
+      try {
+        const poolResponse = await api.fetchWithAuth("/api/github/worker-pool");
+        if (poolResponse.ok) {
+          const pool = await poolResponse.json();
+          setWorkerStatus(pool.onlineWorkers + " online · " + pool.busyWorkers + " busy");
+        }
+        const repoData = await api.json<any>("/api/github/repos");
+        setRepos(repoData.repos || []);
+        if (repoData.repos?.length) setSelectedRepo(repoData.repos[0].full_name || "");
+        await loadTasks();
+      } catch {
+        setWorkerStatus("Connect GitHub / configure Redis");
+      }
+    } catch (error: any) {
+      setApiStatus("API unavailable");
+      setNotice(error.message || "Could not connect to ATH IDE.");
+    }
+  }, [loadTasks, refreshFiles]);
+
+  useEffect(() => { initialize(); }, [initialize]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+  // Interactive PTY. The terminal ID is tab-scoped so several tabs can own
+  // independent terminal sessions within the same user's workspace.
+  useEffect(() => {
+    const token = api.getAccessToken();
+    if (!token || typeof window === "undefined") return;
+    if (!terminalSessionRef.current) {
+      terminalSessionRef.current = sessionStorage.getItem("ath_terminal_session") || crypto.randomUUID();
+      sessionStorage.setItem("ath_terminal_session", terminalSessionRef.current);
+    }
+    const configuredUrl = process.env.NEXT_PUBLIC_WS_URL;
+    const wsUrl = configuredUrl || ((window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.hostname + ":3001/ws");
+    const url = new URL(wsUrl);
+    url.searchParams.set("token", token);
+    url.searchParams.set("workspace", workspaceId);
+    url.searchParams.set("terminalSessionId", terminalSessionRef.current);
+    const socket = new WebSocket(url.toString());
+    socketRef.current = socket;
+    socket.onopen = () => setSocketReady(true);
+    socket.onmessage = event => {
+      let packet: any;
+      try { packet = JSON.parse(event.data); } catch { return; }
+      const payload = packet.payload || {};
+      if (packet.type === "connected") {
+        socket.send(JSON.stringify({ type: "terminal_init", payload: { shell: "bash", cols: 100, rows: 28 } }));
+        setTerminalConnected(true);
+        setTerminalOutput(prev => prev + "[terminal connected]\r\n");
+      } else if (packet.type === "terminal.output") {
+        setTerminalOutput(prev => (prev + (payload.text || payload.data || "")).slice(-50000));
+      } else if (packet.type === "terminal.exit" || packet.type === "terminal_exit") {
+        setTerminalOutput(prev => prev + "\r\n[terminal exited]\r\n");
+        setTerminalConnected(false);
+      } else if (packet.type === "preview.ready") {
+        setPreviewUrl(payload.url || "");
+      } else if (packet.type === "error") {
+        setTerminalOutput(prev => prev + "\r\n[error] " + (payload.message || "WebSocket error") + "\r\n");
+      }
+    };
+    socket.onclose = () => {
+      setSocketReady(false);
+      setTerminalConnected(false);
+      setTerminalOutput(prev => prev + "\r\n[terminal disconnected; reconnect by reloading the IDE]\r\n");
+    };
+    socket.onerror = () => setSocketReady(false);
+    return () => {
+      socket.close();
+      socketRef.current = null;
+    };
+  }, [workspaceId, apiStatus]);
+
+  const changeWorkspace = async (id: string) => {
+    api.setWorkspaceId(id);
+    setWorkspaceId(id);
+    setCurrentDir(".");
+    setActiveFile("");
+    setFileContent("");
+    setSavedContent("");
+    setFileVersion(null);
+    await refreshFiles(".");
   };
 
+  const createWorkspace = async () => {
+    if (!workspaceName.trim()) return;
+    try {
+      const data = await api.json<{ session: WorkspaceSession }>("/api/workspace/sessions", { method: "POST", body: JSON.stringify({ name: workspaceName }) });
+      setSessions(prev => [...prev, data.session]);
+      setWorkspaceName("");
+      setShowCreateWorkspace(false);
+      await changeWorkspace(data.session.id);
+      setNotice("Workspace created.");
+    } catch (error: any) { setNotice(error.message); }
+  };
+
+  const openFile = async (entry: FileEntry) => {
+    if (entry.isDirectory) {
+      const next = currentDir === "." ? entry.name : currentDir + "/" + entry.name;
+      setCurrentDir(next);
+      await refreshFiles(next);
+      return;
+    }
+    try {
+      const data = await api.json<any>("/api/workspace/file?path=" + encodeURIComponent(entry.path));
+      setActiveFile(entry.path);
+      setFileContent(data.content || "");
+      setSavedContent(data.content || "");
+      setFileVersion(data.version || null);
+    } catch (error: any) { setNotice(error.message); }
+  };
+
+  const saveFile = async () => {
+    if (!activeFile) return;
+    const headers: Record<string, string> = {};
+    if (fileVersion) headers["If-Match"] = '"' + fileVersion + '"';
+    else headers["If-None-Match"] = "*";
+    try {
+      const data = await api.json<any>("/api/workspace/file", { method: "POST", headers, body: JSON.stringify({ path: activeFile, content: fileContent }) });
+      setFileVersion(data.version || null);
+      setSavedContent(fileContent);
+      setNotice("File saved. Version " + String(data.version || "").slice(0, 10));
+      await refreshFiles(currentDir);
+    } catch (error: any) {
+      const status = (error as any).status;
+      setNotice(status === 409 ? "Save conflict: another session changed this file. Re-open it before saving." : error.message);
+    }
+  };
+
+  const createFile = () => {
+    const name = window.prompt("New relative file path:", "src/index.js");
+    if (!name?.trim()) return;
+    setActiveFile(name.trim());
+    setFileContent("");
+    setSavedContent("");
+    setFileVersion(null);
+  };
+
+  const sendPrompt = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const message = prompt.trim();
+    if (!message || busy) return;
+    setPrompt("");
+    setBusy(true);
+    setMessages(prev => [...prev, { role: "user", content: message }, { role: "assistant", content: "", activity: ["Request sent to the agent API"] }]);
+    try {
+      const response = await api.fetchWithAuth("/api/agent/chat", {
+        method: "POST",
+        body: JSON.stringify({ message, model, conversationHistory: messages.filter(item => item.content).map(item => ({ role: item.role, content: item.content })) }),
+      });
+      if (!response.ok || !response.body) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.message || "Agent request failed (" + response.status + ")");
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const handleFrame = (frame: string) => {
+        for (const line of frame.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const text = line.slice(5).trim();
+          if (!text || text === "[DONE]") continue;
+          let event: any;
+          try { event = JSON.parse(text); } catch { continue; }
+          const data = event.data || {};
+          if (event.type === "text_delta") {
+            const delta = data.content || data.text || "";
+            setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, content: item.content + delta } : item));
+          } else if (event.type === "text_complete" && data.content) {
+            setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, content: data.content } : item));
+          } else if (event.type === "tool_start" || event.type === "tool_result" || event.type === "model_selected" || event.type === "usage") {
+            const detail = event.type === "model_selected" ? "Model " + data.provider + "/" + data.model + " (" + data.tier + ")" :
+              event.type === "usage" ? "Tokens " + (data.totalTokens || 0) :
+              event.type === "tool_start" ? "Running " + (data.name || "tool") :
+              (data.name || "Tool") + (data.success ? " completed" : " failed");
+            setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, activity: [...(item.activity || []), detail].slice(-16) } : item));
+          } else if (event.type === "error") {
+            setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, content: item.content + "\n\nError: " + (data.message || "Agent error") } : item));
+          }
+        }
+      };
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() || "";
+        frames.forEach(handleFrame);
+      }
+      if (buffer.trim()) handleFrame(buffer);
+      await refreshFiles(".");
+      setCurrentDir(".");
+    } catch (error: any) {
+      setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, content: item.content + "\n\n" + error.message } : item));
+    } finally { setBusy(false); }
+  };
+
+  const sendTerminalInput = (event: React.FormEvent) => {
+    event.preventDefault();
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setTerminalOutput(prev => prev + "[terminal is disconnected]\r\n");
+      return;
+    }
+    socket.send(JSON.stringify({ type: "terminal_input", payload: { data: terminalInput + "\r" } }));
+    setTerminalInput("");
+  };
+
+  const createRepoTask = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedRepo || !repoPrompt.trim() || repoBusy) return;
+    const [owner, name] = selectedRepo.split("/");
+    if (!owner || !name) return;
+    setRepoBusy(true);
+    try {
+      await api.json("/api/github/repos/" + encodeURIComponent(owner) + "/" + encodeURIComponent(name) + "/agent-tasks", { method: "POST", body: JSON.stringify({ prompt: repoPrompt }) });
+      setRepoPrompt("");
+      await loadTasks();
+      setNotice("Repository coding task queued.");
+    } catch (error: any) { setNotice(error.message); }
+    finally { setRepoBusy(false); }
+  };
+
+  const dirty = Boolean(activeFile && fileContent !== savedContent);
+  const configuredModels = useMemo(() => models.filter(item => item.configured), [models]);
+
   return (
-    <div className="flex flex-col h-screen bg-[#0b0f19] text-slate-100 font-sans">
-      {/* Topbar */}
-      <header className="h-12 border-b border-slate-800 px-4 flex items-center justify-between bg-[#0f172a]/60 backdrop-blur-md">
+    <main className="h-screen bg-[#080d16] text-slate-100 flex flex-col overflow-hidden">
+      <header className="h-14 shrink-0 border-b border-slate-800 flex items-center justify-between px-4 bg-[#0d1422]">
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-600 shadow-lg shadow-indigo-500/30">
-            <Terminal className="w-4 h-4 text-white" />
-          </div>
-          <span className="font-bold tracking-wide text-sm">
-            ATH <span className="text-indigo-400">IDE</span>
-          </span>
-          <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
-            Next.js App Router
-          </span>
+          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center"><Code2 size={18}/></div>
+          <div><div className="font-semibold tracking-wide">ATH <span className="text-indigo-400">IDE</span></div><div className="text-[10px] text-slate-500">Autonomous development studio</div></div>
         </div>
-
-        {/* Distributed Cluster Status */}
-        <div className="flex items-center gap-2 text-xs">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
-            <Server className="w-3.5 h-3.5 animate-pulse" />
-            <span>Nodes Online: {clusterNodes.length || 1}</span>
-          </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400">
-            <Layers className="w-3.5 h-3.5" />
-            <span>Kafka: {kafkaStatus?.connected ? "Cluster Connected" : "Local Event Queue"}</span>
-          </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-400">
-            <Database className="w-3.5 h-3.5" />
-            <span>DB: Sharded Neon Cloud</span>
-          </div>
-        </div>
-
-        {/* User Identity */}
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-full bg-indigo-600/30 border border-indigo-500 flex items-center justify-center text-xs font-bold text-indigo-300">
-            {user?.username ? user.username.slice(0, 2).toUpperCase() : "G"}
-          </div>
-          <span className="text-xs text-slate-300 font-medium">
-            @{user?.username || "Guest User"}
-          </span>
+        <div className="flex items-center gap-3 text-xs">
+          <span className="flex items-center gap-1.5 text-slate-400"><span className={"w-2 h-2 rounded-full " + (apiStatus === "API online" ? "bg-emerald-400" : "bg-amber-400")}/>{apiStatus}</span>
+          <span className="hidden 2xl:inline text-slate-500">Repo workers: {workerStatus}</span>
+          <select className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 max-w-48" value={workspaceId} onChange={event => changeWorkspace(event.target.value)}>
+            {sessions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+          <button className="p-2 rounded hover:bg-slate-800" title="Create workspace" onClick={() => setShowCreateWorkspace(value => !value)}><Plus size={16}/></button>
         </div>
       </header>
 
-      {/* Main Workspace Layout */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Side: File Explorer / Cluster Health */}
-        <div className="w-64 border-r border-slate-800 bg-[#0e1526]/50 p-3 flex flex-col gap-4">
-          <div>
-            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
-              Distributed Topology
+      {showCreateWorkspace && <div className="px-4 py-2 border-b border-slate-800 flex gap-2 bg-slate-900"><input className="bg-slate-950 border border-slate-700 rounded px-3 py-1 text-sm" placeholder="Workspace name" value={workspaceName} onChange={event => setWorkspaceName(event.target.value)}/><button className="bg-indigo-600 rounded px-3 text-sm" onClick={createWorkspace}>Create</button><button className="text-slate-400" onClick={() => setShowCreateWorkspace(false)}><X size={16}/></button></div>}
+      {notice && <button onClick={() => setNotice("")} className="text-left text-xs px-4 py-2 bg-amber-500/10 text-amber-300 border-b border-amber-900/50">{notice}<span className="float-right">dismiss</span></button>}
+
+      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[230px_minmax(0,1fr)_390px]">
+        <aside className="hidden xl:flex flex-col border-r border-slate-800 min-h-0 bg-[#0b111d]">
+          <div className="h-11 px-3 flex items-center justify-between border-b border-slate-800 text-xs font-semibold uppercase tracking-wider text-slate-400"><span>Explorer</span><button onClick={createFile} title="New file"><FilePlus2 size={15}/></button></div>
+          <div className="px-3 py-2 text-[11px] text-slate-500 flex items-center justify-between"><span className="truncate">{currentDir}</span><button onClick={() => { setCurrentDir("."); refreshFiles("."); }}><RefreshCw size={13}/></button></div>
+          <div className="overflow-auto p-2 text-sm">
+            {currentDir !== "." && <button className="w-full text-left px-2 py-1 text-slate-400 hover:bg-slate-800 rounded flex items-center gap-2" onClick={() => { const next = currentDir.split("/").slice(0, -1).join("/") || "."; setCurrentDir(next); refreshFiles(next); }}><ChevronLeft size={13}/>Back</button>}
+            {files.map(entry => <button key={entry.path} onClick={() => openFile(entry)} className={"w-full flex items-center gap-2 px-2 py-1.5 rounded text-left hover:bg-slate-800 " + (activeFile === entry.path ? "bg-indigo-500/15 text-indigo-200" : "text-slate-300")}>
+              {entry.isDirectory ? <Folder size={14} className="text-amber-300"/> : <File size={14} className="text-slate-500"/>}<span className="truncate">{entry.name}</span>
+            </button>)}
+            {!files.length && <div className="text-xs text-slate-600 p-2">No files in this directory.</div>}
+          </div>
+          <div className="mt-auto p-3 border-t border-slate-800 text-[10px] text-slate-500">Per-user workspace · atomic saves · quota protected</div>
+        </aside>
+
+        <section className="min-w-0 min-h-0 flex flex-col">
+          <div className="h-10 shrink-0 border-b border-slate-800 flex items-center justify-between px-3 bg-[#0b111d]">
+            <div className="text-xs text-slate-400 flex items-center gap-2"><File size={14}/>{activeFile || "No file open"}{dirty ? <span className="text-amber-300">● unsaved</span> : null}</div>
+            <div className="flex items-center gap-2"><button disabled={!activeFile || !dirty} onClick={saveFile} className="flex items-center gap-1.5 bg-indigo-600 disabled:opacity-30 rounded px-2.5 py-1 text-xs"><Save size={13}/>Save</button><button onClick={() => setTerminalVisible(value => !value)} className="p-1.5 hover:bg-slate-800 rounded" title="Toggle terminal"><SquareTerminal size={15}/></button></div>
+          </div>
+          <div className="flex-1 min-h-0">
+            {activeFile ? <Editor height="100%" theme="vs-dark" language={languageFor(activeFile)} value={fileContent} onChange={value => setFileContent(value || "")} options={{ minimap: { enabled: false }, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false, tabSize: 2 }} /> :
+              <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3"><Code2 size={38}/><div className="text-sm">Open a file or create a new one</div><button onClick={createFile} className="text-xs px-3 py-2 bg-indigo-600 text-white rounded">Create file</button></div>}
+          </div>
+          {terminalVisible && <div className="h-52 shrink-0 border-t border-slate-800 bg-[#080c13] flex flex-col">
+            <div className="h-9 flex items-center justify-between px-3 border-b border-slate-800 text-[11px] text-slate-400 uppercase"><span className="flex items-center gap-2"><Terminal size={14}/>Interactive terminal</span><span className={terminalConnected ? "text-emerald-400" : "text-amber-400"}>{terminalConnected ? "Connected" : socketReady ? "Starting…" : "Disconnected"}</span></div>
+            <pre className="flex-1 overflow-auto whitespace-pre-wrap p-3 text-xs font-mono text-slate-300">{terminalOutput}</pre>
+            <form onSubmit={sendTerminalInput} className="flex gap-2 p-2 border-t border-slate-800"><span className="text-emerald-400 self-center">$</span><input value={terminalInput} onChange={event => setTerminalInput(event.target.value)} placeholder="Type a command and press Enter…" className="flex-1 bg-transparent outline-none text-xs font-mono"/><button className="text-indigo-300"><Play size={15}/></button></form>
+          </div>}
+          {previewUrl && <div className="h-9 shrink-0 border-t border-slate-800 flex items-center px-3 text-xs text-emerald-300">Preview ready: <a className="ml-2 underline" href={previewUrl} target="_blank" rel="noreferrer">{previewUrl}</a></div>}
+        </section>
+
+        <aside className="min-h-0 border-l border-slate-800 flex flex-col bg-[#0b111d]">
+          <div className="h-11 shrink-0 border-b border-slate-800 px-3 flex items-center gap-2">
+            <button onClick={() => setActiveTab("chat")} className={"text-xs px-2 py-1 rounded " + (activeTab === "chat" ? "bg-indigo-600 text-white" : "text-slate-400") }><Bot size={14} className="inline mr-1"/>Agent</button>
+            <button onClick={() => setActiveTab("tasks")} className={"text-xs px-2 py-1 rounded " + (activeTab === "tasks" ? "bg-indigo-600 text-white" : "text-slate-400")}>Repo tasks ({tasks.length})</button>
+            {activeTab === "chat" && <select value={model} onChange={event => setModel(event.target.value)} className="ml-auto bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs max-w-40">{models.map(item => <option key={item.key} value={item.key} disabled={!item.configured}>{item.name} · {item.tier}{item.configured ? "" : " (not configured)"}</option>)}</select>}
+          </div>
+          {activeTab === "chat" ? <>
+            <div className="flex-1 overflow-auto p-3 space-y-4">
+              {messages.map((item, index) => <div key={index} className={"text-sm rounded-lg p-3 " + (item.role === "user" ? "bg-indigo-600/15 border border-indigo-500/20 ml-5" : "bg-slate-900 border border-slate-800 mr-2")}>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">{item.role === "user" ? "You" : "ATH Agent"}</div>
+                <div className="whitespace-pre-wrap break-words leading-relaxed text-[13px]">{item.content || (busy && index === messages.length - 1 ? "Thinking…" : "")}</div>
+                {item.activity?.length ? <div className="mt-3 pt-2 border-t border-slate-800 space-y-1">{item.activity.map((line, i) => <div key={i} className="text-[10px] text-slate-500 flex gap-1.5"><Activity size={11}/>{line}</div>)}</div> : null}
+              </div>)}
+              <div ref={bottomRef}/>
             </div>
-            <div className="space-y-1.5">
-              {clusterNodes.map((node, i) => (
-                <div
-                  key={node.instanceId || i}
-                  className="p-2 rounded bg-slate-800/40 border border-slate-700/50 text-xs flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                    <span className="font-mono text-[11px] text-slate-300 truncate max-w-[120px]">
-                      {node.instanceId}
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-slate-400">{node.port || 3001}</span>
-                </div>
-              ))}
+            <form onSubmit={sendPrompt} className="p-3 border-t border-slate-800">
+              <textarea value={prompt} onChange={event => setPrompt(event.target.value)} placeholder="Ask ATH to inspect, build, debug or modify this workspace…" className="w-full h-24 resize-none bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs outline-none focus:border-indigo-500"/>
+              <div className="flex items-center justify-between mt-2"><span className="text-[10px] text-slate-600">{configuredModels.length} configured models</span><button disabled={busy || !prompt.trim()} className="flex items-center gap-2 px-3 py-2 rounded bg-indigo-600 disabled:opacity-40 text-xs"><Send size={13}/>{busy ? "Working…" : "Send"}</button></div>
+            </form>
+          </> : <>
+            <div className="p-3 border-b border-slate-800">
+              <form onSubmit={createRepoTask} className="space-y-2">
+                <select value={selectedRepo} onChange={event => setSelectedRepo(event.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs"><option value="">Select a connected repository</option>{repos.map(repo => <option key={repo.full_name} value={repo.full_name}>{repo.full_name}</option>)}</select>
+                <textarea value={repoPrompt} onChange={event => setRepoPrompt(event.target.value)} placeholder="Describe the repository change…" className="w-full h-20 bg-slate-950 border border-slate-700 rounded p-2 text-xs"/>
+                <button disabled={!selectedRepo || !repoPrompt.trim() || repoBusy} className="w-full bg-indigo-600 disabled:opacity-40 rounded py-2 text-xs">{repoBusy ? "Queueing…" : "Queue coding task"}</button>
+              </form>
             </div>
-          </div>
-
-          <div className="border-t border-slate-800 pt-3">
-            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
-              Architecture Tiers
+            <div className="flex-1 overflow-auto p-3 space-y-2">
+              {tasks.map(task => <div key={task.id} className="rounded border border-slate-800 bg-slate-900 p-3 text-xs"><div className="font-medium">{task.owner}/{task.repo}</div><div className="mt-1 text-slate-500">{task.status}</div>{task.pr_url && <a href={task.pr_url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-indigo-300 underline">Open draft PR</a>}{task.error && <div className="mt-1 text-rose-300">{task.error}</div>}</div>)}
+              {!tasks.length && <div className="text-xs text-slate-500">No repository tasks yet. Connect GitHub to enable this panel.</div>}
             </div>
-            <ul className="text-xs text-slate-400 space-y-1.5">
-              <li className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Dual Token Auth (15m/30d)</span>
-              </li>
-              <li className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Apache Kafka Queue Engine</span>
-              </li>
-              <li className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Database Sharding Router</span>
-              </li>
-              <li className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Multi-Pod K8s Sticky WS</span>
-              </li>
-              <li className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Terraform GCP IaC</span>
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        {/* Center: Monaco Editor & Terminal */}
-        <div className="flex-1 flex flex-col border-r border-slate-800">
-          <div className="h-9 border-b border-slate-800 bg-[#0d1322] px-3 flex items-center gap-2 text-xs text-slate-300">
-            <FolderGit2 className="w-3.5 h-3.5 text-indigo-400" />
-            <span>workspace / app.js</span>
-          </div>
-
-          <div className="flex-1 bg-[#090d16] p-4 font-mono text-xs text-slate-300 overflow-auto">
-            <pre className="leading-relaxed">
-              <code>{`// ATH IDE — High-Performance Distributed Node
-import { clusterManager } from "./services/clusterManager.js";
-import { kafkaService } from "./services/kafkaService.js";
-import { shardManager } from "./db/shardManager.js";
-
-// Active Node Instance: ${clusterNodes[0]?.instanceId || "node_init"}
-console.log("Cluster Online: " + ${clusterNodes.length || 1} + " node(s)");
-`}</code>
-            </pre>
-          </div>
-
-          {/* Bottom Interactive Terminal Bar */}
-          <div className="h-28 border-t border-slate-800 bg-[#0a0e1a] p-2 flex flex-col font-mono text-xs">
-            <div className="text-[11px] text-slate-500 pb-1 flex items-center justify-between">
-              <span>TERMINAL — POWERSHELL / BASH SANDBOX</span>
-              <span className="text-emerald-400">READY</span>
-            </div>
-            <div className="flex-1 text-slate-400 text-xs overflow-y-auto">
-              <div>[node] Initialized cluster coordinator and sharding ring.</div>
-              <div>[kafka] Subscribed to topic 'ath-ide.tasks' on consumer group.</div>
-              <div className="text-emerald-400">[status] All systems operational.</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Side: Cursor AI Assistant Timeline */}
-        <div className="w-80 bg-[#0d1322] flex flex-col">
-          <div className="h-9 border-b border-slate-800 px-3 flex items-center justify-between text-xs font-semibold text-slate-300">
-            <span className="flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              Agent Assistant
-            </span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300">
-              Devstral + OpenRouter
-            </span>
-          </div>
-
-          <div className="flex-1 p-3 overflow-y-auto space-y-3 text-xs">
-            {timeline.map((msg, i) => (
-              <div
-                key={i}
-                className={`p-2.5 rounded-lg leading-relaxed ${
-                  msg.role === "user"
-                    ? "bg-indigo-600 text-white ml-4"
-                    : "bg-slate-800/60 border border-slate-700/60 text-slate-200 mr-4"
-                }`}
-              >
-                {msg.content}
-              </div>
-            ))}
-          </div>
-
-          {/* Input Bar */}
-          <form onSubmit={handleSendPrompt} className="p-2 border-t border-slate-800 flex gap-2">
-            <input
-              type="text"
-              value={inputPrompt}
-              onChange={(e) => setInputPrompt(e.target.value)}
-              placeholder="Ask agent or execute command..."
-              className="flex-1 bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-            />
-            <button
-              type="submit"
-              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded text-xs text-white font-medium flex items-center justify-center transition"
-            >
-              <Send className="w-3 h-3" />
-            </button>
-          </form>
-        </div>
+            <button onClick={loadTasks} className="p-3 border-t border-slate-800 text-xs text-slate-400 flex items-center gap-2"><RefreshCw size={13}/>Refresh task status</button>
+          </>}
+        </aside>
       </div>
-    </div>
+    </main>
   );
 }
