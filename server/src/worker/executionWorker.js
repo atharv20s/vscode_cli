@@ -1,8 +1,6 @@
 /**
- * Private HTTP execution-worker entry point.
- *
- * Run only on a dedicated Linux host with Docker Engine. The API and worker
- * authenticate using an HMAC over timestamp, nonce, and exact request bytes.
+ * Private execution worker with persistent per-workspace directories/containers.
+ * HMAC authentication binds each request to its HTTP method, path and body.
  */
 import express from "express";
 import crypto from "crypto";
@@ -16,66 +14,165 @@ const PORT = Number(process.env.WORKER_PORT || 8081);
 const MAX_FILES = 4000;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
+const IGNORED = new Set([".git", "node_modules", ".next", "dist", "build", ".cache"]);
 const replayedNonces = new Map();
-const workspaceLocks = new Map();
+const inFlight = new Map();
 
 function safeWorkspaceId(value) {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 }
-
 function safeRelativePath(value) {
   if (typeof value !== "string" || !value || value.includes("\\") || value.startsWith("/") || value.includes("\0")) return false;
-  const parts = value.split("/");
-  return parts.every(part => part && part !== "." && part !== "..");
+  return value.split("/").every(part => part && part !== "." && part !== "..");
+}
+
+function verifySignature({ method, requestPath, body, headers }) {
+  const secret = process.env.WORKER_SHARED_SECRET || "";
+  const timestamp = headers["x-worker-timestamp"] || "";
+  const nonce = headers["x-worker-nonce"] || "";
+  const supplied = headers["x-worker-signature"] || "";
+  const time = Number(timestamp);
+  if (secret.length < 32 || !Number.isFinite(time) || Math.abs(Date.now() - time) > 5 * 60 * 1000 ||
+      !/^[a-f0-9-]{16,80}$/i.test(nonce) || !/^[a-f0-9]{64}$/i.test(supplied)) return false;
+  for (const [key, expiry] of replayedNonces) if (expiry < Date.now()) replayedNonces.delete(key);
+  if (replayedNonces.has(nonce)) return false;
+  const expected = crypto.createHmac("sha256", secret)
+    .update(timestamp).update(".").update(nonce).update(".")
+    .update(method.toUpperCase()).update(".").update(requestPath).update(".")
+    .update(body).digest();
+  const actual = Buffer.from(supplied, "hex");
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return false;
+  replayedNonces.set(nonce, Date.now() + 5 * 60 * 1000);
+  return true;
 }
 
 function verifyRequest(req, res, next) {
-  const secret = process.env.WORKER_SHARED_SECRET || "";
-  const timestamp = req.header("x-worker-timestamp") || "";
-  const nonce = req.header("x-worker-nonce") || "";
-  const supplied = req.header("x-worker-signature") || "";
-  const time = Number(timestamp);
-  if (secret.length < 32 || !Number.isFinite(time) || Math.abs(Date.now() - time) > 5 * 60 * 1000 || !/^[a-f0-9-]{16,80}$/i.test(nonce) || !/^[a-f0-9]{64}$/i.test(supplied)) {
+  const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  if (!verifySignature({ method: req.method, requestPath: req.originalUrl, body, headers: req.headers })) {
     return res.status(401).json({ error: "Unauthorized" });
   }
-  for (const [key, expiry] of replayedNonces) if (expiry < Date.now()) replayedNonces.delete(key);
-  if (replayedNonces.has(nonce)) return res.status(401).json({ error: "Replay rejected" });
-  const expected = crypto.createHmac("sha256", secret).update(timestamp).update(".").update(nonce).update(".").update(req.body).digest();
-  const actual = Buffer.from(supplied, "hex");
-  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return res.status(401).json({ error: "Unauthorized" });
-  replayedNonces.set(nonce, Date.now() + 5 * 60 * 1000);
   next();
 }
 
 function withWorkspaceLock(id, task) {
-  const previous = workspaceLocks.get(id) || Promise.resolve();
+  const previous = inFlight.get(id) || Promise.resolve();
   const current = previous.catch(() => {}).then(task);
-  workspaceLocks.set(id, current);
+  inFlight.set(id, current);
   return current.finally(() => {
-    if (workspaceLocks.get(id) === current) workspaceLocks.delete(id);
+    if (inFlight.get(id) === current) inFlight.delete(id);
   });
+}
+
+async function withWorkspaceFileLock(id, task) {
+  const lockRoot = path.join(config.workspaceRoot, ".ath-locks");
+  await fs.promises.mkdir(lockRoot, { recursive: true, mode: 0o700 });
+  const lockPath = path.join(lockRoot, id + ".lock");
+  const started = Date.now();
+  let handle = null;
+  while (!handle) {
+    try {
+      handle = await fs.promises.open(lockPath, "wx", 0o600);
+      await handle.writeFile(JSON.stringify({ pid: process.pid, at: Date.now() }));
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      try {
+        const stat = await fs.promises.stat(lockPath);
+        if (Date.now() - stat.mtimeMs > 300000) {
+          await fs.promises.unlink(lockPath).catch(() => {});
+          continue;
+        }
+      } catch (statError) {
+        if (statError.code === "ENOENT") continue;
+        throw statError;
+      }
+      if (Date.now() - started > 30000) {
+        const busy = new Error("Workspace is busy on the execution worker.");
+        busy.code = "WORKSPACE_BUSY";
+        throw busy;
+      }
+      await new Promise(resolve => setTimeout(resolve, 40));
+    }
+  }
+  const heartbeat = setInterval(() => {
+    const now = new Date();
+    fs.promises.utimes(lockPath, now, now).catch(() => {});
+  }, 10000);
+  heartbeat.unref?.();
+  try { return await task(); }
+  finally {
+    clearInterval(heartbeat);
+    await handle.close().catch(() => {});
+    await fs.promises.unlink(lockPath).catch(() => {});
+  }
+}
+
+function workspaceRootFor(id) {
+  if (!safeWorkspaceId(id)) throw new Error("Invalid workspace identity.");
+  return path.join(config.workspaceRoot, "remote-users", id);
+}
+
+async function readManagedManifest(root) {
+  try {
+    const parsed = JSON.parse(await fs.promises.readFile(path.join(root, ".ath-managed-files.json"), "utf8"));
+    return Array.isArray(parsed) ? parsed.filter(safeRelativePath) : [];
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return [];
+  }
+}
+async function writeManagedManifest(root, paths) {
+  const file = path.join(root, ".ath-managed-files.json");
+  const temporary = file + "." + process.pid + "." + crypto.randomBytes(5).toString("hex") + ".tmp";
+  try {
+    await fs.promises.writeFile(temporary, JSON.stringify(paths.sort()), { flag: "wx", mode: 0o600 });
+    await fs.promises.rename(temporary, file);
+  } finally { await fs.promises.unlink(temporary).catch(() => {}); }
 }
 
 async function replaceWorkspace(root, files) {
   if (!Array.isArray(files) || files.length > MAX_FILES) throw new Error("Invalid workspace file list.");
+  const validated = [];
+  const incoming = new Set();
   let total = 0;
-  const validated = files.map(file => {
+  for (const file of files) {
     if (!file || !safeRelativePath(file.path) || typeof file.content !== "string") throw new Error("Invalid workspace file entry.");
+    if (IGNORED.has(file.path.split("/")[0])) continue;
     const bytes = Buffer.from(file.content, "base64");
     if (bytes.length > MAX_FILE_BYTES || bytes.toString("base64") !== file.content) throw new Error("Invalid or oversized workspace file.");
     total += bytes.length;
-    return { path: file.path, bytes };
-  });
-  if (total > MAX_TOTAL_BYTES) throw new Error("Workspace snapshot exceeds 12 MB transfer limit.");
+    if (total > MAX_TOTAL_BYTES) throw new Error("Workspace snapshot exceeds 12 MB transfer limit.");
+    if (incoming.has(file.path)) throw new Error("Workspace snapshot contains duplicate paths.");
+    incoming.add(file.path);
+    validated.push({ path: file.path, bytes });
+  }
 
-  await fs.promises.rm(root, { recursive: true, force: true });
   await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
+  const previous = await readManagedManifest(root);
+  // Delete only previously synchronized files which the latest API snapshot removed.
+  // Runtime-generated files and package caches remain untouched.
+  for (const relative of previous) {
+    if (incoming.has(relative)) continue;
+    const target = path.resolve(root, ...relative.split("/"));
+    if (!target.startsWith(root + path.sep)) throw new Error("Refusing to remove a path outside the workspace.");
+    await fs.promises.rm(target, { force: true });
+  }
+  // Update only changed files so long-running processes and dependency caches survive.
   for (const file of validated) {
     const target = path.resolve(root, ...file.path.split("/"));
     if (!target.startsWith(root + path.sep)) throw new Error("Workspace path escaped root.");
+    const current = await fs.promises.readFile(target).catch(error => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (current?.equals(file.bytes)) continue;
     await fs.promises.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-    await fs.promises.writeFile(target, file.bytes, { flag: "wx", mode: 0o600 });
+    const temporary = target + "." + process.pid + "." + crypto.randomBytes(5).toString("hex") + ".tmp";
+    try {
+      await fs.promises.writeFile(temporary, file.bytes, { flag: "wx", mode: 0o600 });
+      await fs.promises.rename(temporary, target);
+    } finally { await fs.promises.unlink(temporary).catch(() => {}); }
   }
+  await writeManagedManifest(root, Array.from(incoming));
 }
 
 async function readWorkspace(root) {
@@ -84,7 +181,7 @@ async function readWorkspace(root) {
   async function walk(dir, relative = "") {
     const entries = await fs.promises.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if ([".git", "node_modules", ".next", "dist", "build", ".cache"].includes(entry.name)) continue;
+      if (IGNORED.has(entry.name) || entry.name === ".ath-managed-files.json") continue;
       const rel = relative ? relative + "/" + entry.name : entry.name;
       const full = path.join(dir, entry.name);
       if (entry.isSymbolicLink()) continue;
@@ -102,7 +199,42 @@ async function readWorkspace(root) {
   return output;
 }
 
+async function measureWorkspaceBytes(root) {
+  let total = 0;
+  async function walk(dir) {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) await walk(full);
+      else if (entry.isFile()) total += (await fs.promises.stat(full)).size;
+    }
+  }
+  await walk(root);
+  return total;
+}
+
+async function syncWorkspace(workspaceId, files) {
+  const root = workspaceRootFor(workspaceId);
+  return withWorkspaceLock(workspaceId, () => withWorkspaceFileLock(workspaceId, async () => {
+    await replaceWorkspace(root, files);
+    return { workspaceId, syncedFiles: files.length };
+  }));
+}
+
 app.get("/healthz", (_req, res) => res.json({ status: "ok", role: "execution-worker" }));
+
+app.post("/v1/workspace/sync", express.raw({ type: "application/json", limit: "20mb" }), verifyRequest, async (req, res) => {
+  try {
+    const input = JSON.parse(req.body.toString("utf8"));
+    const result = await syncWorkspace(input.workspaceId, input.files);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    const status = /Invalid workspace|Invalid or oversized|transfer limit|escaped|unsafe|duplicate/.test(error.message) ? 400 : error.code === "WORKSPACE_BUSY" ? 423 : 500;
+    res.status(status).json({ error: status === 400 || status === 423 ? error.message : "Workspace sync failed." });
+  }
+});
+
 app.post("/v1/execute", express.raw({ type: "application/json", limit: "20mb" }), verifyRequest, async (req, res) => {
   try {
     const input = JSON.parse(req.body.toString("utf8"));
@@ -110,33 +242,37 @@ app.post("/v1/execute", express.raw({ type: "application/json", limit: "20mb" })
     if (!safeWorkspaceId(workspaceId) || typeof command !== "string" || !command.trim() || command.length > 20000) {
       return res.status(400).json({ error: "Invalid execution request." });
     }
-    if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 300000) {
-      return res.status(400).json({ error: "Timeout must be between 1 and 300 seconds." });
-    }
+    if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 300000) return res.status(400).json({ error: "Timeout must be between 1 and 300 seconds." });
     if (typeof cwd !== "string" || cwd.startsWith("/") || cwd.split("/").some(p => p === "..")) {
       return res.status(400).json({ error: "Invalid working directory." });
     }
-    const result = await withWorkspaceLock(workspaceId, async () => {
-      const root = path.join(config.workspaceRoot, "remote-users", workspaceId);
-      // Remove any prior container before replacing its bind-mounted workspace directory.
-      await dockerWorkspaceRuntime.stop(workspaceId);
+
+    const result = await withWorkspaceLock(workspaceId, () => withWorkspaceFileLock(workspaceId, async () => {
+      const root = workspaceRootFor(workspaceId);
       await replaceWorkspace(root, files);
       const resolvedCwd = path.resolve(root, cwd);
       if (resolvedCwd !== root && !resolvedCwd.startsWith(root + path.sep)) throw new Error("Working directory escaped workspace.");
+
+      // Reuse the per-workspace container. Stopping it here destroys running
+      // previews, tmux sessions and package caches, so containers are no longer
+      // recreated for every command.
       const execution = await dockerWorkspaceRuntime.execute({
-        workspaceId,
-        workspaceDir: root,
-        cwd: resolvedCwd,
-        command,
-        timeout,
+        workspaceId, workspaceDir: root, cwd: resolvedCwd, command, timeout,
       });
-      const updatedFiles = await readWorkspace(root);
-      return { execution, files: updatedFiles };
-    });
+      const quotaBytes = Math.max(64 * 1024 * 1024, Number(process.env.WORKER_WORKSPACE_QUOTA_BYTES || 1073741824));
+      const usedBytes = await measureWorkspaceBytes(root);
+      if (usedBytes > quotaBytes) {
+        return {
+          execution: { success: false, exitCode: -1, output: "Workspace storage quota exceeded. Remove build artifacts or dependencies before continuing." },
+          files: await readWorkspace(root),
+        };
+      }
+      return { execution, files: await readWorkspace(root) };
+    }));
     res.json(result);
   } catch (error) {
-    const status = /transfer limits|Invalid workspace|Invalid or oversized|escaped|Invalid working/.test(error.message) ? 400 : 500;
-    res.status(status).json({ error: status === 400 ? error.message : "Worker execution failed." });
+    const status = /transfer limits|Invalid workspace|Invalid or oversized|escaped|Invalid working/.test(error.message) ? 400 : error.code === "WORKSPACE_BUSY" ? 423 : 500;
+    res.status(status).json({ error: status === 400 || status === 423 ? error.message : "Worker execution failed." });
   }
 });
 
@@ -145,6 +281,4 @@ if (errors.length) throw new Error("Worker configuration invalid: " + errors.joi
 if (config.executionRuntime !== "docker") throw new Error("Execution worker requires EXECUTION_RUNTIME=docker.");
 if ((process.env.WORKER_SHARED_SECRET || "").length < 32) throw new Error("WORKER_SHARED_SECRET must contain at least 32 characters.");
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`ATH IDE execution worker listening on port ${PORT}`);
-});
+app.listen(PORT, "0.0.0.0", () => console.log(`ATH IDE persistent execution worker listening on port ${PORT}`));

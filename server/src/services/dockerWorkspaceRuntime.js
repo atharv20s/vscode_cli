@@ -20,7 +20,42 @@ class DockerWorkspaceRuntime {
     this.containers = new Map();
   }
 
+  async ensureNetwork() {
+    const network = config.dockerWorkspaceNetwork;
+    if (!network || network === "none" || network === "bridge") return;
+    try {
+      execFileSync(config.dockerBinary, ["network", "inspect", network], { stdio: "ignore", timeout: 10000 });
+    } catch {
+      // Internal bridge: workspace containers can reach the host-side preview
+      // proxy, but do not receive general outbound internet access.
+      execFileSync(config.dockerBinary, ["network", "create", "--driver", "bridge", "--internal", network], {
+        stdio: "ignore",
+        timeout: 20000,
+      });
+    }
+  }
+
+  async getContainerAddress(workspaceId) {
+    if (config.dockerWorkspaceNetwork === "none") {
+      throw new Error("Preview routing requires a named internal Docker network; configure DOCKER_WORKSPACE_NETWORK=ath-ide-internal.");
+    }
+    await this.ensureNetwork();
+    const name = containerName(workspaceId);
+    const raw = execFileSync(config.dockerBinary, ["inspect", name], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 10000,
+    });
+    const inspected = JSON.parse(raw)[0];
+    const networks = inspected?.NetworkSettings?.Networks || {};
+    const preferred = networks[config.dockerWorkspaceNetwork];
+    const address = preferred?.IPAddress || Object.values(networks).map(item => item?.IPAddress).find(Boolean);
+    if (!address) throw new Error("Workspace container has no reachable IP on the configured runtime network.");
+    return address;
+  }
+
   async ensureContainer(workspaceId, workspaceDir, options = {}) {
+    await this.ensureNetwork();
     if (config.executionRuntime !== "docker") {
       throw new Error("Docker workspace runtime is disabled. Set EXECUTION_RUNTIME=docker on a worker with Docker Engine access.");
     }

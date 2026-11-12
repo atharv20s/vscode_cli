@@ -75,7 +75,7 @@ export const config = {
   workerSharedSecret: process.env.WORKER_SHARED_SECRET || "",
   dockerBinary: process.env.DOCKER_BIN || "docker",
   dockerImage: process.env.DOCKER_WORKSPACE_IMAGE || "ath-ide-workspace:local",
-  dockerWorkspaceNetwork: process.env.DOCKER_WORKSPACE_NETWORK || "none",
+  dockerWorkspaceNetwork: process.env.DOCKER_WORKSPACE_NETWORK || "ath-ide-internal",
   repoAgentNetwork: process.env.REPO_AGENT_NETWORK || "none",
   repoAgentTokenKey: process.env.REPO_AGENT_TOKEN_KEY || "",
   dockerWorkspaceUid: parseInt(process.env.DOCKER_WORKSPACE_UID || "1000", 10),
@@ -184,8 +184,8 @@ export function validateConfig() {
     if (config.workerSharedSecret.length < 32) errors.push("WORKER_SHARED_SECRET must contain at least 32 characters when EXECUTION_RUNTIME=remote.");
   }
 
-  if (!["none", "bridge"].includes(config.dockerWorkspaceNetwork)) {
-    errors.push("DOCKER_WORKSPACE_NETWORK must be none or bridge.");
+  if (!["none", "bridge"].includes(config.dockerWorkspaceNetwork) && !/^[a-z0-9][a-z0-9_.-]{0,62}$/.test(config.dockerWorkspaceNetwork)) {
+    errors.push("DOCKER_WORKSPACE_NETWORK must be none, bridge, or a valid Docker network name.");
   }
   if (!["none", "bridge"].includes(config.repoAgentNetwork)) {
     errors.push("REPO_AGENT_NETWORK must be none or bridge.");
