@@ -409,7 +409,7 @@ server.on("upgrade", async (req, socket, head) => {
   let parsed;
   try { parsed = new URL(req.url, "http://" + (req.headers.host || "localhost")); }
   catch { socket.destroy(); return; }
-  const match = parsed.pathname.match(/^\/v1\/preview\/([a-f0-9]{64})\/(\\d{4,5})(\/.*)?$/);
+  const match = parsed.pathname.match(/^\/v1\/preview\/([a-f0-9]{64})\/(\d{4,5})(\/.*)?$/);
   if (!match) return; // The terminal WebSocket handler owns its own route.
   const workspaceId = match[1];
   const port = Number(match[2]);
@@ -419,7 +419,7 @@ server.on("upgrade", async (req, socket, head) => {
     body: Buffer.alloc(0),
     headers: req.headers,
   })) {
-    socket.write("HTTP/1.1 401 Unauthorized\\r\\nConnection: close\\r\\n\\r\\n");
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     socket.destroy();
     return;
   }
@@ -439,19 +439,19 @@ server.on("upgrade", async (req, socket, head) => {
       },
     });
     upstream.on("upgrade", (response, upstreamSocket, upstreamHead) => {
-      const status = "HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\\r\\n";
+      const status = "HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\r\n";
       const headers = Object.entries(response.headers)
-        .map(([name, value]) => name + ": " + value + "\\r\\n").join("");
-      socket.write(status + headers + "\\r\\n");
+        .map(([name, value]) => name + ": " + value + "\r\n").join("");
+      socket.write(status + headers + "\r\n");
       if (upstreamHead?.length) socket.write(upstreamHead);
       if (head?.length) upstreamSocket.write(head);
       upstreamSocket.pipe(socket);
       socket.pipe(upstreamSocket);
     });
     upstream.on("response", response => {
-      socket.write("HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\\r\\n");
-      for (const [name, value] of Object.entries(response.headers)) socket.write(name + ": " + value + "\\r\\n");
-      socket.write("\\r\\n");
+      socket.write("HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\r\n");
+      for (const [name, value] of Object.entries(response.headers)) socket.write(name + ": " + value + "\r\n");
+      socket.write("\r\n");
       response.pipe(socket);
     });
     upstream.on("error", () => socket.destroy());
@@ -576,7 +576,7 @@ server.on("upgrade", async (req, socket, head) => {
     const port = Number(parts[3]);
     if (!safeWorkspaceId(workspaceId) || !validatePreviewPort(port) ||
         !verifySignature({ method: "GET", requestPath: req.url, body: Buffer.alloc(0), headers: req.headers })) {
-      socket.write("HTTP/1.1 401 Unauthorized\\r\\nConnection: close\\r\\n\\r\\n");
+      socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
     }
@@ -589,18 +589,18 @@ server.on("upgrade", async (req, socket, head) => {
         headers: { ...req.headers, host: address + ":" + port },
       });
       upstream.on("upgrade", (response, upstreamSocket, upstreamHead) => {
-        const status = "HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\\r\\n";
-        const responseHeaders = Object.entries(response.headers).map(([name, value]) => name + ": " + value + "\\r\\n").join("");
-        socket.write(status + responseHeaders + "\\r\\n");
+        const status = "HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\r\n";
+        const responseHeaders = Object.entries(response.headers).map(([name, value]) => name + ": " + value + "\r\n").join("");
+        socket.write(status + responseHeaders + "\r\n");
         if (upstreamHead && upstreamHead.length) socket.write(upstreamHead);
         if (head && head.length) upstreamSocket.write(head);
         upstreamSocket.pipe(socket);
         socket.pipe(upstreamSocket);
       });
       upstream.on("response", response => {
-        socket.write("HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\\r\\n");
-        for (const [name, value] of Object.entries(response.headers)) socket.write(name + ": " + value + "\\r\\n");
-        socket.write("\\r\\n");
+        socket.write("HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\r\n");
+        for (const [name, value] of Object.entries(response.headers)) socket.write(name + ": " + value + "\r\n");
+        socket.write("\r\n");
         response.pipe(socket);
       });
       upstream.on("error", () => socket.destroy());
