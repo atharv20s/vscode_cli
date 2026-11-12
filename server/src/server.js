@@ -144,6 +144,7 @@ app.get("/api/test-llm", requireAuth, agentLimiter, async (req, res) => {
   await streamChatCompletion({
     messages: [{ role: "user", content: "Say 'ATH IDE is alive!' in exactly five words." }],
     model: "devstral-low",
+    userId: req.user.id,
     onEvent: event => {
       if (event.type === "text_delta") responseText += event.data?.content || "";
       if (event.type === "model_selected") selectedModel = event.data;
