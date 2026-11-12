@@ -117,7 +117,9 @@ overwriting newer edits. New-file creation uses `If-None-Match: *`. The lock
 heartbeat prevents an active writer from being mistaken for a stale lock.
 
 The browser terminal uses the MIT-licensed xterm.js package over an authenticated
-WebSocket connected to node-pty. A PTY can detach and reattach using a
+WebSocket connected to node-pty. Browser JWT authentication is carried in the
+WebSocket subprotocol negotiation (not the URL query string), avoiding token
+exposure in ordinary reverse-proxy request URL logs. A PTY can detach and reattach using a
 workspace-scoped terminal UUID while the owning API/worker process remains
 alive; the server replays a bounded recent output buffer on reconnect. Idle
 detached PTYs are terminated after `TERMINAL_IDLE_TTL_MS`.
