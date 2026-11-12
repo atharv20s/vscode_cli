@@ -1,121 +1,154 @@
 import fs from "fs/promises";
 import path from "path";
+import { config } from "../config/env.js";
 
-const SKIP = new Set([".git","node_modules",".next","dist","build","coverage",".cache",".agent-runs"]);
+const SKIP = new Set([".git","node_modules",".next","dist","build","coverage",".cache",".agent-runs","vendor","target"]);
 const INSTRUCTION_FILES = ["AGENTS.md","CLAUDE.md","GEMINI.md",".github/copilot-instructions.md"];
 const SENSITIVE_PATH = /(^|\/)(\.env(?!\.(example|sample|template)$)[^/]*|\.npmrc|\.pypirc|\.netrc|credentials?\.json|secrets?\.(json|ya?ml)|id_rsa|id_ed25519)(\/|$)|\.(pem|key|p12|pfx)$/i;
-const CONTEXT_FILES = [
-  "README.md","package.json","pnpm-workspace.yaml","pyproject.toml","requirements.txt",
-  "pytest.ini","Cargo.toml","go.mod","pom.xml","build.gradle","Makefile",
-];
+const CONTEXT_FILES = ["README.md","package.json","pnpm-workspace.yaml","pyproject.toml","requirements.txt","pytest.ini","Cargo.toml","go.mod","pom.xml","build.gradle","Makefile"];
+const SOURCE_EXT = new Set([".js",".jsx",".ts",".tsx",".mjs",".cjs",".py",".go",".rs",".java",".kt",".vue",".svelte"]);
+const IMPORT_RE = /(?:from\s*|import\s*|require\s*\(|import\s*\()\s*["']([^"']+)["']/g;
 
 function words(value) {
   return new Set(String(value || "").toLowerCase().match(/[a-z0-9_./-]{2,}/g) || []);
 }
-
-async function safeRead(root, relative, maxBytes = 18000) {
+function estimateTokens(value) {
+  // Conservative fallback only; model-specific tokenizers can replace this.
+  return Math.ceil(String(value || "").length / 3.5);
+}
+async function safeRead(root, relative, maxBytes = 24000) {
   try {
     const absoluteRoot = await fs.realpath(root);
     const target = path.resolve(absoluteRoot, relative);
     const rel = path.relative(absoluteRoot, target);
     if (rel.startsWith("..") || path.isAbsolute(rel)) return "";
-
-    const segments = rel.split(path.sep).filter(Boolean);
     let current = absoluteRoot;
-    for (let index = 0; index < segments.length; index++) {
-      current = path.join(current, segments[index]);
+    const segments = rel.split(path.sep).filter(Boolean);
+    for (let i = 0; i < segments.length; i++) {
+      current = path.join(current, segments[i]);
       const stat = await fs.lstat(current);
       if (stat.isSymbolicLink()) return "";
-      if (index < segments.length - 1 && !stat.isDirectory()) return "";
-      if (index === segments.length - 1 && (!stat.isFile() || stat.size > maxBytes)) return "";
+      if (i < segments.length - 1 && !stat.isDirectory()) return "";
+      if (i === segments.length - 1 && (!stat.isFile() || stat.size > maxBytes)) return "";
     }
-    return (await fs.readFile(target, "utf8")).slice(0, maxBytes);
-  } catch {
-    return "";
-  }
+    return await fs.readFile(target, "utf8");
+  } catch { return ""; }
+}
+function resolveImport(fromFile, specifier, knownFiles) {
+  if (!specifier.startsWith(".")) return null;
+  const base = path.posix.normalize(path.posix.join(path.posix.dirname(fromFile), specifier));
+  const candidates = [base, ...[".js",".jsx",".ts",".tsx",".mjs",".cjs",".py",".go",".rs",".json"].map(ext => base + ext),
+    ...["index.js","index.ts","index.tsx","__init__.py"].map(file => base + "/" + file)];
+  return candidates.find(candidate => knownFiles.has(candidate)) || null;
 }
 
-export async function buildRepositoryContext(root, prompt) {
+export async function buildRepositoryContext(root, prompt, options = {}) {
   const files = [];
-  const samples = [];
+  const fileSet = new Set();
   let visited = 0;
-
   async function walk(dir, prefix = "") {
-    if (visited >= 3000) return;
+    if (visited >= 5000) return;
     let entries;
     try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+    entries.sort((a,b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
-      if (visited >= 3000) return;
+      if (visited >= 5000) return;
       if (SKIP.has(entry.name) || entry.isSymbolicLink()) continue;
       const relative = prefix ? prefix + "/" + entry.name : entry.name;
-      if (relative.split("/").some(part => SKIP.has(part))) continue;
+      if (relative.split("/").some(part => SKIP.has(part)) || SENSITIVE_PATH.test(relative)) continue;
       visited++;
-      if (entry.isDirectory()) {
-        files.push(relative + "/");
-        await walk(path.join(dir, entry.name), relative);
-      } else if (entry.isFile()) {
-        files.push(relative);
-      }
+      if (entry.isDirectory()) await walk(path.join(dir, entry.name), relative);
+      else if (entry.isFile()) { files.push(relative); fileSet.add(relative); }
     }
   }
   await walk(root);
 
   const promptWords = words(prompt);
-  const ranked = files.filter(name => !name.endsWith("/")).map(name => {
-    const tokens = words(name);
-    let score = 0;
-    for (const token of promptWords) if (tokens.has(token)) score += 4;
-    if (/test|spec/i.test(name) && /test|bug|fix|verify/i.test(prompt)) score += 2;
-    if (/route|controller|service|model|schema|config/i.test(name)) score += 1;
-    return { name, score };
-  }).sort((a,b) => b.score-a.score || a.name.localeCompare(b.name));
-
-  const selected = new Set(CONTEXT_FILES.filter(name => files.includes(name) && !SENSITIVE_PATH.test(name)));
-  for (const item of ranked.slice(0, 18)) if (!SENSITIVE_PATH.test(item.name)) selected.add(item.name);
+  const ranked = files.filter(name => SOURCE_EXT.has(path.extname(name).toLowerCase()) || CONTEXT_FILES.includes(name))
+    .map(name => {
+      const tokens = words(name);
+      let score = 0;
+      for (const token of promptWords) if (tokens.has(token)) score += 5;
+      if (/test|spec/i.test(name) && /test|bug|fix|verify|regression/i.test(prompt)) score += 4;
+      if (/route|controller|service|model|schema|config|auth|api|store|db/i.test(name)) score += 2;
+      if (CONTEXT_FILES.includes(name)) score += 3;
+      return { name, score };
+    }).sort((a,b) => b.score-a.score || a.name.localeCompare(b.name));
 
   const instructions = [];
   for (const file of INSTRUCTION_FILES) {
-    const content = await safeRead(root, file);
+    const content = await safeRead(root, file, 16000);
     if (content) instructions.push({ path: file, content });
   }
-  const directoryMap = files.slice(0, 260).join("\n");
-  for (const file of selected) {
-    const content = await safeRead(root, file, 12000);
-    if (content) samples.push({ path: file, content });
+
+  const selected = new Set(CONTEXT_FILES.filter(file => fileSet.has(file)));
+  const primary = ranked.slice(0, Math.max(16, Math.min(36, options.maxPrimaryFiles || 24)));
+  for (const item of primary) selected.add(item.name);
+
+  // Expand one hop through relative imports from selected source files. This
+  // catches actual dependencies/call sites that filename-only ranking misses.
+  const importEdges = [];
+  for (const name of Array.from(selected)) {
+    if (!SOURCE_EXT.has(path.extname(name).toLowerCase())) continue;
+    const content = await safeRead(root, name, 24000);
+    if (!content) continue;
+    IMPORT_RE.lastIndex = 0;
+    let match;
+    while ((match = IMPORT_RE.exec(content)) !== null) {
+      const target = resolveImport(name, match[1], fileSet);
+      if (target && !SENSITIVE_PATH.test(target)) {
+        importEdges.push({ from: name, to: target });
+        if (selected.size < 60) selected.add(target);
+      }
+    }
   }
 
+  const samples = [];
+  const maxFileChars = options.maxFileChars || 24000;
+  for (const file of selected) {
+    if (SENSITIVE_PATH.test(file)) continue;
+    const content = await safeRead(root, file, maxFileChars);
+    if (content) samples.push({ path: file, content });
+  }
   const packageJson = samples.find(item => item.path === "package.json");
   let scripts = {};
   if (packageJson) {
     try { scripts = JSON.parse(packageJson.content).scripts || {}; } catch {}
   }
-
-  const retrieved = ranked.filter(item => item.score > 0 && !SENSITIVE_PATH.test(item.name)).slice(0, 24);
   return {
     generatedAt: new Date().toISOString(),
     fileCount: files.length,
-    filePaths: files.filter(name => !name.endsWith("/")),
-    truncated: visited >= 3000,
-    directoryMap,
+    filePaths: files,
+    truncated: visited >= 5000,
+    directoryMap: files.slice(0, 500).join("\n"),
     instructions,
     samples,
-    retrievedFiles: retrieved,
+    retrievedFiles: ranked.slice(0, 40),
+    importEdges,
     scripts,
-    promptKeywords: Array.from(promptWords).slice(0, 80),
+    promptKeywords: Array.from(promptWords).slice(0, 100),
   };
 }
 
-export function formatRepositoryContext(context) {
+export function formatRepositoryContext(context, options = {}) {
+  const budget = Math.max(2048, Number(options.maxTokens || config.llmContextBudgetTokens || 24000));
+  const maxChars = Math.floor(budget * 3.5);
   const parts = [
     "## Repository inventory",
-    "Tracked workspace entries: " + context.fileCount + (context.truncated ? " (inventory capped)" : ""),
+    "Files discovered: " + context.fileCount + (context.truncated ? " (inventory capped)" : ""),
     context.directoryMap,
+    "## Relevant dependency relationships",
+    (context.importEdges || []).slice(0, 120).map(edge => edge.from + " imports " + edge.to).join("\n"),
   ];
-  for (const instruction of context.instructions) {
-    parts.push("## Project instructions: " + instruction.path + "\n" + instruction.content);
+  for (const item of context.instructions || []) parts.push("## Project instructions: " + item.path + "\n" + item.content);
+  // Keep manifests and instructions first; selected implementation files are
+  // then admitted whole until the budget is reached, avoiding broken snippets.
+  const header = parts.join("\n\n");
+  let output = header.slice(0, Math.min(header.length, Math.floor(maxChars * 0.3)));
+  for (const sample of context.samples || []) {
+    const section = "\n\n## Source: " + sample.path + "\n" + sample.content;
+    if (output.length + section.length > maxChars) continue;
+    output += section;
   }
-  for (const sample of context.samples) {
-    parts.push("## Context file: " + sample.path + "\n" + sample.content);
-  }
-  return parts.join("\n\n").slice(0, 48000);
+  return output;
 }
