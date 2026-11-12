@@ -345,6 +345,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
   const taskDir = path.dirname(repoPath);
   const workspaceId = "repo-agent-" + taskId;
   const abortSignal = signal || new AbortController().signal;
+  let leaseLost = false;
 
   try {
     await patchTask(userId, taskId, { status: "cloning" });
@@ -451,6 +452,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     });
     await fs.rm(taskDir, { recursive: true, force: true });
   } catch (error) {
+    if (error.leaseLost) { leaseLost = true; throw error; }
     if (/Quality gate/.test(error.message)) error.retryable = false;
     logger.error("Repository agent task failed", { taskId: taskId, userId: userId, error: error.message });
     await patchTask(userId, taskId, {
@@ -461,7 +463,9 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     if (error.retryable === false) return { status: "failed", retryable: false }; 
     throw error;
   } finally {
-    try { await dockerWorkspaceRuntime.stop(workspaceId); } catch {}
+    if (!leaseLost) {
+      try { await dockerWorkspaceRuntime.stop(workspaceId); } catch {}
+    }
     if (abortSignal.aborted) {
       try { await fs.rm(taskDir, { recursive: true, force: true }); } catch {}
     }
@@ -529,14 +533,14 @@ export async function processRepoAgentTask(taskId, options = {}) {
     prompt: row.prompt,
     workspace_path: repoPath,
   };
-  const assertLease = async () => {
+  const assertLease = options.assertLease || (async () => {
     const owned = await repoAgentQueue.ownsLease(taskId, options.leaseToken);
     if (!owned) {
       const error = new Error("Worker lease was lost; this consumer must not publish task changes.");
       error.leaseLost = true;
       throw error;
     }
-  };
+  });
   return executeTask(task, token, octokit, baseTreeSha, baseEntries, protectedPaths, options.signal || null, assertLease);
 }
 
