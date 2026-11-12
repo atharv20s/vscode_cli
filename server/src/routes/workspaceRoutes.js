@@ -15,8 +15,30 @@ import {
 } from "../controllers/fileController.js";
 import { LocalBackend } from "../services/backends/localBackend.js";
 import { config } from "../config/env.js";
+import { listWorkspaceSessions, createWorkspaceSession } from "../services/workspaceSessionService.js";
 
 const router = Router();
+
+router.get("/sessions", requireAuth, async (req, res) => {
+  try {
+    return res.json({
+      sessions: await listWorkspaceSessions(req.user.id),
+      quotaBytes: config.workspaceQuotaBytes,
+      maxFileBytes: config.workspaceMaxFileBytes,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "WorkspaceRegistryError", message: error.message });
+  }
+});
+
+router.post("/sessions", requireAuth, async (req, res) => {
+  try {
+    return res.status(201).json({ session: await createWorkspaceSession(req.user.id, req.body?.name) });
+  } catch (error) {
+    const status = error.code === "WORKSPACE_SESSION_LIMIT" ? 429 : error.code === "WORKSPACE_BUSY" ? 423 : 400;
+    return res.status(status).json({ error: error.code || "BadRequest", message: error.message });
+  }
+});
 
 router.get("/files", requireAuth, listFiles);
 router.get("/file", requireAuth, readFile);

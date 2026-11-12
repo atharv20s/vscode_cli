@@ -310,14 +310,16 @@ export function updateConversationMessages(id, messages, totalTokens) {
     .run(JSON.stringify(messages), totalTokens, id);
 }
 
-export function updateConversationTitle(id, title) {
+export function updateConversationTitle(id, title, userId = null) {
+  if (!userId) return { changes: 0 };
   return getDatabase()
-    .prepare("UPDATE conversations SET title = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(title, id);
+    .prepare("UPDATE conversations SET title = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
+    .run(title, id, userId);
 }
 
-export function deleteConversation(id) {
-  return getDatabase().prepare("DELETE FROM conversations WHERE id = ?").run(id);
+export function deleteConversation(id, userId = null) {
+  if (!userId) return { changes: 0 };
+  return getDatabase().prepare("DELETE FROM conversations WHERE id = ? AND user_id = ?").run(id, userId);
 }
 
 export function listConversations(userIdOrSessionId) {

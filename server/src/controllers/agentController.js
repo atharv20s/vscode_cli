@@ -36,8 +36,8 @@ export async function chatStream(req, res) {
       conversationHistory: conversationHistory || [],
       model: model || undefined,
       systemPrompt: systemPrompt || undefined,
-      workspaceDir: getWorkspaceService(req.user.id).workspaceRoot,
-      workspaceId: getWorkspaceService(req.user.id).workspaceId,
+      workspaceDir: getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default").workspaceRoot,
+      workspaceId: getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default").workspaceId,
       userId: req.user.id,
       onEvent: (event) => {
         res.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -79,8 +79,7 @@ import { v4 as uuidv4 } from "uuid";
  */
 export function getConversations(req, res) {
   try {
-    const userOrSession = req.user?.id || req.user?.username || req.headers["x-user-id"] || req.query.userId || null;
-    const list = listConversations(userOrSession);
+    const list = listConversations(req.user.id);
     res.json({ success: true, conversations: list });
   } catch (err) {
     res.status(500).json({ error: "DbError", message: err.message });
@@ -91,11 +90,11 @@ export function getConversations(req, res) {
  * POST /api/agent/conversations — Create a new conversation.
  */
 export function createNewConversation(req, res) {
-  const { title, model, userId } = req.body || {};
+  const { title, model } = req.body || {};
   const convId = `conv_${uuidv4().replace(/-/g, "").slice(0, 16)}`;
   const convTitle = title || "New Conversation";
   const sid = req.user?.sessionId || "default_session";
-  const uid = req.user?.id || req.user?.username || userId || req.headers["x-user-id"] || null;
+  const uid = req.user.id;
 
   try {
     createConversation({
@@ -123,7 +122,8 @@ export function renameConversation(req, res) {
   }
 
   try {
-    updateConversationTitle(id, title.trim());
+    const updated = updateConversationTitle(id, title.trim(), req.user.id);
+    if (!updated.changes) return res.status(404).json({ error: "NotFound", message: "Conversation not found." });
     res.json({ success: true, message: "Conversation title updated." });
   } catch (err) {
     res.status(500).json({ error: "DbError", message: err.message });
@@ -137,7 +137,8 @@ export function removeConversation(req, res) {
   const { id } = req.params;
 
   try {
-    deleteConversation(id);
+    const deleted = deleteConversation(id, req.user.id);
+    if (!deleted.changes) return res.status(404).json({ error: "NotFound", message: "Conversation not found." });
     res.json({ success: true, message: "Conversation deleted." });
   } catch (err) {
     res.status(500).json({ error: "DbError", message: err.message });
