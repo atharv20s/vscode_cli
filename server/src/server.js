@@ -25,7 +25,9 @@ import { initializeTools } from "./tools/index.js";
 import { initMcpServers, shutdownMcpServers, getMcpStatus } from "./mcp/mcpClient.js";
 import { initWebSocketServer } from "./websocket/wsServer.js";
 import { generalLimiter } from "./middleware/rateLimiter.js";
-import { previewAuth } from "./middleware/auth.js";
+import { previewAuth, requireAuth } from "./middleware/auth.js";
+import { agentLimiter } from "./middleware/rateLimiter.js";
+import { streamChatCompletion } from "./services/llmService.js";
 import { getWorkspaceService } from "./services/workspaceService.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 
@@ -96,19 +98,19 @@ app.get("/api/health", (req, res) => {
 });
 
 // Live System Health Metrics endpoint (CPU, RAM, Queue)
-app.get("/api/health/metrics", async (req, res) => {
+app.get("/api/health/metrics", requireAuth, async (req, res) => {
   const { systemHealthService } = await import("./services/systemHealthService.js");
   res.json(systemHealthService.getMetrics());
 });
 
 // Compilation & Execution Queue Status endpoint
-app.get("/api/queue/status", async (req, res) => {
+app.get("/api/queue/status", requireAuth, async (req, res) => {
   const { executionQueue } = await import("./services/executionQueue.js");
   res.json(executionQueue.getStatus());
 });
 
 // Distributed Cluster Topology & Multi-Instance Registry endpoint
-app.get("/api/cluster/nodes", async (req, res) => {
+app.get("/api/cluster/nodes", requireAuth, async (req, res) => {
   const { clusterManager } = await import("./services/clusterManager.js");
   const nodes = await clusterManager.getClusterNodes();
   res.json({
@@ -119,7 +121,7 @@ app.get("/api/cluster/nodes", async (req, res) => {
 });
 
 // Kafka Distributed Queue Status endpoint
-app.get("/api/kafka/status", async (req, res) => {
+app.get("/api/kafka/status", requireAuth, async (req, res) => {
   const { kafkaService } = await import("./services/kafkaService.js");
   res.json({
     connected: kafkaService.isConnected,
@@ -129,56 +131,27 @@ app.get("/api/kafka/status", async (req, res) => {
   });
 });
 
-// Direct LLM test endpoint with intelligent multi-provider failover
-app.get("/api/test-llm", async (req, res) => {
-  try {
-    const OpenAI = (await import("openai")).default;
-    const mistralKey = config.mistralKey || process.env.MISTRAL_API_KEY;
-    const openrouterKey = config.openrouterKey || process.env.OPENROUTER_API_KEY;
-
-    const candidates = [];
-    if (config.defaultLlmProvider === "openrouter" && openrouterKey) {
-      candidates.push({ provider: "OpenRouter", key: openrouterKey, baseURL: "https://openrouter.ai/api/v1", model: "openrouter/free" });
-      if (mistralKey) candidates.push({ provider: "Mistral AI Direct", key: mistralKey, baseURL: "https://api.mistral.ai/v1", model: "mistral-small-latest" });
-    } else {
-      if (mistralKey) candidates.push({ provider: "Mistral AI Direct", key: mistralKey, baseURL: "https://api.mistral.ai/v1", model: "mistral-small-latest" });
-      if (openrouterKey) candidates.push({ provider: "OpenRouter", key: openrouterKey, baseURL: "https://openrouter.ai/api/v1", model: "openrouter/free" });
-    }
-
-    if (candidates.length === 0) {
-      return res.status(500).json({ error: "No LLM API key found in env", mistralKey: Boolean(mistralKey), openrouterKey: Boolean(openrouterKey) });
-    }
-
-    let lastError = null;
-    for (const c of candidates) {
-      try {
-        logger.info(`test-llm: Trying ${c.provider} with model ${c.model}...`);
-        const client = new OpenAI({ apiKey: c.key, baseURL: c.baseURL });
-        const response = await client.chat.completions.create({
-          model: c.model,
-          messages: [{ role: "user", content: "Say 'ATH IDE is alive!' in exactly 5 words." }],
-          max_tokens: 50,
-        });
-
-        return res.json({
-          success: true,
-          provider: c.provider,
-          model: c.model,
-          response: response.choices[0]?.message?.content,
-          keyPrefix: c.key.slice(0, 8) + "...",
-        });
-      } catch (err) {
-        lastError = err;
-        logger.warn(`test-llm: Provider ${c.provider} failed: ${err.message}. Trying next candidate...`);
-      }
-    }
-
-    logger.error("test-llm FAILED on all providers", { error: lastError?.message });
-    res.status(lastError?.status || 500).json({ success: false, error: lastError?.message, status: lastError?.status });
-  } catch (err) {
-    logger.error("test-llm fatal error", { error: err.message });
-    res.status(500).json({ success: false, error: err.message });
+// Provider diagnostic uses the exact configured model-routing path as agent requests.
+// It is authenticated and rate-limited because every call may consume provider credits.
+app.get("/api/test-llm", requireAuth, agentLimiter, async (req, res) => {
+  let responseText = "";
+  let selectedModel = null;
+  let usage = null;
+  let failure = null;
+  await streamChatCompletion({
+    messages: [{ role: "user", content: "Say 'ATH IDE is alive!' in exactly five words." }],
+    model: "devstral-low",
+    onEvent: event => {
+      if (event.type === "text_delta") responseText += event.data?.content || "";
+      if (event.type === "model_selected") selectedModel = event.data;
+      if (event.type === "usage") usage = event.data;
+      if (event.type === "error") failure = event.data?.message || "Model diagnostic failed.";
+    },
+  });
+  if (failure || !selectedModel) {
+    return res.status(502).json({ success: false, error: failure || "No configured fast-tier model is available." });
   }
+  return res.json({ success: true, provider: selectedModel.provider, model: selectedModel.model, response: responseText, usage });
 });
 
 app.use("/api/auth", authRoutes);
@@ -187,7 +160,7 @@ app.use("/api/workspace", workspaceRoutes);
 app.use("/api/github", githubRoutes);
 
 // Kubernetes Cluster & Pod status endpoint
-app.get("/api/k8s/status", async (req, res) => {
+app.get("/api/k8s/status", requireAuth, async (req, res) => {
   const { isK8sAvailable, listUserPods } = await import("./services/k8sService.js");
   const available = await isK8sAvailable();
   const pods = available ? await listUserPods() : [];

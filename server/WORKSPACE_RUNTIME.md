@@ -99,3 +99,39 @@ DOCKER_WORKSPACE_NETWORK=none
 ```
 
 The API process and Docker daemon must see the same absolute `WORKSPACE_ROOT`. This mode is not compatible with the current Cloud Run deployment.
+
+
+## Workspace and terminal milestone (ATH IDE runtime v1)
+
+The studio now supports authenticated named workspaces per user. Set
+`WORKSPACE_STORAGE_ROOT` to a durable **shared filesystem mount** on every API
+instance before production use. Each owner has an opaque SHA-256 directory;
+named workspaces live below that owner's `sessions/` directory. Configure
+`WORKSPACE_QUOTA_BYTES`, `WORKSPACE_MAX_FILE_BYTES` and
+`WORKSPACE_MAX_SESSIONS_PER_USER` to bound storage and workspace count.
+
+File writes are atomic (same-directory temporary file + rename), serialized by
+a shared lock file, and guarded by SHA-256 optimistic versions. Editors should
+send `If-Match: "<version>"`; stale saves return HTTP 409 instead of silently
+overwriting newer edits. New-file creation uses `If-None-Match: *`. The lock
+heartbeat prevents an active writer from being mistaken for a stale lock.
+
+The browser terminal uses the MIT-licensed xterm.js package over an authenticated
+WebSocket connected to node-pty. A PTY can detach and reattach using a
+workspace-scoped terminal UUID while the owning API/worker process remains
+alive; the server replays a bounded recent output buffer on reconnect. Idle
+detached PTYs are terminated after `TERMINAL_IDLE_TTL_MS`.
+
+### Explicit limits
+
+- Durable storage currently means a mounted filesystem, not S3/GCS object storage.
+- All APIs sharing the same workspace files must mount the same filesystem and
+  honor its exclusive-create/rename/mtime semantics.
+- The workspace event bus is process-local; cross-replica live file notifications
+  still need Redis Pub/Sub or PostgreSQL NOTIFY.
+- PTY ownership and output buffers are process-local. Reconnect survives a
+  browser disconnect, not a worker restart or a different replica.
+- Production terminal/preview routing still needs a worker-affinity or terminal
+  broker and an authenticated preview reverse proxy.
+- This branch does not provision infrastructure, run migrations against a
+  hosted DB, or activate any paid service.
