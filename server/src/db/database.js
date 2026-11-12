@@ -69,6 +69,28 @@ export function initDatabase() {
       FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS repo_agent_tasks (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      owner TEXT NOT NULL,
+      repo TEXT NOT NULL,
+      base_branch TEXT NOT NULL,
+      base_sha TEXT NOT NULL,
+      branch TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      workspace_path TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      events_json TEXT NOT NULL DEFAULT '[]',
+      pr_url TEXT,
+      pr_number INTEGER,
+      error TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_repo_agent_tasks_user
+      ON repo_agent_tasks(user_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS cache_entries (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
