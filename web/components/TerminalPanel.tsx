@@ -5,7 +5,12 @@ import { api } from "@/lib/api";
 
 type TerminalStatus = "Waiting for API" | "Connecting" | "Connected" | "Reconnecting" | "Unavailable";
 
-export default function TerminalPanel({ workspaceId, apiStatus }: { workspaceId: string; apiStatus: string }) {
+export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, onPreviewStopped }: {
+  workspaceId: string;
+  apiStatus: string;
+  onPreviewReady?: (url: string) => void;
+  onPreviewStopped?: () => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<TerminalStatus>("Waiting for API");
 
@@ -85,6 +90,10 @@ export default function TerminalPanel({ workspaceId, apiStatus }: { workspaceId:
         } else if (packet.type === "terminal.output") {
           const output = payload.text ?? payload.data ?? "";
           if (typeof output === "string" && output) terminal?.write(output);
+        } else if (packet.type === "preview.ready") {
+          if (typeof payload.url === "string") onPreviewReady?.(payload.url);
+        } else if (packet.type === "preview.stopped") {
+          onPreviewStopped?.();
         } else if (packet.type === "terminal.exit" || packet.type === "terminal_exit") {
           terminal?.write("\r\n[terminal process exited]\r\n");
           setStatus("Unavailable");
@@ -163,7 +172,7 @@ export default function TerminalPanel({ workspaceId, apiStatus }: { workspaceId:
       socket?.close();
       terminal?.dispose();
     };
-  }, [workspaceId, apiStatus]);
+  }, [workspaceId, apiStatus, onPreviewReady, onPreviewStopped]);
 
   return (
     <div className="h-full w-full min-h-0 relative">

@@ -42,7 +42,6 @@ export default function Home() {
   const [terminalInput, setTerminalInput] = useState("");
   const [terminalConnected, setTerminalConnected] = useState(false);
   const [terminalVisible, setTerminalVisible] = useState(true);
-  const [socketReady, setSocketReady] = useState(false);
   const [previewUrl, setPreviewUrl] = useState("");
   const [notice, setNotice] = useState("");
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
@@ -54,6 +53,7 @@ export default function Home() {
   const [repoBusy, setRepoBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<"chat" | "tasks">("chat");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const clearPreview = useCallback(() => setPreviewUrl(""), []);
 
   const refreshFiles = useCallback(async (directory = ".") => {
     const data = await api.json<{ entries: FileEntry[] }>("/api/workspace/files?path=" + encodeURIComponent(directory));
@@ -358,7 +358,7 @@ export default function Home() {
               <span className="flex items-center gap-2"><SquareTerminal size={14}/>Interactive terminal</span>
               <span className="text-slate-500">xterm.js · workspace PTY</span>
             </div>
-            <div className="flex-1 min-h-0 p-2"><TerminalPanel workspaceId={workspaceId} apiStatus={apiStatus}/></div>
+            <div className="flex-1 min-h-0 p-2"><TerminalPanel workspaceId={workspaceId} apiStatus={apiStatus} onPreviewReady={setPreviewUrl} onPreviewStopped={clearPreview}/></div>
           </div>}
           {previewUrl && <div className="h-9 shrink-0 border-t border-slate-800 flex items-center px-3 text-xs text-emerald-300">Preview ready: <a className="ml-2 underline" href={previewUrl} target="_blank" rel="noreferrer">{previewUrl}</a></div>}
         </section>
