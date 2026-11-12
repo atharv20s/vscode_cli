@@ -350,7 +350,8 @@ async function handleMessage(ws, msg, user) {
         command: payload?.command || "",
         cwd: payload?.cwd || config.workspaceRoot,
       }, {
-        sessionId: ws.sessionId,
+        sessionId: ws.terminalSessionId,
+        workspaceId: ws.workspaceId,
         source: "ui",
         actor: "user",
       });
@@ -361,11 +362,12 @@ async function handleMessage(ws, msg, user) {
       eventBus.publish(EVENT_TOPICS.TERMINAL_PASTE, {
         text: payload?.text || "",
       }, {
-        sessionId: ws.sessionId,
+        sessionId: ws.terminalSessionId,
+        workspaceId: ws.workspaceId,
         source: "ui",
         actor: "user",
       });
-      executionService.writeInteractive(ws.sessionId, payload?.text || "");
+      executionService.writeInteractive(ws.terminalSessionId, payload?.text || "", ws.userId, ws.workspaceId);
       break;
 
     // Terminal Dimensions Resize
