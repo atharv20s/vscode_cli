@@ -24,6 +24,7 @@ class RepoAgentQueue {
       });
     }
     if (this.client.status === "wait") await this.client.connect();
+    await this.client.ping();
     await this.ensureGroup();
     return this.client;
   }
@@ -90,6 +91,11 @@ class RepoAgentQueue {
     const client = await this.connect();
     const script = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end";
     return Number(await client.eval(script, 1, LEASE_PREFIX + taskId, token, String(ttlMs))) === 1;
+  }
+
+  async ownsLease(taskId, token) {
+    const client = await this.connect();
+    return (await client.get(LEASE_PREFIX + taskId)) === token;
   }
 
   async releaseLease(taskId, token) {
