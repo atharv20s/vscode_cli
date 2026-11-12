@@ -4,6 +4,7 @@ import { runAgent } from "./agentService.js";
 import { dockerWorkspaceRuntime } from "./dockerWorkspaceRuntime.js";
 import { buildRepositoryContext, formatRepositoryContext } from "./repoContextEngine.js";
 import { appendRepoTaskEvent, saveRepoContextRound } from "../db/repoAgentStore.js";
+import { config } from "../config/env.js";
 
 const PLANNER_TOOLS = ["read_file","list_files"];
 const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command"];
@@ -94,7 +95,7 @@ async function detectChecks(root, context) {
     if (scripts.test) checks.push({
       name: "test",
       command: manager === "pnpm" ? "pnpm test" : manager === "yarn" ? "yarn test" : "npm test",
-      blocked: !hasNodeModules && Object.keys(manifest.dependencies || {}).length + Object.keys(manifest.devDependencies || {}).length > 0,
+      blocked: !hasNodeModules && config.repoAgentNetwork !== "bridge" && Object.keys(manifest.dependencies || {}).length + Object.keys(manifest.devDependencies || {}).length > 0,
     });
     if (scripts.build) checks.push({
       name: "build",
@@ -120,9 +121,76 @@ async function detectChecks(root, context) {
   return checks.slice(0,4);
 }
 
+async function prepareDependencies({ root, workspaceId, context, signal, onEvent }) {
+  const packageSample = context.samples.find(item => item.path === "package.json");
+  if (packageSample) {
+    let manifest = {};
+    try { manifest = JSON.parse(packageSample.content); } catch {}
+    const dependencyCount = Object.keys(manifest.dependencies || {}).length + Object.keys(manifest.devDependencies || {}).length;
+    const hasNodeModules = await fs.access(path.join(root,"node_modules")).then(()=>true).catch(()=>false);
+    if (dependencyCount > 0 && !hasNodeModules) {
+      if (config.repoAgentNetwork !== "bridge") {
+        return {
+          name:"dependency-install",command:"package manager install",success:false,blocked:true,exitCode:null,
+          output:"Dependencies are declared but node_modules is absent. REPO_AGENT_NETWORK=none blocks package downloads.",
+        };
+      }
+      let manager = "npm";
+      let command = "npm install";
+      if (await fs.access(path.join(root,"pnpm-lock.yaml")).then(()=>true).catch(()=>false)) {
+        manager = "pnpm";
+        command = "corepack pnpm install --frozen-lockfile";
+      } else if (await fs.access(path.join(root,"yarn.lock")).then(()=>true).catch(()=>false)) {
+        manager = "yarn";
+        command = await fs.access(path.join(root,".yarnrc.yml")).then(()=>true).catch(()=>false)
+          ? "corepack yarn install --immutable"
+          : "corepack yarn install --frozen-lockfile";
+      } else if (await fs.access(path.join(root,"package-lock.json")).then(()=>true).catch(()=>false)) {
+        command = "npm ci";
+      }
+      onEvent?.({ type:"dependency_install_start",data:{manager,command} });
+      const result = await dockerWorkspaceRuntime.execute({
+        workspaceId,workspaceDir:root,cwd:root,command,timeout:300000,signal,
+      });
+      const normalized = {
+        name:"dependency-install",command,success:result.success===true,blocked:false,
+        exitCode:result.exitCode,output:String(result.output||"").slice(-12000),
+      };
+      onEvent?.({ type:"dependency_install_result",data:normalized });
+      if (!normalized.success) return normalized;
+    }
+  }
+
+  if (context.samples.some(item=>item.path==="pyproject.toml") ||
+      await fs.access(path.join(root,"requirements.txt")).then(()=>true).catch(()=>false)) {
+    const hasPytest = await fs.access(path.join(root,".venv","bin","python")).then(()=>true).catch(()=>false);
+    const hasVenv = await fs.access(path.join(root,".venv","Scripts","python.exe")).then(()=>true).catch(()=>false);
+    if (!hasPytest && !hasVenv && config.repoAgentNetwork === "bridge") {
+      let command = "python -m pip install --user -e .";
+      if (await fs.access(path.join(root,"requirements.txt")).then(()=>true).catch(()=>false)) {
+        command = "python -m pip install --user -r requirements.txt";
+      }
+      onEvent?.({type:"dependency_install_start",data:{manager:"pip",command}});
+      const result = await dockerWorkspaceRuntime.execute({
+        workspaceId,workspaceDir:root,cwd:root,command,timeout:300000,signal,
+      });
+      const normalized = {
+        name:"python-dependency-install",command,success:result.success===true,blocked:false,
+        exitCode:result.exitCode,output:String(result.output||"").slice(-12000),
+      };
+      onEvent?.({type:"dependency_install_result",data:normalized});
+      if (!normalized.success) return normalized;
+    }
+  }
+
+  return null;
+}
+
 async function runDeterministicChecks({ task, root, workspaceId, context, signal, onEvent }) {
   const checks = await detectChecks(root,context);
   const results = [];
+  const dependencyResult = await prepareDependencies({root,workspaceId,context,signal,onEvent});
+  if (dependencyResult) results.push(dependencyResult);
   for (const check of checks) {
     if (signal?.aborted) throw new Error("Task cancelled during verification.");
     if (check.blocked) {
