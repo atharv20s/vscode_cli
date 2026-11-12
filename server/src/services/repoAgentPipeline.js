@@ -40,6 +40,7 @@ async function runRole(options) {
     allowedTools: tools,
     persistWorkspaceMeta: false,
     maxIterations: maxIterations || 12,
+    model: options.model || "coding",
     signal: options.signal,
     systemPrompt: [
       "You are the " + role + " specialist in ATH IDE's repository engineering pipeline.",
@@ -274,7 +275,7 @@ async function runDeterministicChecks({ task, root, workspaceId, context, signal
 export async function runRepoAgentPipeline(options) {
   const { task, workspaceDir, workspaceId, workspaceService, signal, onEvent } = options;
   const context = await buildRepositoryContext(workspaceDir, task.prompt);
-  const contextBlock = formatRepositoryContext(context);
+  const contextBlock = formatRepositoryContext(context, { maxTokens: config.llmContextBudgetTokens });
   const attempt = Number(task.attempt_count || 0);
   const roundOffset = attempt * 10;
   const previousRounds = attempt > 0 ? await listRepoContextRounds(task.id) : [];
@@ -317,13 +318,13 @@ export async function runRepoAgentPipeline(options) {
 
   const plan = await runRole({
     task, role: "planner", roundNumber: roundOffset + 1, workspaceDir, workspaceId,
-    workspaceService, tools: PLANNER_TOOLS, signal, onEvent,
+    workspaceService, tools: PLANNER_TOOLS, model: "reasoning", signal, onEvent,
     message: base + "\n\nInspect the actual project. Produce a focused implementation plan, identify likely files and existing conventions, note likely tests and acceptance criteria. Do not modify source files in this phase.",
   });
 
   let implementationSummary = await runRole({
     task, role: "coder", roundNumber: roundOffset + 2, workspaceDir, workspaceId,
-    workspaceService, tools: CODER_TOOLS, signal, onEvent,
+    workspaceService, tools: CODER_TOOLS, model: "coding", signal, onEvent,
     message: base + "\n\nIMPLEMENTATION PLAN:\n" + plan + "\n\nImplement the request in the repository. Make coherent changes, preserve project conventions, and avoid unrelated refactors. Run quick checks available within the workspace. Do not say the task is complete until the verification agent has checked it.",
     maxIterations: 22,
   });
@@ -336,7 +337,7 @@ export async function runRepoAgentPipeline(options) {
     await options.setStatus?.("testing");
     const tester = await runRole({
       task, role: "tester", roundNumber: roundOffset + 3 + attempt * 2, workspaceDir, workspaceId,
-      workspaceService, tools: TESTER_TOOLS, signal, onEvent,
+      workspaceService, tools: TESTER_TOOLS, model: "fast", signal, onEvent,
       message: base + "\n\nIMPLEMENTATION SUMMARY:\n" + implementationSummary +
         "\n\nRun the repository's most relevant tests/build checks that can run without downloading dependencies. Report exact commands and outputs. Do not edit source code in this phase. If there are no executable checks, explain precisely why.",
       maxIterations: 10,
@@ -349,7 +350,7 @@ export async function runRepoAgentPipeline(options) {
     await options.setStatus?.("reviewing");
     review = await runRole({
       task, role: "reviewer", roundNumber: roundOffset + 4 + attempt * 2, workspaceDir, workspaceId,
-      workspaceService, tools: REVIEWER_TOOLS, signal, onEvent,
+      workspaceService, tools: REVIEWER_TOOLS, model: "reasoning", signal, onEvent,
       message: base + "\n\nPLAN:\n" + plan +
         "\n\nIMPLEMENTATION:\n" + implementationSummary +
         "\n\nTESTER REPORT:\n" + tester +
@@ -377,7 +378,7 @@ export async function runRepoAgentPipeline(options) {
     ].join("\n");
     implementationSummary = await runRole({
       task, role: "repair_coder", roundNumber: roundOffset + 5 + attempt * 2, workspaceDir, workspaceId,
-      workspaceService, tools: CODER_TOOLS, signal, onEvent,
+      workspaceService, tools: CODER_TOOLS, model: "coding", signal, onEvent,
       message: base + "\n\n" + repairInput,
       maxIterations: 16,
     });
