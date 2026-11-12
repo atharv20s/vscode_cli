@@ -3,6 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    // Remove capability tokens from the address bar before third-party assets load.
+    (function () {
+      var url = new URL(window.location.href);
+      var token = url.searchParams.get("share");
+      if (!token) return;
+      window.__ATH_IDE_SHARE_TOKEN = token;
+      url.searchParams.delete("share");
+      window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+    })();
+  </script>
   <title>ATH IDE — Autonomous AI Development Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
