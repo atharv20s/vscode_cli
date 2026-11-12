@@ -261,6 +261,7 @@ async function scanWorkspace(repoPath, baseEntries) {
 }
 
 async function publishDraftPullRequest(options) {
+  await options.assertLease?.();
   const octokit = options.octokit;
   const owner = options.owner;
   const repo = options.repo;
@@ -286,12 +287,14 @@ async function publishDraftPullRequest(options) {
     });
   }
 
+  await options.assertLease?.();
   const createdTree = await octokit.git.createTree({
     owner: owner,
     repo: repo,
     base_tree: options.baseTreeSha,
     tree: tree,
   });
+  await options.assertLease?.();
   const commit = await octokit.git.createCommit({
     owner: owner,
     repo: repo,
@@ -299,6 +302,7 @@ async function publishDraftPullRequest(options) {
     tree: createdTree.data.sha,
     parents: [options.baseSha],
   });
+  await options.assertLease?.();
   await octokit.git.createRef({
     owner: owner,
     repo: repo,
@@ -306,6 +310,7 @@ async function publishDraftPullRequest(options) {
     sha: commit.data.sha,
   });
 
+  await options.assertLease?.();
   const body = [
     "## Agent summary",
     options.summary || "The ATH IDE repository agent completed the requested task.",
@@ -319,6 +324,7 @@ async function publishDraftPullRequest(options) {
     "- Review the diff and required CI checks before marking it ready.",
   ].join("\n");
 
+  await options.assertLease?.();
   const pr = await octokit.pulls.create({
     owner: owner,
     repo: repo,
@@ -332,7 +338,7 @@ async function publishDraftPullRequest(options) {
   return { url: pr.data.html_url, number: pr.data.number, commitSha: commit.data.sha };
 }
 
-async function executeTask(task, token, octokit, baseTreeSha, baseEntries, protectedPaths, signal = null) {
+async function executeTask(task, token, octokit, baseTreeSha, baseEntries, protectedPaths, signal = null, assertLease = null) {
   const userId = task.user_id;
   const taskId = task.id;
   const repoPath = task.workspace_path;
@@ -406,6 +412,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
       return;
     }
 
+    await assertLease?.();
     await patchTask(userId, taskId, { status: "publishing" });
     await appendEvent(userId, taskId, {
       type: "status",
@@ -414,6 +421,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
 
     // Stop the code runner before reading/publishing its working tree.
     await dockerWorkspaceRuntime.stop(workspaceId);
+    await assertLease?.();
     const changes = await scanWorkspace(repoPath, baseEntries);
     if (!changes.length) {
       await patchTask(userId, taskId, { status: "completed_no_changes" });
@@ -521,7 +529,15 @@ export async function processRepoAgentTask(taskId, options = {}) {
     prompt: row.prompt,
     workspace_path: repoPath,
   };
-  return executeTask(task, token, octokit, baseTreeSha, baseEntries, protectedPaths, options.signal || null);
+  const assertLease = async () => {
+    const owned = await repoAgentQueue.ownsLease(taskId, options.leaseToken);
+    if (!owned) {
+      const error = new Error("Worker lease was lost; this consumer must not publish task changes.");
+      error.leaseLost = true;
+      throw error;
+    }
+  };
+  return executeTask(task, token, octokit, baseTreeSha, baseEntries, protectedPaths, options.signal || null, assertLease);
 }
 
 /**
