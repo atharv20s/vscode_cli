@@ -168,6 +168,9 @@ async function main() {
     throw new Error("Repository queue worker requires EXECUTION_RUNTIME=docker on a dedicated host with Docker Engine.");
   }
   if (!config.redisUrl) throw new Error("REDIS_URL is required for the repository queue worker.");
+  if (!/^[a-f0-9]{64}$/i.test(config.repoAgentTokenKey)) {
+    throw new Error("REPO_AGENT_TOKEN_KEY must be a shared 32-byte hexadecimal key on the API and every worker.");
+  }
   await bootDatabase();
   if (!config.isDev && !getPostgresPool()) {
     throw new Error("Production repository queue workers require the shared Postgres task store. SQLite is only supported for single-worker development.");
