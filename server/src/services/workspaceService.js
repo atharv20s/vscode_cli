@@ -48,6 +48,12 @@ class WorkspaceService {
       };
     }
 
+    // Repository task agents must never inspect or mutate Git's control data.
+    if (this.workspaceId.startsWith("repo-agent-") &&
+        relativePath.split(path.sep).some((part) => part.toLowerCase() === ".git")) {
+      return { safe: false, resolved, relative: relativePath.split(path.sep).join("/") };
+    }
+
     // Resolve the deepest existing ancestor so symlinks cannot redirect a
     // missing/new target outside the workspace. realpathSync also canonicalizes
     // the workspace root and existing target before the containment check.
