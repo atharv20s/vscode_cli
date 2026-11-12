@@ -159,9 +159,16 @@ export async function initPostgres(connectionString) {
         worker_id VARCHAR(255),
         lease_expires_at TIMESTAMPTZ,
         cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+        github_token_ciphertext TEXT,
+        github_token_iv TEXT,
+        github_token_tag TEXT,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
+
+      ALTER TABLE repo_agent_tasks ADD COLUMN IF NOT EXISTS github_token_ciphertext TEXT;
+      ALTER TABLE repo_agent_tasks ADD COLUMN IF NOT EXISTS github_token_iv TEXT;
+      ALTER TABLE repo_agent_tasks ADD COLUMN IF NOT EXISTS github_token_tag TEXT;
 
       CREATE TABLE IF NOT EXISTS repo_agent_context_rounds (
         id BIGSERIAL PRIMARY KEY,
