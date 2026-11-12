@@ -352,6 +352,29 @@ const workspaceServices = new Map();
  * authenticated user. The opaque directory name prevents usernames/IDs from
  * becoming path components and avoids traversal through crafted identities.
  */
+/**
+ * Create a disposable, task-scoped workspace rooted at an application-generated
+ * directory. Callers must never pass a user-controlled filesystem path here.
+ */
+export function createScopedWorkspaceService(root, workspaceId) {
+  if (typeof root !== "string" || !path.isAbsolute(root) || !workspaceId) {
+    throw new Error("A task workspace requires an absolute root and workspace ID.");
+  }
+  const resolvedRoot = path.resolve(root);
+  fs.mkdirSync(resolvedRoot, { recursive: true, mode: 0o700 });
+  return new WorkspaceService(resolvedRoot, String(workspaceId));
+}
+
+/**
+ * Resolve the workspace service for an agent tool call. A task-scoped service
+ * takes precedence over the user's general workspace, preventing repository
+ * tasks from reading or editing sibling user projects.
+ */
+export function getWorkspaceServiceForContext(ctx = {}) {
+  if (ctx.workspaceService) return ctx.workspaceService;
+  return getWorkspaceService(ctx.userId || ctx.workspaceId);
+}
+
 export function getWorkspaceService(userId) {
   if (typeof userId !== "string" || !userId.trim()) {
     throw new Error("An authenticated workspace owner is required.");
