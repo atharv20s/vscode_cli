@@ -12,6 +12,7 @@ type ChatMessage = { role: "user" | "assistant"; content: string; activity?: str
 type ModelOption = { key: string; name: string; tier: string; provider: string; id: string; configured: boolean; multimodal?: boolean };
 type RepoOption = { full_name: string; name: string; owner: { login: string }; default_branch: string };
 type AgentTask = { id: string; owner: string; repo: string; status: string; pr_url?: string; error?: string };
+type ConversationOption = { id: string; title: string; model?: string; messages: string | any[] };
 
 const languageFor = (file: string) => {
   const ext = file.split(".").pop()?.toLowerCase() || "";
@@ -32,6 +33,8 @@ export default function Home() {
   const [fileVersion, setFileVersion] = useState<string | null>(null);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [model, setModel] = useState("devstral");
+  const [conversations, setConversations] = useState<ConversationOption[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "Welcome to ATH IDE. Chat, file editing, model discovery, workspace sessions and your terminal connect to the backend." }]);
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -64,6 +67,39 @@ export default function Home() {
     } catch { /* GitHub integration is optional until connected. */ }
   }, []);
 
+  const loadConversations = useCallback(async (restoreLatest = false) => {
+    const data = await api.json<{ conversations: ConversationOption[] }>("/api/agent/conversations");
+    const list = data.conversations || [];
+    setConversations(list);
+    if (restoreLatest && list.length) {
+      const latest = list[0];
+      setConversationId(latest.id);
+      let stored: any[] = [];
+      try { stored = typeof latest.messages === "string" ? JSON.parse(latest.messages) : latest.messages || []; } catch { stored = []; }
+      const visible = stored
+        .filter(item => (item.role === "user" || item.role === "assistant") && typeof item.content === "string" && item.content.trim())
+        .map(item => ({ role: item.role as "user" | "assistant", content: item.content }));
+      setMessages(visible.length ? visible : [{ role: "assistant", content: "Welcome back to ATH IDE. Your conversation is saved." }]);
+    }
+  }, []);
+
+  const openConversation = (id: string) => {
+    if (!id) {
+      setConversationId(null);
+      setMessages([{ role: "assistant", content: "New chat. Your next message will start a saved conversation." }]);
+      return;
+    }
+    const selected = conversations.find(item => item.id === id);
+    if (!selected) return;
+    setConversationId(selected.id);
+    let stored: any[] = [];
+    try { stored = typeof selected.messages === "string" ? JSON.parse(selected.messages) : selected.messages || []; } catch { stored = []; }
+    const visible = stored
+      .filter(item => (item.role === "user" || item.role === "assistant") && typeof item.content === "string" && item.content.trim())
+      .map(item => ({ role: item.role as "user" | "assistant", content: item.content }));
+    setMessages(visible.length ? visible : [{ role: "assistant", content: selected.title || "Conversation loaded." }]);
+  };
+
   const initialize = useCallback(async () => {
     try {
       if (!api.getAccessToken()) {
@@ -75,12 +111,25 @@ export default function Home() {
 
       const health = await api.json<any>("/api/health");
       setApiStatus(health.status === "ok" ? "API online" : "API degraded");
-      const [modelData, sessionData] = await Promise.all([
+      const [modelData, sessionData, conversationData] = await Promise.all([
         api.json<any>("/api/agent/models"),
         api.json<any>("/api/workspace/sessions"),
+        api.json<any>("/api/agent/conversations"),
       ]);
       const modelList = (modelData.models || []) as ModelOption[];
       setModels(modelList);
+      const savedConversations = (conversationData.conversations || []) as ConversationOption[];
+      setConversations(savedConversations);
+      if (savedConversations.length) {
+        const latest = savedConversations[0];
+        setConversationId(latest.id);
+        let stored: any[] = [];
+        try { stored = typeof latest.messages === "string" ? JSON.parse(latest.messages) : latest.messages || []; } catch { stored = []; }
+        const visible = stored
+          .filter(item => (item.role === "user" || item.role === "assistant") && typeof item.content === "string" && item.content.trim())
+          .map(item => ({ role: item.role as "user" | "assistant", content: item.content }));
+        if (visible.length) setMessages(visible);
+      }
       const configured = modelList.find(item => item.configured);
       if (configured) setModel(configured.key);
 
@@ -188,7 +237,7 @@ export default function Home() {
     try {
       const response = await api.fetchWithAuth("/api/agent/chat", {
         method: "POST",
-        body: JSON.stringify({ message, model, conversationHistory: messages.filter(item => item.content).map(item => ({ role: item.role, content: item.content })) }),
+        body: JSON.stringify({ message, model, conversationId }),
       });
       if (!response.ok || !response.body) {
         const body = await response.json().catch(() => ({}));
@@ -205,7 +254,12 @@ export default function Home() {
           let event: any;
           try { event = JSON.parse(text); } catch { continue; }
           const data = event.data || {};
-          if (event.type === "text_delta") {
+          if (event.type === "conversation_started" && data.conversationId) {
+            setConversationId(data.conversationId);
+          } else if (event.type === "conversation_updated" && data.conversationId) {
+            setConversationId(data.conversationId);
+            void loadConversations(false);
+          } else if (event.type === "text_delta") {
             const delta = data.content || data.text || "";
             setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, content: item.content + delta } : item));
           } else if (event.type === "text_complete" && data.content) {
@@ -232,6 +286,7 @@ export default function Home() {
       if (buffer.trim()) handleFrame(buffer);
       await refreshFiles(".");
       setCurrentDir(".");
+      await loadConversations(false);
     } catch (error: any) {
       setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, content: item.content + "\n\n" + error.message } : item));
     } finally { setBusy(false); }
@@ -312,6 +367,13 @@ export default function Home() {
           <div className="h-11 shrink-0 border-b border-slate-800 px-3 flex items-center gap-2">
             <button onClick={() => setActiveTab("chat")} className={"text-xs px-2 py-1 rounded " + (activeTab === "chat" ? "bg-indigo-600 text-white" : "text-slate-400") }><Bot size={14} className="inline mr-1"/>Agent</button>
             <button onClick={() => setActiveTab("tasks")} className={"text-xs px-2 py-1 rounded " + (activeTab === "tasks" ? "bg-indigo-600 text-white" : "text-slate-400")}>Repo tasks ({tasks.length})</button>
+            {activeTab === "chat" && <>
+              <select value={conversationId || ""} onChange={event => openConversation(event.target.value)} className="ml-auto min-w-0 max-w-28 bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-[10px]" title="Saved conversations">
+                <option value="">New chat</option>
+                {conversations.map(item => <option key={item.id} value={item.id}>{item.title || "Untitled chat"}</option>)}
+              </select>
+              <button onClick={() => openConversation("")} className="p-1.5 rounded hover:bg-slate-800 text-slate-400" title="New chat"><Plus size={14}/></button>
+            </>}
             {activeTab === "chat" && <select value={model} onChange={event => setModel(event.target.value)} className="ml-auto bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs max-w-40">{models.map(item => <option key={item.key} value={item.key} disabled={!item.configured}>{item.name} · {item.tier}{item.configured ? "" : " (not configured)"}</option>)}</select>}
           </div>
           {activeTab === "chat" ? <>
