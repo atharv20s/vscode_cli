@@ -73,6 +73,13 @@ export const config = {
   dockerWorkspaceUid: parseInt(process.env.DOCKER_WORKSPACE_UID || "1000", 10),
   dockerWorkspaceGid: parseInt(process.env.DOCKER_WORKSPACE_GID || "1000", 10),
 
+  // Workspace persistence and safety limits. Production should use a durable shared mount.
+  workspaceStorageRoot: process.env.WORKSPACE_STORAGE_ROOT ? path.resolve(process.env.WORKSPACE_STORAGE_ROOT) : "",
+  workspaceQuotaBytes: Math.max(10 * 1024 * 1024, parseInt(process.env.WORKSPACE_QUOTA_BYTES || "268435456", 10)),
+  workspaceMaxFileBytes: Math.max(64 * 1024, parseInt(process.env.WORKSPACE_MAX_FILE_BYTES || "2097152", 10)),
+  workspaceMaxSessionsPerUser: Math.max(1, Math.min(50, parseInt(process.env.WORKSPACE_MAX_SESSIONS_PER_USER || "10", 10))),
+  terminalIdleTtlMs: Math.max(60000, parseInt(process.env.TERMINAL_IDLE_TTL_MS || "1800000", 10)),
+
   // Workspace (where user files are sandboxed)
   workspaceRoot: (() => {
     const raw = process.env.WORKSPACE_ROOT;
@@ -148,6 +155,10 @@ export function validateConfig() {
 
   if (!["disabled", "docker", "remote"].includes(config.executionRuntime)) {
     errors.push("EXECUTION_RUNTIME must be disabled, docker, or remote.");
+  }
+
+  if (!config.isDev && !config.workspaceStorageRoot) {
+    warnings.push("WORKSPACE_STORAGE_ROOT is not set. Cloud workspace data may be lost when the application instance is replaced; configure a durable shared volume before production use.");
   }
 
   if (config.executionRuntime === "remote") {
