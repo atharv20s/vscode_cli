@@ -11,6 +11,8 @@ import { logger } from "../config/logger.js";
 
 const WORKER_ID = "repo-agent-" + os.hostname() + "-" + process.pid + "-" + crypto.randomUUID().slice(0,8);
 const LEASE_MS = Number(process.env.REPO_AGENT_LEASE_MS || 120000);
+// Do not reclaim a pending stream entry before its distributed task lease can expire.
+const RECLAIM_IDLE_MS = LEASE_MS + 5000;
 const MAX_ATTEMPTS = Number(process.env.REPO_AGENT_MAX_ATTEMPTS || 3);
 const sleep = ms => new Promise(resolve => setTimeout(resolve,ms));
 let currentTaskId = null;
@@ -198,7 +200,7 @@ async function main() {
   while (!stopping) {
     let messages = [];
     try {
-      messages = await repoAgentQueue.reclaim(WORKER_ID,60000);
+      messages = await repoAgentQueue.reclaim(WORKER_ID,RECLAIM_IDLE_MS);
       if (!messages.length) messages = await repoAgentQueue.read(WORKER_ID,5000);
       if (messages.length) await consumeMessage(messages[0]);
     } catch (error) {
