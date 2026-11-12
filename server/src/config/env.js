@@ -49,6 +49,13 @@ export const config = {
   llmContextBudgetTokens: Math.max(4096, parseInt(process.env.LLM_CONTEXT_BUDGET_TOKENS || "48000", 10)),
   llmOutputReserveTokens: Math.max(1024, parseInt(process.env.LLM_OUTPUT_RESERVE_TOKENS || "8192", 10)),
   llmContextSafetyTokens: Math.max(512, parseInt(process.env.LLM_CONTEXT_SAFETY_TOKENS || "2048", 10)),
+  llmDailyBudgetUsd: Math.max(0, Number.parseFloat(process.env.LLM_DAILY_BUDGET_USD || "0") || 0),
+  llmModelPricing: (() => {
+    try {
+      const parsed = JSON.parse(process.env.LLM_MODEL_PRICING_JSON || "{}");
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch { return {}; }
+  })(),
 
   // Tavily Search
   tavilyKey: process.env.TAVILY_API_KEY || "",
@@ -148,6 +155,10 @@ export function validateConfig() {
     errors.push(
       "JWT_SECRET must be set in production! Generate a random 32+ character string."
     );
+  }
+
+  if (config.llmDailyBudgetUsd > 0 && !config.isDev && !config.databaseUrl) {
+    errors.push("LLM_DAILY_BUDGET_USD requires DATABASE_URL in production so spend limits are shared across instances.");
   }
 
   if (config.llmContextBudgetTokens + config.llmOutputReserveTokens + config.llmContextSafetyTokens >= config.llmContextWindowTokens) {

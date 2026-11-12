@@ -119,7 +119,34 @@ export async function initPostgres(connectionString) {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
 
-      -- 8. Cache Entries Table
+      -- 8. Per-user daily model spend and atomic request reservations.
+      CREATE TABLE IF NOT EXISTS llm_daily_usage (
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        usage_date DATE NOT NULL,
+        spent_usd NUMERIC(18,8) NOT NULL DEFAULT 0,
+        reserved_usd NUMERIC(18,8) NOT NULL DEFAULT 0,
+        input_tokens BIGINT NOT NULL DEFAULT 0,
+        output_tokens BIGINT NOT NULL DEFAULT 0,
+        request_count BIGINT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, usage_date)
+      );
+      CREATE TABLE IF NOT EXISTS llm_usage_reservations (
+        id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        usage_date DATE NOT NULL,
+        provider VARCHAR(64) NOT NULL,
+        model TEXT NOT NULL,
+        reserved_usd NUMERIC(18,8) NOT NULL,
+        actual_usd NUMERIC(18,8),
+        input_tokens BIGINT NOT NULL DEFAULT 0,
+        output_tokens BIGINT NOT NULL DEFAULT 0,
+        status VARCHAR(16) NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        settled_at TIMESTAMPTZ
+      );
+
+      -- 9. Cache Entries Table
       CREATE TABLE IF NOT EXISTS cache_entries (
         key VARCHAR(255) PRIMARY KEY,
         value TEXT NOT NULL,

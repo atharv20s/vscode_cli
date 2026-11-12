@@ -144,6 +144,33 @@ export function initDatabase() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS llm_daily_usage (
+      user_id TEXT NOT NULL,
+      usage_date TEXT NOT NULL,
+      spent_usd REAL NOT NULL DEFAULT 0,
+      reserved_usd REAL NOT NULL DEFAULT 0,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      request_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, usage_date)
+    );
+
+    CREATE TABLE IF NOT EXISTS llm_usage_reservations (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      usage_date TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      reserved_usd REAL NOT NULL,
+      actual_usd REAL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT DEFAULT (datetime('now')),
+      settled_at TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_conversations_session ON conversations(session_id);
     CREATE INDEX IF NOT EXISTS idx_cache_created ON cache_entries(created_at);
