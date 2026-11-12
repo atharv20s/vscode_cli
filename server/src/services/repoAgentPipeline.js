@@ -105,12 +105,12 @@ async function detectChecks(root, context) {
     if (scripts.typecheck) checks.push({
       name: "typecheck",
       command: manager === "pnpm" ? "pnpm typecheck" : manager === "yarn" ? "yarn typecheck" : "npm run typecheck",
-      blocked: !hasNodeModules && Object.keys(manifest.dependencies || {}).length + Object.keys(manifest.devDependencies || {}).length > 0,
+      blocked: !hasNodeModules && config.repoAgentNetwork !== "bridge" && Object.keys(manifest.dependencies || {}).length + Object.keys(manifest.devDependencies || {}).length > 0,
     });
     if (scripts.lint) checks.push({
       name: "lint",
       command: manager === "pnpm" ? "pnpm lint" : manager === "yarn" ? "yarn lint" : "npm run lint",
-      blocked: !hasNodeModules && Object.keys(manifest.dependencies || {}).length + Object.keys(manifest.devDependencies || {}).length > 0,
+      blocked: !hasNodeModules && config.repoAgentNetwork !== "bridge" && Object.keys(manifest.dependencies || {}).length + Object.keys(manifest.devDependencies || {}).length > 0,
     });
   }
   if (context.samples.some(item => item.path === "Cargo.toml")) checks.push({ name: "cargo-test", command: "cargo test --locked", blocked: false });
