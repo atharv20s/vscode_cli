@@ -74,6 +74,10 @@ class WorkspaceService {
       const realAncestor = fs.realpathSync(existingAncestor);
       const canonicalTarget = path.join(realAncestor, ...missingSegments);
       const canonicalRelative = path.relative(realRoot, canonicalTarget);
+      if (this.workspaceId.startsWith("repo-agent-") &&
+          canonicalRelative.split(path.sep).some((part) => part.toLowerCase() === ".git")) {
+        return { safe: false, resolved, relative: relativePath.split(path.sep).join("/") };
+      }
       const canonicalInsideRoot =
         canonicalRelative === "" ||
         (canonicalRelative !== ".." &&
