@@ -469,6 +469,70 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
  * Validate repository access and queue a task. Actual code execution begins
  * asynchronously after the durable task row has been committed.
  */
+/**
+ * Called by dedicated Redis consumers. The API process only enqueues task IDs;
+ * this worker reloads the GitHub credential from the shared database.
+ */
+export async function processRepoAgentTask(taskId, options = {}) {
+  if (config.executionRuntime !== "docker") {
+    throw new Error("Repository task consumers must run on a Docker-enabled worker host.");
+  }
+  const row = await getRepoTask(taskId);
+  if (!row) throw new Error("Repository task does not exist.");
+  const token = await getRepoTaskGithubToken(row.user_id);
+  if (!token) throw new Error("GitHub connection is missing or expired for the task owner.");
+
+  const octokit = getOctokit(token);
+  const commitResponse = await octokit.git.getCommit({
+    owner: row.owner, repo: row.repo, commit_sha: row.base_sha,
+  });
+  const baseTreeSha = commitResponse.data.tree.sha;
+  const treeResponse = await octokit.git.getTree({
+    owner: row.owner, repo: row.repo, tree_sha: baseTreeSha, recursive: "true",
+  });
+  if (treeResponse.data.truncated || (treeResponse.data.tree || []).length > MAX_TREE_ENTRIES) {
+    const error = new Error("Repository tree exceeds the 25,000-entry task limit.");
+    error.retryable = false;
+    throw error;
+  }
+
+  const baseEntries = new Map();
+  const protectedPaths = [];
+  for (const item of treeResponse.data.tree || []) {
+    if (item.type !== "blob") continue;
+    if (sensitive(item.path)) protectedPaths.push(item.path);
+    else if (!ignored(item.path)) {
+      baseEntries.set(item.path, { sha: item.sha, mode: item.mode, size: item.size || 0 });
+    }
+  }
+
+  const taskDir = path.join(config.workspaceRoot, ".agent-runs", taskId);
+  const repoPath = path.join(taskDir, "repo");
+  await fs.mkdir(taskDir, { recursive: true, mode: 0o700 });
+  await updateRepoTask(taskId, {
+    workspace_path: repoPath,
+    worker_id: options.workerId || "repo-agent-worker",
+    attempt_count: row.attempt_count || 0,
+    status: "cloning",
+  });
+  const task = {
+    id: row.id,
+    user_id: row.user_id,
+    owner: row.owner,
+    repo: row.repo,
+    base_branch: row.base_branch,
+    base_sha: row.base_sha,
+    branch: row.branch,
+    prompt: row.prompt,
+    workspace_path: repoPath,
+  };
+  return executeTask(task, token, octokit, baseTreeSha, baseEntries, protectedPaths, options.signal || null);
+}
+
+/**
+ * Validate GitHub permissions, persist the task, and enqueue only its ID.
+ * The task continues on an independent consumer after the HTTP request returns.
+ */
 export async function startRepoAgentTask(options) {
   const userId = options.userId;
   const token = options.token;
@@ -477,8 +541,8 @@ export async function startRepoAgentTask(options) {
   const prompt = options.prompt;
   const baseBranch = options.baseBranch;
 
-  if (config.executionRuntime !== "docker") {
-    const error = new Error("Repository agents require EXECUTION_RUNTIME=docker on a worker with Docker Engine access. Unsandboxed fallback is disabled.");
+  if (!config.redisUrl && !process.env.REDIS_URL) {
+    const error = new Error("Redis task queue is not configured. Set REDIS_URL to enable asynchronous repository agents.");
     error.statusCode = 503;
     throw error;
   }
@@ -488,8 +552,7 @@ export async function startRepoAgentTask(options) {
     throw error;
   }
   if (!/^[A-Za-z0-9-]{1,39}$/.test(owner) ||
-      !/^[A-Za-z0-9._-]{1,100}$/.test(repo) ||
-      repo === "." || repo === "..") {
+      !/^[A-Za-z0-9._-]{1,100}$/.test(repo) || repo === "." || repo === "..") {
     const error = new Error("Invalid repository owner or name.");
     error.statusCode = 400;
     throw error;
@@ -500,17 +563,15 @@ export async function startRepoAgentTask(options) {
     throw error;
   }
 
-  const runningCount = getDatabase().prepare(
-    "SELECT COUNT(*) AS count FROM repo_agent_tasks WHERE user_id = ? AND status IN ('queued','cloning','running','publishing')"
-  ).get(userId).count;
-  if (runningCount >= MAX_ACTIVE_TASKS_PER_USER) {
+  const activeCount = await countActiveRepoTasks(userId);
+  if (activeCount >= MAX_ACTIVE_TASKS_PER_USER) {
     const error = new Error("A maximum of " + MAX_ACTIVE_TASKS_PER_USER + " repository agent tasks may run at once per user.");
     error.statusCode = 429;
     throw error;
   }
 
   const octokit = getOctokit(token);
-  const repositoryResponse = await octokit.repos.get({ owner: owner, repo: repo });
+  const repositoryResponse = await octokit.repos.get({ owner, repo });
   const repository = repositoryResponse.data;
   if (!repository.permissions || repository.permissions.push !== true) {
     const error = new Error("The connected GitHub account needs push permission on this repository to create a PR branch.");
@@ -528,102 +589,169 @@ export async function startRepoAgentTask(options) {
   }
 
   const refResponse = await octokit.git.getRef({
-    owner: owner, repo: repo, ref: "heads/" + selectedBase,
+    owner, repo, ref: "heads/" + selectedBase,
   });
   const baseSha = refResponse.data.object.sha;
-  const commitResponse = await octokit.git.getCommit({
-    owner: owner, repo: repo, commit_sha: baseSha,
-  });
-  const baseTreeSha = commitResponse.data.tree.sha;
-  const treeResponse = await octokit.git.getTree({
-    owner: owner, repo: repo, tree_sha: baseTreeSha, recursive: "true",
-  });
-  if (treeResponse.data.truncated || treeResponse.data.tree.length > MAX_TREE_ENTRIES) {
-    const error = new Error("Repository tree is too large for this task (limit 25,000 entries).");
-    error.statusCode = 413;
-    throw error;
-  }
-
-  const baseEntries = new Map();
-  const protectedPaths = [];
-  for (const item of treeResponse.data.tree || []) {
-    if (item.type === "blob" && sensitive(item.path)) {
-      protectedPaths.push(item.path);
-    } else if (item.type === "blob" && !ignored(item.path)) {
-      baseEntries.set(item.path, {
-        sha: item.sha,
-        mode: item.mode,
-        size: item.size || 0,
-      });
-    }
-  }
 
   const taskId = crypto.randomUUID();
   const branchName = "ath-ide/" + taskId.slice(0, 8);
-  const userWorkspace = getWorkspaceService(userId);
-  const taskDir = path.join(userWorkspace.workspaceRoot, ".agent-runs", taskId);
-  const repoPath = path.join(taskDir, "repo");
-
-  getDatabase().prepare(
-    "INSERT INTO repo_agent_tasks (id,user_id,owner,repo,base_branch,base_sha,branch,prompt,workspace_path,status,events_json) VALUES (?,?,?,?,?,?,?,?,?,'queued','[]')"
-  ).run(taskId, userId, owner, repo, selectedBase, baseSha, branchName, prompt.trim(), repoPath);
-
-  const task = {
+  await createRepoTask({
     id: taskId,
-    user_id: userId,
-    owner: owner,
-    repo: repo,
-    base_branch: selectedBase,
-    base_sha: baseSha,
+    userId,
+    owner,
+    repo,
+    baseBranch: selectedBase,
+    baseSha,
     branch: branchName,
     prompt: prompt.trim(),
-    workspace_path: repoPath,
-  };
-  activeTasks.set(taskId, {
-    userId: userId,
-    abort: new AbortController(),
-    workspaceId: "repo-agent-" + taskId,
+    workspacePath: "",
   });
-  setImmediate(function () {
-    executeTask(task, token, octokit, baseTreeSha, baseEntries, protectedPaths).catch(function (error) {
-      logger.error("Uncaught repository agent failure", { taskId: taskId, error: error.message });
-      patchTask(userId, taskId, { status: "failed", error: error.message });
+
+  try {
+    await repoAgentQueue.enqueue(taskId, 0);
+    await appendRepoTaskEvent(taskId, {
+      type: "queued",
+      data: { message: "Task persisted and queued for an independent cloud worker." },
     });
-  });
+  } catch (error) {
+    await updateRepoTask(taskId, { status: "failed", error: "Unable to enqueue task: " + error.message });
+    throw Object.assign(new Error("The task was saved but could not be queued. Verify Redis connectivity and retry."), { statusCode: 503 });
+  }
 
-  return publicTask(rowForUser(userId, taskId));
+  return publicTask(await getRepoTask(taskId, userId));
 }
 
-/**
- * Mark tasks interrupted by an API worker restart instead of displaying them
- * as permanently running when their in-memory sandbox no longer exists.
- */
-export function recoverRepoAgentTasks() {
-  const result = getDatabase().prepare(
-    "UPDATE repo_agent_tasks SET status = 'interrupted', error = 'Server restarted before this task completed.', updated_at = datetime('now') WHERE status IN ('queued','cloning','running','publishing')"
-  ).run();
-  return result.changes;
+export async function getRepoAgentTask(userId, taskId) {
+  const row = await rowForUser(userId, taskId);
+  if (!row) return null;
+  const task = publicTask(row);
+  task.rounds = await listRepoContextRounds(taskId);
+  return task;
 }
 
-export function getRepoAgentTask(userId, taskId) {
-  return publicTask(rowForUser(userId, taskId));
-}
-
-export function listRepoAgentTasks(userId) {
-  return getDatabase().prepare(
-    "SELECT * FROM repo_agent_tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT 25"
-  ).all(userId).map(publicTask);
+export async function listRepoAgentTasks(userId) {
+  const rows = await listRepoTasks(userId, 25);
+  return rows.map(publicTask);
 }
 
 export async function cancelRepoAgentTask(userId, taskId) {
-  const row = rowForUser(userId, taskId);
+  const row = await rowForUser(userId, taskId);
   if (!row) return null;
-  const active = activeTasks.get(taskId);
-  if (active && active.userId === userId) {
-    active.abort.abort();
-    await dockerWorkspaceRuntime.stop(active.workspaceId);
-  }
-  patchTask(userId, taskId, { status: "cancelled" });
-  appendEvent(userId, taskId, { type: "status", data: { status: "cancelled" } });
+  await updateRepoTask(taskId, { cancel_requested: true, status: "cancel_requested" });
+  try { await repoAgentQueue.requestCancellation(taskId); } catch {}
+  await appendRepoTaskEvent(taskId, {
+    type: "status",
+    data: { status: "cancel_requested", message: "Cancellation requested; the active worker will stop at its next safe checkpoint." },
+  });
   return getRepoAgentTask(userId, taskId);
 }
+
+export async function createRepoAgentShare(userId, taskId, permission = "view", expiresInHours = 168) {
+  if (!["view","comment","edit"].includes(permission)) {
+    const error = new Error("Share permission must be view, comment or edit.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const task = await rowForUser(userId, taskId);
+  if (!task) return null;
+  const rawToken = crypto.randomBytes(32).toString("base64url");
+  const expiresAt = expiresInHours === 0 ? null : new Date(Date.now() + Math.min(Math.max(expiresInHours,1),720) * 3600000).toISOString();
+  const saved = await createRepoShare({
+    id: crypto.randomUUID(),
+    taskId,
+    ownerUserId: userId,
+    tokenHash: crypto.createHash("sha256").update(rawToken).digest("hex"),
+    permission,
+    expiresAt,
+  });
+  if (!saved) return null;
+  return {
+    id: saved.id,
+    permission,
+    expiresAt,
+    token: rawToken,
+  };
+}
+
+export async function getSharedRepoAgentTask(rawToken) {
+  if (typeof rawToken !== "string" || rawToken.length < 32 || rawToken.length > 128) return null;
+  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+  const share = await getRepoShareByHash(tokenHash);
+  if (!share) return null;
+  let events = [];
+  try { events = Array.isArray(share.events_json) ? share.events_json : JSON.parse(share.events_json || "[]"); } catch {}
+  return {
+    share: { id: share.id, permission: share.permission, expiresAt: share.expires_at },
+    task: {
+      id: share.task_id,
+      owner: share.owner,
+      repo: share.repo,
+      baseBranch: share.base_branch,
+      branch: share.branch,
+      prompt: share.prompt,
+      status: share.status,
+      events: events.slice(-80),
+      pullRequest: share.pr_url ? { url: share.pr_url, number: share.pr_number } : null,
+      error: share.error || null,
+      createdAt: share.task_created_at,
+    },
+    comments: await listRepoShareComments(share.id),
+  };
+}
+
+export async function commentOnSharedRepoTask(rawToken, body, authorLabel = "Collaborator") {
+  if (typeof rawToken !== "string" || rawToken.length < 32) return null;
+  if (typeof body !== "string" || !body.trim() || body.length > 4000) {
+    const error = new Error("Comment must contain 1 to 4,000 characters.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+  const share = await getRepoShareByHash(tokenHash);
+  if (!share || !["comment","edit"].includes(share.permission)) {
+    const error = new Error("This share link does not permit comments.");
+    error.statusCode = 403;
+    throw error;
+  }
+  const safeAuthor = String(authorLabel || "Collaborator").trim().slice(0,120) || "Collaborator";
+  return addRepoShareComment(share.id,safeAuthor,body.trim());
+}
+
+export async function submitSharedRepoInstruction(rawToken, instruction, authorLabel = "Collaborator") {
+  if (typeof rawToken !== "string" || rawToken.length < 32) return null;
+  if (typeof instruction !== "string" || !instruction.trim() || instruction.length > 8000) {
+    const error = new Error("Follow-up instruction must contain 1 to 8,000 characters.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+  const share = await getRepoShareByHash(tokenHash);
+  if (!share || share.permission !== "edit") {
+    const error = new Error("This share link does not permit edit instructions.");
+    error.statusCode = 403;
+    throw error;
+  }
+  const token = await getRepoTaskGithubToken(share.owner_user_id);
+  const baseBranch = share.pr_url ? share.branch : share.base_branch;
+  const task = await startRepoAgentTask({
+    userId: share.owner_user_id,
+    token,
+    owner: share.owner,
+    repo: share.repo,
+    baseBranch,
+    prompt: "Collaborator follow-up for shared task " + share.task_id + " from " + String(authorLabel || "Collaborator").slice(0,120) + ":\n\n" + instruction.trim(),
+  });
+  await addRepoShareComment(share.id,String(authorLabel || "Collaborator").slice(0,120),"Submitted follow-up agent task " + task.id + ": " + instruction.trim());
+  return task;
+}
+
+export async function listRepoAgentShares(userId, taskId) {
+  const task = await rowForUser(userId,taskId);
+  if (!task) return null;
+  return listRepoShares(taskId,userId);
+}
+
+export async function revokeRepoAgentShare(userId, shareId) {
+  return revokeRepoShare(shareId,userId);
+}
+
