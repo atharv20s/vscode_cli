@@ -9,7 +9,7 @@ import { WorkspaceService } from "./workspaceService.js";
 test("shared workspace writers use optimistic versions and reject stale saves", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ath-ide-workspace-"));
   const workspaceRoot = path.join(root, "workspace");
-  const lockRoot = path.join(root, ".locks");
+  const lockRoot = path.join(root, ".ath-locks");
   await fs.mkdir(workspaceRoot, { recursive: true });
 
   const firstService = new WorkspaceService(workspaceRoot, "owner-a", {
@@ -46,7 +46,7 @@ test("shared workspace writers use optimistic versions and reject stale saves", 
 test("workspace quota and symlink boundaries fail closed", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ath-ide-workspace-"));
   const workspaceRoot = path.join(root, "workspace");
-  const lockRoot = path.join(root, ".locks");
+  const lockRoot = path.join(root, ".ath-locks");
   const outside = path.join(root, "outside.txt");
   await fs.mkdir(workspaceRoot, { recursive: true });
   await fs.writeFile(outside, "outside");
@@ -62,9 +62,11 @@ test("workspace quota and symlink boundaries fail closed", async () => {
       error => error.message.includes("Access denied")
     );
 
-    config.workspaceQuotaBytes = 10 * 1024 * 1024;
-    await service.writeFile("small.txt", "small");
-    config.workspaceQuotaBytes = 10 * 1024 * 1024;
+    config.workspaceQuotaBytes = 10;
+    await assert.rejects(
+      service.writeFile("small.txt", "small"),
+      error => error.code === "WORKSPACE_QUOTA_EXCEEDED"
+    );
   } finally {
     config.workspaceQuotaBytes = previousQuota;
     await fs.rm(root, { recursive: true, force: true });
