@@ -448,6 +448,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
       baseSha: task.base_sha,
       changes: changes,
       summary: pipelineResult.implementationSummary + "\n\nQuality review: " + pipelineResult.review,
+      assertLease: assertLease,
     });
     await patchTask(userId, taskId, { status: "review_ready", pr_url: pr.url, pr_number: pr.number });
     await appendEvent(userId, taskId, { type: "pull_request", data: { ...pr, draft: true } });
@@ -458,6 +459,14 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     await fs.rm(taskDir, { recursive: true, force: true });
   } catch (error) {
     if (error.leaseLost) { leaseLost = true; throw error; }
+    if (abortSignal.aborted) {
+      try {
+        await assertLease?.();
+      } catch (leaseError) {
+        if (leaseError.leaseLost) { leaseLost = true; throw leaseError; }
+        throw leaseError;
+      }
+    }
     if (/Quality gate/.test(error.message)) error.retryable = false;
     try {
       await dockerWorkspaceRuntime.stop(workspaceId);
