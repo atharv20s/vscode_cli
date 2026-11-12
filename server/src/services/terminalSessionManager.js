@@ -80,6 +80,12 @@ class TerminalSessionManager {
     const rows = options.rows || 24;
     const workspaceId = options.workspaceId || "default";
     const backendType = config.executionRuntime === "docker" ? "docker" : (options.backendType || (options.remoteHost ? "remote_ssh" : "local"));
+    const userSessions = Array.from(this.sessions.values()).filter(item => item.userId === (options.userId || null) && item.state !== "exited" && item.state !== "error");
+    if (userSessions.length >= config.terminalMaxSessionsPerUser) {
+      const error = new Error("Terminal session limit reached for this account.");
+      error.code = "TERMINAL_SESSION_LIMIT";
+      throw error;
+    }
 
     // Do not spawn shells inside the shared API container in production. The
     // remote SSH adapter is not yet a per-user isolated runtime either.

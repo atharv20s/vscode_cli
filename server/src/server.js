@@ -11,6 +11,7 @@
  */
 
 import http from "http";
+import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import express from "express";
@@ -67,8 +68,10 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 // check before sending a file.
 app.use("/preview", previewAuth, (req, res) => {
   try {
-    const workspace = getWorkspaceService(req.user.id);
-    if (workspace.workspaceId !== req.previewWorkspaceId) return res.status(403).json({ error: "Forbidden" });
+    const workspace = getWorkspaceService(req.user.id, req.previewWorkspaceId);
+    if (workspace.workspaceId !== crypto.createHash("sha256").update(req.user.id).digest("hex") + ":" + req.previewWorkspaceId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
     const relativePath = req.previewPath || "index.html";
     const target = workspace.resolvePath(relativePath);
     if (!target.safe) return res.status(403).json({ error: "Forbidden", message: "Preview path is outside your workspace." });

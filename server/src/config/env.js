@@ -79,6 +79,7 @@ export const config = {
   workspaceMaxFileBytes: Math.max(64 * 1024, parseInt(process.env.WORKSPACE_MAX_FILE_BYTES || "2097152", 10)),
   workspaceMaxSessionsPerUser: Math.max(1, Math.min(50, parseInt(process.env.WORKSPACE_MAX_SESSIONS_PER_USER || "10", 10))),
   terminalIdleTtlMs: Math.max(60000, parseInt(process.env.TERMINAL_IDLE_TTL_MS || "1800000", 10)),
+  terminalMaxSessionsPerUser: Math.max(1, Math.min(20, parseInt(process.env.TERMINAL_MAX_SESSIONS_PER_USER || "3", 10))),
 
   // Workspace (where user files are sandboxed)
   workspaceRoot: (() => {
