@@ -17,7 +17,7 @@ export async function createTaskShare(req,res) {
       success:true,
       share,
       // The raw bearer token is returned only once to the owner.
-      url:(process.env.PUBLIC_URL || req.protocol + "://" + req.get("host")).replace(/\/$/, "") + "/?share=" + encodeURIComponent(share.token),
+      url:(process.env.PUBLIC_URL || req.protocol + "://" + req.get("host")).replace(/\/$/, "") + "/#share=" + encodeURIComponent(share.token),
     });
   } catch(error) {
     return res.status(error.statusCode || 500).json({error:"ShareCreateFailed",message:error.message});
