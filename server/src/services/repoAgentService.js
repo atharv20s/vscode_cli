@@ -328,7 +328,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries) {
   const repoPath = task.workspace_path;
   const taskDir = path.dirname(repoPath);
   const workspaceId = "repo-agent-" + taskId;
-  const abort = new AbortController();
+  const abort = activeTasks.get(taskId)?.abort || new AbortController();
   activeTasks.set(taskId, { userId: userId, abort: abort, workspaceId: workspaceId });
 
   try {
@@ -482,6 +482,15 @@ export async function startRepoAgentTask(options) {
     throw error;
   }
 
+  const runningCount = getDatabase().prepare(
+    "SELECT COUNT(*) AS count FROM repo_agent_tasks WHERE user_id = ? AND status IN ('queued','cloning','running','publishing')"
+  ).get(userId).count;
+  if (runningCount >= MAX_ACTIVE_TASKS_PER_USER) {
+    const error = new Error("A maximum of " + MAX_ACTIVE_TASKS_PER_USER + " repository agent tasks may run at once per user.");
+    error.statusCode = 429;
+    throw error;
+  }
+
   const octokit = getOctokit(token);
   const repositoryResponse = await octokit.repos.get({ owner: owner, repo: repo });
   const repository = repositoryResponse.data;
@@ -492,9 +501,10 @@ export async function startRepoAgentTask(options) {
   }
 
   const selectedBase = baseBranch || repository.default_branch;
-  if (typeof selectedBase !== "string" || !selectedBase.trim() ||
-      selectedBase.length > 200 || selectedBase.startsWith("-")) {
-    const error = new Error("Invalid base branch.");
+  if (typeof selectedBase !== "string" || !/^[A-Za-z0-9._/-]{1,200}$/.test(selectedBase) ||
+      selectedBase.startsWith("-") || selectedBase.endsWith("/") ||
+      selectedBase.includes("..") || selectedBase.includes("//") || selectedBase.includes("@{")) {
+    const error = new Error("Invalid base branch name.");
     error.statusCode = 400;
     throw error;
   }
@@ -548,6 +558,11 @@ export async function startRepoAgentTask(options) {
     prompt: prompt.trim(),
     workspace_path: repoPath,
   };
+  activeTasks.set(taskId, {
+    userId: userId,
+    abort: new AbortController(),
+    workspaceId: "repo-agent-" + taskId,
+  });
   setImmediate(function () {
     executeTask(task, token, octokit, baseTreeSha, baseEntries).catch(function (error) {
       logger.error("Uncaught repository agent failure", { taskId: taskId, error: error.message });
