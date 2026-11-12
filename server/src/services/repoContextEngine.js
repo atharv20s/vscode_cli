@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { config } from "../config/env.js";
+import { buildRepositorySymbolIndex } from "./repoSymbolIndex.js";
 
 const SKIP = new Set([".git","node_modules",".next","dist","build","coverage",".cache",".agent-runs","vendor","target"]);
 const INSTRUCTION_FILES = ["AGENTS.md","CLAUDE.md","GEMINI.md",".github/copilot-instructions.md"];
@@ -64,6 +65,19 @@ export async function buildRepositoryContext(root, prompt, options = {}) {
   await walk(root);
 
   const promptWords = words(prompt);
+  let symbolIndex = { available: false, reason: "Tree-sitter indexing unavailable", declarations: [], references: [], parsedFiles: [], parsedFileCount: 0, parseErrors: 0 };
+  try {
+    symbolIndex = await buildRepositorySymbolIndex(root, files, prompt);
+  } catch (error) {
+    // Retrieval remains available through the lexical/import fallback when a
+    // grammar or WebAssembly runtime is unavailable on a particular host.
+    symbolIndex = { ...symbolIndex, reason: error.message };
+  }
+  const semanticScores = new Map();
+  for (const item of symbolIndex.declarations || []) {
+    semanticScores.set(item.path, (semanticScores.get(item.path) || 0) + item.score);
+  }
+  const callerFiles = new Set((symbolIndex.references || []).map(item => item.path));
   const ranked = files.filter(name => SOURCE_EXT.has(path.extname(name).toLowerCase()) || CONTEXT_FILES.includes(name))
     .map(name => {
       const tokens = words(name);
@@ -72,6 +86,8 @@ export async function buildRepositoryContext(root, prompt, options = {}) {
       if (/test|spec/i.test(name) && /test|bug|fix|verify|regression/i.test(prompt)) score += 4;
       if (/route|controller|service|model|schema|config|auth|api|store|db/i.test(name)) score += 2;
       if (CONTEXT_FILES.includes(name)) score += 3;
+      score += semanticScores.get(name) || 0;
+      if (callerFiles.has(name)) score += 4;
       return { name, score };
     }).sort((a,b) => b.score-a.score || a.name.localeCompare(b.name));
 
@@ -84,6 +100,8 @@ export async function buildRepositoryContext(root, prompt, options = {}) {
   const selected = new Set(CONTEXT_FILES.filter(file => fileSet.has(file)));
   const primary = ranked.slice(0, Math.max(16, Math.min(36, options.maxPrimaryFiles || 24)));
   for (const item of primary) selected.add(item.name);
+  for (const item of (symbolIndex.declarations || []).slice(0, 24)) selected.add(item.path);
+  for (const item of (symbolIndex.references || []).slice(0, 40)) selected.add(item.path);
 
   // Expand one hop through relative imports from selected source files. This
   // catches actual dependencies/call sites that filename-only ranking misses.
@@ -125,6 +143,7 @@ export async function buildRepositoryContext(root, prompt, options = {}) {
     samples,
     retrievedFiles: ranked.slice(0, 40),
     importEdges,
+    symbolIndex,
     scripts,
     promptKeywords: Array.from(promptWords).slice(0, 100),
   };
@@ -146,7 +165,14 @@ export function formatRepositoryContext(context, options = {}) {
     (context.truncated ? " (inventory capped)" : "") + "\n" +
     (context.directoryMap || "").slice(0, Math.floor(maxChars * 0.12));
   const graph = relationships ? "\n\n## Relevant dependency relationships\n" + relationships : "";
-  output += (output ? "\n\n" : "") + inventory + graph;
+  const symbols = (context.symbolIndex?.declarations || []).slice(0, 32)
+    .map(item => item.name + " (" + item.kind + ") — " + item.path + ":" + item.startLine + "-" + item.endLine).join("\n");
+  const callers = (context.symbolIndex?.references || []).slice(0, 60)
+    .map(item => item.name + " called in " + item.path + ":" + item.line).join("\n");
+  const semantic = symbols
+    ? "\n\n## Tree-sitter structural symbol matches\n" + symbols + (callers ? "\n\n## Cross-file call sites\n" + callers : "")
+    : "";
+  output += (output ? "\n\n" : "") + inventory + graph + semantic;
   for (const sample of context.samples || []) {
     const section = "\n\n## Source: " + sample.path + "\n" + sample.content;
     if (output.length + section.length > maxChars) continue;
