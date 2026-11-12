@@ -30,14 +30,16 @@ export async function chatStream(req, res) {
   res.flushHeaders();
 
   try {
+    const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
     await runAgent({
       message: message || "",
       images: images || [],
       conversationHistory: conversationHistory || [],
       model: model || undefined,
       systemPrompt: systemPrompt || undefined,
-      workspaceDir: getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default").workspaceRoot,
-      workspaceId: getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default").workspaceId,
+      workspaceDir: workspaceService.workspaceRoot,
+      workspaceId: workspaceService.workspaceId,
+      workspaceService,
       userId: req.user.id,
       onEvent: (event) => {
         res.write(`data: ${JSON.stringify(event)}\n\n`);

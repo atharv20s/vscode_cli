@@ -341,7 +341,7 @@ async function handleMessage(ws, msg, user) {
         source: "ui",
         actor: "user",
       });
-      executionService.writeInteractive(ws.terminalSessionId, payload?.data ?? payload?.command ?? "");
+      executionService.writeInteractive(ws.terminalSessionId, payload?.data ?? payload?.command ?? "", ws.userId, ws.workspaceId);
       break;
 
     // Submitted Command (Enter pressed)
@@ -379,7 +379,7 @@ async function handleMessage(ws, msg, user) {
         source: "ui",
         actor: "user",
       });
-      executionService.resizeInteractive(ws.terminalSessionId, payload?.cols, payload?.rows);
+      executionService.resizeInteractive(ws.terminalSessionId, payload?.cols, payload?.rows, ws.userId, ws.workspaceId);
       break;
 
     default:

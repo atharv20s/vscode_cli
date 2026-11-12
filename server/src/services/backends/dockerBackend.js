@@ -7,10 +7,11 @@ import { dockerWorkspaceRuntime } from "../dockerWorkspaceRuntime.js";
 import { sendMessage } from "../../websocket/connectionManager.js";
 
 export class DockerBackend {
-  constructor() { this.ptyProcess = null; this.ws = null; }
+  constructor() { this.ptyProcess = null; this.ws = null; this.onData = null; }
 
-  async spawnShell({ sessionId, workspaceId, workspaceDir, cols = 80, rows = 24, ws, onExit }) {
+  async spawnShell({ sessionId, workspaceId, workspaceDir, cols = 80, rows = 24, ws, onExit, onData }) {
     this.ws = ws || null;
+    this.onData = typeof onData === "function" ? onData : null;
     const name = await dockerWorkspaceRuntime.ensureContainer(workspaceId, workspaceDir);
     this.ptyProcess = pty.spawn(config.dockerBinary, [
       "exec", "-it", "-w", "/workspace", name, "/bin/bash", "-l",
