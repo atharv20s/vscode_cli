@@ -141,6 +141,15 @@ export async function syncWorkspaceOnRemote({ workspaceId, workspaceDir, signal,
   }, { timeoutMs: 90000, signal });
 }
 
+export async function pullWorkspaceFromRemote({ workspaceId, workspaceDir, signal }) {
+  if (!path.isAbsolute(workspaceDir)) throw new Error("Workspace directory must be absolute.");
+  const result = await postWorkerJson("/v1/workspace/pull", {
+    workspaceId: workspaceRuntimeKey(workspaceId),
+  }, { timeoutMs: 90000, signal });
+  await applyWorkspaceFiles(workspaceDir, result.files);
+  return { success: true, files: result.files.length };
+}
+
 export async function ensureRemoteWorkspace({ workspaceId, workspaceDir, signal }) {
   return syncWorkspaceOnRemote({ workspaceId, workspaceDir, signal, initialOnly: true });
 }
