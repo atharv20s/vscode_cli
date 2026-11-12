@@ -12,7 +12,7 @@ export async function countActiveRepoTasks(userId) {
     return result.rows[0]?.count || 0;
   }
   return getDatabase().prepare(
-    "SELECT COUNT(*) AS count FROM repo_agent_tasks WHERE user_id = ? AND status IN ('queued','cloning','running','testing','reviewing','publishing')"
+    "SELECT COUNT(*) AS count FROM repo_agent_tasks WHERE user_id = ? AND status IN ('queued','cloning','running','testing','reviewing','repairing','publishing','cancel_requested')"
   ).get(userId).count;
 }
 
