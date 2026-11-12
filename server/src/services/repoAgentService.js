@@ -767,7 +767,7 @@ export async function getSharedRepoAgentTask(rawToken) {
     }
     return { at:event.at,type:event.type,data:{
       status:data.status,message:typeof data.message === "string" ? data.message.slice(0,500) : undefined,
-      attempt:data.attempt,maxAttempts:data.maxAttempts,workerId:data.workerId,
+      attempt:data.attempt,maxAttempts:data.maxAttempts,
     }};
   });
   return {
