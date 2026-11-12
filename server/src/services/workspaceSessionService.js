@@ -90,6 +90,23 @@ export async function createWorkspaceSession(userId, name) {
   });
 }
 
+export async function ensureWorkspaceSession(userId, workspaceId = "default") {
+  if (workspaceId === "default") return { id: "default", name: "My workspace" };
+  if (typeof workspaceId !== "string" || !/^(ws_[a-f0-9]{20})$/.test(workspaceId)) {
+    const error = new Error("Invalid workspace identifier.");
+    error.code = "INVALID_WORKSPACE_ID";
+    throw error;
+  }
+  const sessions = await listWorkspaceSessions(userId);
+  const session = sessions.find(item => item.id === workspaceId);
+  if (!session) {
+    const error = new Error("Workspace does not exist for this account.");
+    error.code = "WORKSPACE_NOT_FOUND";
+    throw error;
+  }
+  return session;
+}
+
 export function getWorkspaceSession(userId, workspaceId = "default") {
   if (typeof workspaceId !== "string" || !/^(default|ws_[a-f0-9]{20})$/.test(workspaceId)) {
     const error = new Error("Invalid workspace identifier.");

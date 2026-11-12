@@ -12,6 +12,7 @@ import { verifyToken } from "../middleware/auth.js";
 import { runAgent } from "../services/agentService.js";
 import { config } from "../config/env.js";
 import { getWorkspaceService } from "../services/workspaceService.js";
+import { ensureWorkspaceSession } from "../services/workspaceSessionService.js";
 import { logger } from "../config/logger.js";
 import {
   addConnection,
@@ -145,7 +146,7 @@ export function initWebSocketServer(httpServer) {
     broadcastScoped("permission.resolved", envelope);
   });
 
-  wss.on("connection", (ws, req) => {
+  wss.on("connection", async (ws, req) => {
     ws.isAlive = true;
     ws.sessionId = `conn_${crypto.randomUUID()}`;
 
@@ -169,6 +170,7 @@ export function initWebSocketServer(httpServer) {
     ws.userId = user?.id || ws.sessionId;
     const requestedWorkspace = url.searchParams.get("workspace") || "default";
     try {
+      await ensureWorkspaceSession(ws.userId, requestedWorkspace);
       ws.workspaceService = getWorkspaceService(ws.userId, requestedWorkspace);
     } catch {
       ws.close(4003, "Invalid workspace");

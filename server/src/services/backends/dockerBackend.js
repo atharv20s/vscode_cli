@@ -20,7 +20,8 @@ export class DockerBackend {
       env: { ...process.env, TERM: "xterm-256color" },
     });
     this.ptyProcess.onData(data => {
-      if (this.ws) sendMessage(this.ws, "terminal.output", { data, sessionId, source: "docker" });
+      if (this.onData) this.onData(data);
+      else if (this.ws) sendMessage(this.ws, "terminal.output", { text: data, sessionId, source: "docker" });
     });
     this.ptyProcess.onExit(({ exitCode }) => onExit?.(exitCode));
     return this.ptyProcess;

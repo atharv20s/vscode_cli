@@ -170,6 +170,8 @@ class TerminalSessionManager {
     } catch (err) {
       session.state = "error";
       this._emitStateChange(session, "error", { error: err.message });
+      try { session.backendInstance?.kill?.(sessionId); } catch {}
+      this.sessions.delete(sessionId);
       logger.error(`TerminalSessionManager: Failed to create session ${sessionId}: ${err.message}`);
       throw err;
     }

@@ -40,16 +40,30 @@ router.post("/sessions", requireAuth, async (req, res) => {
   }
 });
 
-router.get("/files", requireAuth, listFiles);
-router.get("/file", requireAuth, readFile);
-router.post("/file", requireAuth, writeFile);
-router.delete("/file", requireAuth, deleteFile);
-router.post("/move", requireAuth, moveFile);
-router.post("/folder", requireAuth, createFolder);
-router.post("/exec", requireAuth, execCommand);
+router.use(requireAuth, async (req, res, next) => {
+  const workspaceId = req.get("X-Workspace-Id") || "default";
+  if (workspaceId === "default") return next();
+  try {
+    const sessions = await listWorkspaceSessions(req.user.id);
+    if (!sessions.some(session => session.id === workspaceId)) {
+      return res.status(404).json({ error: "WorkspaceNotFound", message: "Workspace does not exist for this account." });
+    }
+    return next();
+  } catch (error) {
+    return res.status(503).json({ error: "WorkspaceRegistryUnavailable", message: "Workspace registry is unavailable." });
+  }
+});
+
+router.get("/files", listFiles);
+router.get("/file", readFile);
+router.post("/file", writeFile);
+router.delete("/file", deleteFile);
+router.post("/move", moveFile);
+router.post("/folder", createFolder);
+router.post("/exec", execCommand);
 
 // Shell Provider Route
-router.get("/terminal/shells", requireAuth, (req, res) => {
+router.get("/terminal/shells", (req, res) => {
   const shells = config.executionRuntime === "docker" ? ["bash", "sh"] : config.executionRuntime === "remote" ? [] : LocalBackend.detectAvailableShells();
   res.json({ shells });
 });
