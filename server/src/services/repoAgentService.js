@@ -381,7 +381,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
 
     const workspaceService = createScopedWorkspaceService(repoPath, workspaceId);
     // No local fallback: task code only runs when Docker isolation is available.
-    await dockerWorkspaceRuntime.ensureContainer(workspaceId, repoPath, { network: "none" });
+    await dockerWorkspaceRuntime.ensureContainer(workspaceId, repoPath, { network: config.repoAgentNetwork });
     await patchTask(userId, taskId, { status: "running" });
     await appendEvent(userId, taskId, {
       type: "status",
