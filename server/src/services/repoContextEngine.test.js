@@ -48,3 +48,25 @@ test("repository inventory skips dependency and build folders", async () => {
     await fs.rm(root,{recursive:true,force:true});
   }
 });
+
+
+test("repository context expands through relative imports and respects a token budget", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(),"ath-context-graph-"));
+  try {
+    await fs.mkdir(path.join(root,"src","auth"),{recursive:true});
+    await fs.writeFile(path.join(root,"src","auth","loginController.js"),
+      'import { rotateToken } from "./tokenService.js";\\nexport async function login() { return rotateToken(); }');
+    await fs.writeFile(path.join(root,"src","auth","tokenService.js"),
+      "export function rotateToken() { return { accessToken: 'ok' }; }");
+    await fs.writeFile(path.join(root,"README.md"),"# Authentication fixture");
+    const context = await buildRepositoryContext(root,"Fix login token rotation");
+    assert.ok(context.importEdges.some(edge =>
+      edge.from === "src/auth/loginController.js" && edge.to === "src/auth/tokenService.js"
+    ));
+    assert.ok(context.samples.some(sample => sample.path === "src/auth/tokenService.js"));
+    const formatted = formatRepositoryContext(context,{maxTokens:2048});
+    assert.ok(formatted.length <= 2048 * 3.5);
+  } finally {
+    await fs.rm(root,{recursive:true,force:true});
+  }
+});
