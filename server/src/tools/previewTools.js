@@ -16,11 +16,11 @@ function inferPreviewPort(command, explicitPort) {
     return Number(explicitPort);
   }
   const text = String(command || "").toLowerCase();
-  const explicit = text.match(/(?:--port(?:=|\\s+)|\\s-p\\s+|port=)(\\d{2,5})/);
+  const explicit = text.match(/(?:--port(?:=|\s+)|\s-p\s+|port=)(\d{2,5})/);
   if (explicit) return Number(explicit[1]);
-  if (/\\b(vite|astro)\\b/.test(text)) return /\\bastro\\b/.test(text) ? 4321 : 5173;
-  if (/\\b(uvicorn|fastapi|http\\.server)\\b/.test(text)) return 8000;
-  if (/\\b(flask)\\b/.test(text)) return 5000;
+  if (/\b(vite|astro)\b/.test(text)) return /\bastro\b/.test(text) ? 4321 : 5173;
+  if (/\b(uvicorn|fastapi|http\.server)\b/.test(text)) return 8000;
+  if (/\b(flask)\b/.test(text)) return 5000;
   return 3000;
 }
 
