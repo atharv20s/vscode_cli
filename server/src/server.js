@@ -53,7 +53,7 @@ app.use(
   cors({
     origin: "*",
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "X-User-Id", "*"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "X-User-Id", "X-ATH-Share-Token", "*"],
   })
 );
 
