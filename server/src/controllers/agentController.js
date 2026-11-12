@@ -14,45 +14,100 @@ import { getWorkspaceService } from "../services/workspaceService.js";
  * POST /api/agent/chat — SSE streaming chat.
  */
 export async function chatStream(req, res) {
-  const { message, images, conversationHistory, model, systemPrompt } = req.body;
+  const { message, images = [], model, systemPrompt, conversationId: requestedConversationId } = req.body || {};
 
-  if (!message && (!images || images.length === 0)) {
+  if (!message && (!Array.isArray(images) || images.length === 0)) {
     return res.status(400).json({
       error: "BadRequest",
       message: "Missing 'message' or 'images' in request body.",
     });
   }
 
-  // Set SSE headers
+  const ownerId = req.user.id;
+  const requestedId = typeof requestedConversationId === "string" ? requestedConversationId.trim() : "";
+  let conversation = null;
+  if (requestedId) {
+    conversation = getConversationForUser(requestedId, ownerId);
+    if (!conversation) return res.status(404).json({ error: "NotFound", message: "Conversation not found." });
+  }
+
+  const convId = conversation?.id || `conv_${uuidv4().replace(/-/g, "").slice(0, 16)}`;
+  const sessionId = req.user.sessionId || `sess_${ownerId}`;
+  const title = (message || "Image conversation").slice(0, 60);
+  const workspaceService = getWorkspaceService(ownerId, req.get("X-Workspace-Id") || "default");
+
+  if (!conversation) {
+    try {
+      createConversation({
+        id: convId,
+        sessionId,
+        userId: ownerId,
+        title,
+        model: model || "devstral",
+      });
+    } catch (error) {
+      return res.status(500).json({ error: "ConversationCreateFailed", message: error.message });
+    }
+  }
+
+  let history = [];
+  if (conversation?.messages) {
+    try {
+      const stored = typeof conversation.messages === "string" ? JSON.parse(conversation.messages) : conversation.messages;
+      if (Array.isArray(stored)) history = stored.filter(item => item && item.role && item.role !== "system").slice(-40);
+    } catch {
+      history = [];
+    }
+  }
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
+  const abortController = new AbortController();
+  res.on("close", () => {
+    if (!res.writableEnded) abortController.abort();
+  });
+
+  const emit = event => {
+    if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  emit({ type: "conversation_started", data: { conversationId: convId, title } });
+
   try {
-    const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
-    await runAgent({
+    const result = await runAgent({
       message: message || "",
-      images: images || [],
-      conversationHistory: conversationHistory || [],
+      images,
+      conversationHistory: history,
       model: model || undefined,
       systemPrompt: systemPrompt || undefined,
       workspaceDir: workspaceService.workspaceRoot,
       workspaceId: workspaceService.workspaceId,
       workspaceService,
-      userId: req.user.id,
-      onEvent: (event) => {
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
-      },
+      userId: ownerId,
+      sessionId,
+      signal: abortController.signal,
+      onEvent: emit,
     });
-  } catch (err) {
-    res.write(
-      `data: ${JSON.stringify({ type: "error", data: { message: err.message } })}\n\n`
-    );
-  }
 
-  res.write("data: [DONE]\n\n");
-  res.end();
+    if (Array.isArray(result?.messages) && result.messages.length) {
+      const updated = updateConversationMessagesForUser(convId, result.messages, result.totalTokens || 0, ownerId);
+      if (!updated.changes) throw new Error("Conversation ownership changed while the response was running.");
+    }
+    emit({
+      type: "conversation_updated",
+      data: { conversationId: convId, title, messageCount: result?.messages?.length || 0 },
+    });
+  } catch (error) {
+    if (!abortController.signal.aborted) emit({ type: "error", data: { message: error.message } });
+  } finally {
+    if (!res.writableEnded) {
+      res.write("data: [DONE]\n\n");
+      res.end();
+    }
+  }
 }
 
 /**
@@ -70,6 +125,8 @@ export function listModels(req, res) {
 import {
   createConversation,
   getConversation,
+  getConversationForUser,
+  updateConversationMessagesForUser,
   updateConversationTitle,
   deleteConversation,
   listConversations,
