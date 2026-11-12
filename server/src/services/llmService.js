@@ -104,9 +104,19 @@ export async function streamChatCompletion({ messages, tools, model = "coding", 
   }
 }
 export function getAvailableModels() {
-  return Object.entries(MODEL_PRESETS).map(([key,preset]) => ({
-    key, name: preset.name, tier: preset.tier,
-    configured: Object.entries(PROVIDER_MODELS).some(([provider,models]) => providerKey(provider) && models[preset.tier]),
-    free: false,
-  }));
+  return Object.entries(MODEL_PRESETS).map(([key,preset]) => {
+    const selected = Object.entries(PROVIDER_MODELS).find(([provider,models]) =>
+      providerKey(provider) && models[preset.tier]
+    );
+    return {
+      key,
+      id: selected?.[1][preset.tier] || "",
+      name: preset.name,
+      tier: preset.tier,
+      provider: selected?.[0] || "",
+      multimodal: preset.multimodal,
+      configured: Boolean(selected),
+      free: false,
+    };
+  });
 }
