@@ -11,7 +11,9 @@
     "test": "node --test src/**/*.test.js",
     "bench:event-bus": "node ../benchmarks/event-bus.mjs",
     "bench:websocket": "node ../benchmarks/websocket-load.mjs",
-    "bench:redis-lease": "node ../benchmarks/redis-lease-fault.mjs"
+    "bench:redis-lease": "node ../benchmarks/redis-lease-fault.mjs",
+    "worker:repo-agent": "node src/worker/repoAgentWorker.js",
+    "start:stack": "node src/server.js"
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0",
