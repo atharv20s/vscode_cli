@@ -10,7 +10,6 @@ import crypto from "crypto";
 import fs from "fs/promises";
 import path from "path";
 import { spawn } from "child_process";
-import { getDatabase } from "../db/database.js";
 import {
   countActiveRepoTasks, createRepoTask, getRepoTask, listRepoTasks,
   updateRepoTask, appendRepoTaskEvent, getRepoTaskGithubToken,
