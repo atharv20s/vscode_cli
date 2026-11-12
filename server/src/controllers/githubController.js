@@ -2,6 +2,7 @@
  * GitHub Controller — Server-side GitHub access and repository agent tasks.
  */
 import { findUserById } from "../db/database.js";
+import { repoAgentQueue } from "../services/repoAgentQueue.js";
 import {
   listUserRepos,
   getRepoTree as fetchRepoTree,
@@ -86,4 +87,20 @@ export async function cancelRepositoryAgentTask(req, res) {
   const task = await cancelRepoAgentTask(req.user.id, req.params.taskId);
   if (!task) return res.status(404).json({ error: "TaskNotFound" });
   return res.json({ success: true, task: task });
+}
+
+/** Return aggregate worker health without exposing hostnames or process IDs. */
+export async function getRepositoryAgentWorkerPool(req,res) {
+  try {
+    const workers = await repoAgentQueue.listWorkers();
+    return res.json({
+      queue: "redis-streams",
+      onlineWorkers: workers.length,
+      busyWorkers: workers.filter(worker => Boolean(worker.currentTaskId)).length,
+      idleWorkers: workers.filter(worker => !worker.currentTaskId).length,
+      lastHeartbeat: workers.map(worker=>worker.updatedAt).sort().at(-1) || null,
+    });
+  } catch(error) {
+    return res.status(503).json({error:"WorkerPoolUnavailable",message:"Repository agent queue is unavailable."});
+  }
 }
