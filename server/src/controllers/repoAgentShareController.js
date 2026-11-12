@@ -1,3 +1,7 @@
+function shareCapability(req) {
+  return req.get("X-ATH-Share-Token") || "";
+}
+
 import {
   createRepoAgentShare,
   getSharedRepoAgentTask,
@@ -37,7 +41,7 @@ export async function revokeTaskShare(req,res) {
 }
 
 export async function getSharedTask(req,res) {
-  const result = await getSharedRepoAgentTask(req.params.token);
+  const result = await getSharedRepoAgentTask(shareCapability(req));
   if (!result) return res.status(404).json({error:"ShareNotFound",message:"This link is invalid, expired or revoked."});
   return res.json(result);
 }
@@ -45,7 +49,7 @@ export async function getSharedTask(req,res) {
 export async function addSharedTaskComment(req,res) {
   try {
     const comment = await commentOnSharedRepoTask(
-      req.params.token,
+      shareCapability(req),
       req.body?.body,
       req.body?.authorLabel
     );
@@ -59,7 +63,7 @@ export async function addSharedTaskComment(req,res) {
 export async function submitSharedTaskInstruction(req,res) {
   try {
     const task = await submitSharedRepoInstruction(
-      req.params.token,
+      shareCapability(req),
       req.body?.instruction,
       req.body?.authorLabel
     );
