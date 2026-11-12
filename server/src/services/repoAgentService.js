@@ -18,6 +18,7 @@ import { repoAgentQueue } from "./repoAgentQueue.js";
 import { runRepoAgentPipeline } from "./repoAgentPipeline.js";
 import { config } from "../config/env.js";
 import { getPostgresPool } from "../db/postgres.js";
+import { encryptRepoAgentToken, decryptRepoAgentToken } from "./repoAgentTokenVault.js";
 import { logger } from "../config/logger.js";
 import { createScopedWorkspaceService } from "./workspaceService.js";
 import { dockerWorkspaceRuntime } from "./dockerWorkspaceRuntime.js";
@@ -504,8 +505,9 @@ export async function processRepoAgentTask(taskId, options = {}) {
   }
   const row = await getRepoTask(taskId);
   if (!row) throw new Error("Repository task does not exist.");
-  const token = await getRepoTaskGithubToken(row.user_id);
-  if (!token) throw new Error("GitHub connection is missing or expired for the task owner.");
+  const credential = await getRepoTaskGithubToken(taskId);
+  if (!credential) throw new Error("Encrypted GitHub credential is missing for this task.");
+  const token = decryptRepoAgentToken(credential);
 
   const octokit = getOctokit(token);
   const commitResponse = await octokit.git.getCommit({
@@ -632,6 +634,13 @@ export async function startRepoAgentTask(options) {
   });
   const baseSha = refResponse.data.object.sha;
 
+  let credential;
+  try {
+    credential = encryptRepoAgentToken(token);
+  } catch (error) {
+    throw Object.assign(new Error(error.message), { statusCode: 503 });
+  }
+
   const taskId = crypto.randomUUID();
   const branchName = "ath-ide/" + taskId.slice(0, 8);
   await createRepoTask({
@@ -644,6 +653,7 @@ export async function startRepoAgentTask(options) {
     branch: branchName,
     prompt: prompt.trim(),
     workspacePath: "",
+    credential: credential,
   });
 
   try {
@@ -809,7 +819,9 @@ export async function submitSharedRepoInstruction(rawToken, instruction, authorL
     error.statusCode = 403;
     throw error;
   }
-  const token = await getRepoTaskGithubToken(share.owner_user_id);
+  const credential = await getRepoTaskGithubToken(share.task_id);
+  if (!credential) throw new Error("Encrypted GitHub credential is missing for the original task.");
+  const token = decryptRepoAgentToken(credential);
   const baseBranch = share.pr_url ? share.branch : share.base_branch;
   const task = await startRepoAgentTask({
     userId: share.owner_user_id,
