@@ -146,6 +146,13 @@ export async function pullWorkspaceFromRemote({ workspaceId, workspaceDir, signa
   const result = await postWorkerJson("/v1/workspace/pull", {
     workspaceId: workspaceRuntimeKey(workspaceId),
   }, { timeoutMs: 90000, signal });
+  const localFiles = await collectWorkspaceFiles(workspaceDir);
+  // A newly provisioned worker may not have received its first snapshot yet.
+  // Never let an empty remote directory erase an existing local workspace.
+  if (result.files.length === 0 && localFiles.length > 0) {
+    await syncWorkspaceOnRemote({ workspaceId, workspaceDir, signal });
+    return { success: true, files: localFiles.length, initializedRemote: true };
+  }
   await applyWorkspaceFiles(workspaceDir, result.files);
   return { success: true, files: result.files.length };
 }
