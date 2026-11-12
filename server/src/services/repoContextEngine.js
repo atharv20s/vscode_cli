@@ -136,19 +136,19 @@ export function formatRepositoryContext(context, options = {}) {
   // Instructions and task-relevant files outrank a verbose directory listing.
   let output = "";
   for (const item of context.instructions || []) {
-    const section = "## Project instructions: " + item.path + "\\n" + item.content + "\\n\\n";
+    const section = "## Project instructions: " + item.path + "\n" + item.content + "\n\n";
     if (output.length + section.length > Math.floor(maxChars * 0.2)) break;
     output += section;
   }
   const relationships = (context.importEdges || []).slice(0, 100)
-    .map(edge => edge.from + " imports " + edge.to).join("\\n");
-  const inventory = "## Repository inventory\\nFiles discovered: " + context.fileCount +
-    (context.truncated ? " (inventory capped)" : "") + "\\n" +
+    .map(edge => edge.from + " imports " + edge.to).join("\n");
+  const inventory = "## Repository inventory\nFiles discovered: " + context.fileCount +
+    (context.truncated ? " (inventory capped)" : "") + "\n" +
     (context.directoryMap || "").slice(0, Math.floor(maxChars * 0.12));
-  const graph = relationships ? "\\n\\n## Relevant dependency relationships\\n" + relationships : "";
-  output += (output ? "\\n\\n" : "") + inventory + graph;
+  const graph = relationships ? "\n\n## Relevant dependency relationships\n" + relationships : "";
+  output += (output ? "\n\n" : "") + inventory + graph;
   for (const sample of context.samples || []) {
-    const section = "\\n\\n## Source: " + sample.path + "\\n" + sample.content;
+    const section = "\n\n## Source: " + sample.path + "\n" + sample.content;
     if (output.length + section.length > maxChars) continue;
     output += section;
   }
