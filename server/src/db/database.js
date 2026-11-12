@@ -88,6 +88,9 @@ export function initDatabase() {
       worker_id TEXT,
       lease_expires_at TEXT,
       cancel_requested INTEGER NOT NULL DEFAULT 0,
+      github_token_ciphertext TEXT,
+      github_token_iv TEXT,
+      github_token_tag TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -154,6 +157,9 @@ export function initDatabase() {
     "ALTER TABLE repo_agent_tasks ADD COLUMN worker_id TEXT;",
     "ALTER TABLE repo_agent_tasks ADD COLUMN lease_expires_at TEXT;",
     "ALTER TABLE repo_agent_tasks ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0;",
+    "ALTER TABLE repo_agent_tasks ADD COLUMN github_token_ciphertext TEXT;",
+    "ALTER TABLE repo_agent_tasks ADD COLUMN github_token_iv TEXT;",
+    "ALTER TABLE repo_agent_tasks ADD COLUMN github_token_tag TEXT;",
     "CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);",
   ];
   for (const migration of migrations) {
