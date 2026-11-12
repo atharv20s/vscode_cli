@@ -6,7 +6,7 @@
  */
 
 import { registerTool } from "./index.js";
-import { getWorkspaceService } from "../services/workspaceService.js";
+import { getWorkspaceServiceForContext } from "../services/workspaceService.js";
 
 export function registerDocTools() {
   // 1. create_readme
@@ -36,7 +36,7 @@ export function registerDocTools() {
       },
     },
     async (args, ctx = {}) => {
-      const workspaceService = getWorkspaceService(ctx.userId);
+      const workspaceService = getWorkspaceServiceForContext(ctx);
       const featureList = (args.features || []).map((f) => `* **${f}**`).join("\n");
       const content = `# ${args.title}
 
@@ -118,7 +118,7 @@ MIT License.
       },
     },
     async (args, ctx = {}) => {
-      const workspaceService = getWorkspaceService(ctx.userId);
+      const workspaceService = getWorkspaceServiceForContext(ctx);
       const fileList = args.files_modified.map((f) => `* \`${f}\``).join("\n");
       const content = `# Walkthrough - ${args.title}
 
@@ -181,7 +181,7 @@ ${args.preview_url ? `\n---\n\n## Live Preview\nApplication is verified and runn
       },
     },
     async (args, ctx = {}) => {
-      const workspaceService = getWorkspaceService(ctx.userId);
+      const workspaceService = getWorkspaceServiceForContext(ctx);
       const fileName = args.output_file || "architecture.md";
       const cleanMermaid = (args.mermaid_code || "").trim().replace(/^```mermaid\s*/i, "").replace(/```$/, "").trim();
 
@@ -281,7 +281,7 @@ ${cleanMermaid}
       },
     },
     async (args, ctx = {}) => {
-      const workspaceService = getWorkspaceService(ctx.userId);
+      const workspaceService = getWorkspaceServiceForContext(ctx);
       const techBadges = (args.tech_stack || []).map(t => `![${t}](https://img.shields.io/badge/${encodeURIComponent(t)}-38bdf8?style=for-the-badge&logo=${encodeURIComponent(t.toLowerCase())}&logoColor=white)`).join(" ");
       const featureItems = (args.features || []).map(f => `- **${f}**`).join("\n");
       const installCommands = (args.installation_steps || ["git clone <repo-url>", "npm install", "npm run dev"]).join("\n");
