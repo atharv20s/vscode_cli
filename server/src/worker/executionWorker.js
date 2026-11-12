@@ -228,6 +228,22 @@ async function syncWorkspace(workspaceId, files) {
 
 app.get("/healthz", (_req, res) => res.json({ status: "ok", role: "execution-worker" }));
 
+app.post("/v1/workspace/pull", express.raw({ type: "application/json", limit: "1mb" }), verifyRequest, async (req, res) => {
+  try {
+    const input = JSON.parse(req.body.toString("utf8"));
+    if (!safeWorkspaceId(input.workspaceId)) return res.status(400).json({ error: "Invalid workspace identity." });
+    const files = await withWorkspaceLock(input.workspaceId, () => withWorkspaceFileLock(input.workspaceId, async () => {
+      const root = workspaceRootFor(input.workspaceId);
+      await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
+      return readWorkspace(root);
+    }));
+    return res.json({ success: true, workspaceId: input.workspaceId, files });
+  } catch (error) {
+    const status = error.code === "WORKSPACE_BUSY" ? 423 : 500;
+    return res.status(status).json({ error: status === 423 ? error.message : "Workspace pull failed." });
+  }
+});
+
 app.post("/v1/workspace/sync", express.raw({ type: "application/json", limit: "20mb" }), verifyRequest, async (req, res) => {
   try {
     const input = JSON.parse(req.body.toString("utf8"));
