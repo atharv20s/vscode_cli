@@ -18,6 +18,7 @@ export const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   isDev: (process.env.NODE_ENV || "development") === "development",
   publicUrl: process.env.PUBLIC_URL || "",
+  previewPublicUrl: (process.env.PREVIEW_PUBLIC_URL || "").replace(/\\/$/, ""),
   logLevel: process.env.LOG_LEVEL || "info",
 
   // Database (PostgreSQL / Neon / Supabase or SQLite fallback)
@@ -131,6 +132,10 @@ export const config = {
 export function validateConfig() {
   const warnings = [];
   const errors = [];
+
+  if (config.executionRuntime === "remote" && !config.previewPublicUrl) {
+    warnings.push("PREVIEW_PUBLIC_URL is not set; remote previews are disabled until a separate preview origin is configured.");
+  }
 
   if (config.requireDistributedEvents && !config.redisUrl) {
     errors.push("REDIS_URL is required when REQUIRE_DISTRIBUTED_EVENTS=true.");
