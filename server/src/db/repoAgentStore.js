@@ -1,7 +1,29 @@
-import { getDatabase } from "../db/database.js";
+import { getDatabase, findUserById } from "../db/database.js";
 import { getPostgresPool } from "../db/postgres.js";
 
 function pool() { return getPostgresPool(); }
+
+/**
+ * Mirror only the account identity required by Postgres foreign keys.
+ * Password hashes and GitHub credentials remain in the auth store / task vault.
+ */
+export async function ensureRepoAgentUser(userId) {
+  if (!pool()) return true;
+  const user = findUserById(userId);
+  if (!user) throw new Error("Authenticated user profile was not found in the API user store.");
+  await pool().query(
+    `INSERT INTO users (id,github_id,username,email,avatar_url)
+     VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (id) DO UPDATE SET
+       github_id=COALESCE(EXCLUDED.github_id,users.github_id),
+       username=EXCLUDED.username,
+       email=COALESCE(EXCLUDED.email,users.email),
+       avatar_url=COALESCE(EXCLUDED.avatar_url,users.avatar_url),
+       updated_at=CURRENT_TIMESTAMP`,
+    [user.id,user.github_id || null,user.username,user.email || null,user.avatar_url || null]
+  );
+  return true;
+}
 
 export async function countActiveRepoTasks(userId) {
   if (pool()) {
