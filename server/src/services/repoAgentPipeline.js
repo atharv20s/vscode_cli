@@ -5,8 +5,8 @@ import { dockerWorkspaceRuntime } from "./dockerWorkspaceRuntime.js";
 import { buildRepositoryContext, formatRepositoryContext } from "./repoContextEngine.js";
 import { appendRepoTaskEvent, saveRepoContextRound } from "../db/repoAgentStore.js";
 
-const PLANNER_TOOLS = ["read_file","list_files","create_plan","update_plan"];
-const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command","create_plan","update_plan"];
+const PLANNER_TOOLS = ["read_file","list_files"];
+const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command"];
 const TESTER_TOOLS = ["read_file","list_files","run_command"];
 const REVIEWER_TOOLS = ["read_file","list_files"];
 
@@ -101,13 +101,23 @@ async function detectChecks(root, context) {
       command: manager === "pnpm" ? "pnpm build" : manager === "yarn" ? "yarn build" : "npm run build",
       blocked: !hasNodeModules && Object.keys(manifest.dependencies || {}).length + Object.keys(manifest.devDependencies || {}).length > 0,
     });
+    if (scripts.typecheck) checks.push({
+      name: "typecheck",
+      command: manager === "pnpm" ? "pnpm typecheck" : manager === "yarn" ? "yarn typecheck" : "npm run typecheck",
+      blocked: !hasNodeModules && Object.keys(manifest.dependencies || {}).length + Object.keys(manifest.devDependencies || {}).length > 0,
+    });
+    if (scripts.lint) checks.push({
+      name: "lint",
+      command: manager === "pnpm" ? "pnpm lint" : manager === "yarn" ? "yarn lint" : "npm run lint",
+      blocked: !hasNodeModules && Object.keys(manifest.dependencies || {}).length + Object.keys(manifest.devDependencies || {}).length > 0,
+    });
   }
   if (context.samples.some(item => item.path === "Cargo.toml")) checks.push({ name: "cargo-test", command: "cargo test --locked", blocked: false });
   if (context.samples.some(item => item.path === "go.mod")) checks.push({ name: "go-test", command: "go test ./...", blocked: false });
   if (context.samples.some(item => item.path === "pyproject.toml") || await fs.access(path.join(root,"pytest.ini")).then(()=>true).catch(()=>false)) {
     checks.push({ name: "pytest", command: "python -m pytest -q", blocked: false });
   }
-  return checks.slice(0,3);
+  return checks.slice(0,4);
 }
 
 async function runDeterministicChecks({ task, root, workspaceId, context, signal, onEvent }) {
@@ -209,6 +219,9 @@ export async function runRepoAgentPipeline(options) {
     });
     verification = await runDeterministicChecks({ task, root: workspaceDir, workspaceId, context, signal, onEvent });
     const failedChecks = verification.filter(item=>!item.success);
+    if (verification.some(item=>item.blocked)) {
+      throw new Error("Quality gate blocked the PR: declared dependencies are missing and the isolated worker has no dependency-registry egress. Configure an approved package cache/egress proxy, then retry. No PR was published.");
+    }
     await options.setStatus?.("reviewing");
     review = await runRole({
       task, role: "reviewer", roundNumber: 4 + attempt * 2, workspaceDir, workspaceId,
