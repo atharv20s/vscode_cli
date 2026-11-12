@@ -82,8 +82,7 @@ function estimateTokens(text) {
  * Prunes large intermediate tool outputs and trims older turns if total context approaches limit.
  * Keeps system prompt and recent turns 100% intact.
  */
-function compactContext(messages, maxTokenBudget = Math.max(4096,
-  (config.llmContextBudgetTokens || 48000) + (config.llmOutputReserveTokens || 8192) + (config.llmContextSafetyTokens || 2048))) {
+function compactContext(messages, maxTokenBudget = Math.max(4096, config.llmContextBudgetTokens || 48000)) {
   const estimate = value => Math.ceil(String(value || "").length / 3.5);
   const messageTokens = message => estimate(
     typeof message.content === "string" ? message.content : JSON.stringify(message.content || "")
