@@ -1,20 +1,28 @@
 /**
- * GitHub Routes — Proxy to GitHub API for repos, commits, PRs.
+ * GitHub routes — authenticated repository discovery and PR agent tasks.
  */
-
 import { Router } from "express";
-import { requireAuth, optionalAuth } from "../middleware/auth.js";
+import { requireAuth } from "../middleware/auth.js";
 import { githubLimiter } from "../middleware/rateLimiter.js";
 import {
   listRepos,
   getRepoTree,
-  commitFiles,
+  createRepositoryAgentTask,
+  getRepositoryAgentTask,
+  getRepositoryAgentTasks,
+  cancelRepositoryAgentTask,
 } from "../controllers/githubController.js";
 
 const router = Router();
 
-router.get("/repos", optionalAuth, githubLimiter, listRepos);
-router.get("/repos/:owner/:repo/tree", optionalAuth, githubLimiter, getRepoTree);
-router.post("/repos/:owner/:repo/commit", requireAuth, githubLimiter, commitFiles);
+router.use(requireAuth);
+router.use(githubLimiter);
+
+router.get("/repos", listRepos);
+router.get("/repos/:owner/:repo/tree", getRepoTree);
+router.get("/agent-tasks", getRepositoryAgentTasks);
+router.post("/repos/:owner/:repo/agent-tasks", createRepositoryAgentTask);
+router.get("/agent-tasks/:taskId", getRepositoryAgentTask);
+router.delete("/agent-tasks/:taskId", cancelRepositoryAgentTask);
 
 export default router;
