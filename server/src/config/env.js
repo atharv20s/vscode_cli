@@ -118,7 +118,7 @@ export function validateConfig() {
 
   if (!config.openrouterKey && !config.openaiKey && !config.mistralKey) {
     warnings.push(
-      "No LLM API key found. Set OPENROUTER_API_KEY or OPENAI_API_KEY in your .env file."
+      "No LLM API key found. Set OPENROUTER_API_KEY, MISTRAL_API_KEY or OPENAI_API_KEY in your .env file."
     );
   }
 
