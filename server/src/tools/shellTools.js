@@ -5,7 +5,7 @@
  * in isolated AGENT_BACKGROUND mode via ExecutionService & ProcessSupervisor.
  */
 
-import { getWorkspaceService } from "../services/workspaceService.js";
+import { getWorkspaceServiceForContext } from "../services/workspaceService.js";
 import { registerTool } from "./index.js";
 import { config } from "../config/env.js";
 import { executionService } from "../services/executionService.js";
@@ -81,7 +81,7 @@ export function registerShellTools() {
       }
 
       // 2. Resolve working directory
-      const workspace = getWorkspaceService(ctx.userId);
+      const workspace = getWorkspaceServiceForContext(ctx);
       const baseDir = workspace.workspaceRoot;
       const target = workspace.resolvePath(args.working_dir || ".");
       if (!target.safe) {
