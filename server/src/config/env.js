@@ -127,6 +127,10 @@ export function validateConfig() {
     );
   }
 
+  if (config.llmContextBudgetTokens + config.llmOutputReserveTokens + config.llmContextSafetyTokens >= config.llmContextWindowTokens) {
+    errors.push("LLM_CONTEXT_BUDGET_TOKENS + LLM_OUTPUT_RESERVE_TOKENS + LLM_CONTEXT_SAFETY_TOKENS must be smaller than LLM_CONTEXT_WINDOW_TOKENS.");
+  }
+
   if (!["disabled", "docker", "remote"].includes(config.executionRuntime)) {
     errors.push("EXECUTION_RUNTIME must be disabled, docker, or remote.");
   }
