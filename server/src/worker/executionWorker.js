@@ -22,7 +22,9 @@ const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
 const IGNORED = new Set([".git", "node_modules", ".next", "dist", "build", ".cache"]);
 const replayedNonces = new Map();
 const inFlight = new Map();
-if ((process.env.WORKSPACE_OBJECT_STORE_REQUIRED || "false").toLowerCase() === "true" && !isWorkspaceObjectStoreConfigured()) {\n  throw new Error("WORKSPACE_OBJECT_STORE_REQUIRED=true but durable object storage is not configured.");\n}
+if ((process.env.WORKSPACE_OBJECT_STORE_REQUIRED || "false").toLowerCase() === "true" && !isWorkspaceObjectStoreConfigured()) {
+  throw new Error("WORKSPACE_OBJECT_STORE_REQUIRED=true but durable object storage is not configured.");
+}
 
 function safeWorkspaceId(value) {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
