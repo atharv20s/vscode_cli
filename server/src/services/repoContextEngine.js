@@ -71,7 +71,7 @@ export async function buildRepositoryContext(root, prompt) {
   }).sort((a,b) => b.score-a.score || a.name.localeCompare(b.name));
 
   const selected = new Set(CONTEXT_FILES.filter(name => files.includes(name) && !SENSITIVE_PATH.test(name)));
-  for (const item of ranked.slice(0, 18)) selected.add(item.name);
+  for (const item of ranked.slice(0, 18)) if (!SENSITIVE_PATH.test(item.name)) selected.add(item.name);
 
   const instructions = [];
   for (const file of INSTRUCTION_FILES) {
