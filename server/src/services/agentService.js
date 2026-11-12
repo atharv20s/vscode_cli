@@ -131,7 +131,7 @@ function compactContext(messages, maxTokenBudget = 85000) {
  * Write Antigravity-style plan and chat history logs directly to the user's workspace
  * so they appear in the file explorer.
  */
-async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir, userId) {
+async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir, userId, workspaceServiceOverride = null) {
   if (!workspaceDir) return;
   try {
     // 1. Create/update chat_session.md
@@ -139,7 +139,7 @@ async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDi
       .map((msg) => `### **${msg.role === "user" ? "👤 User" : "🤖 Assistant"}**\n${msg.content}\n`)
       .join("\n---\n\n");
     const chatSessionContent = `# 💬 ATH IDE Chat Session\n\n*Updated: ${new Date().toLocaleString()}*\n\n## Current Prompts & Messages\n\n${historyText}\n### **👤 User**\n${message}\n`;
-    if (userId) await getWorkspaceService(userId).writeFile("chat_session.md", chatSessionContent, { source: "agent", actor: "agent" });
+    if (workspaceServiceOverride || userId) await (workspaceServiceOverride || getWorkspaceService(userId)).writeFile("chat_session.md", chatSessionContent, { source: "agent", actor: "agent" });
     else await fs.writeFile(path.resolve(workspaceDir, "chat_session.md"), chatSessionContent, "utf8");
 
     // 2. Determine if user prompt is requesting architectural changes/plans
@@ -149,17 +149,17 @@ async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDi
     if (needsPlan) {
       // Create implementation_plan.md
       const planContent = `# 📋 Workspace Implementation Plan\n\n*Auto-generated plan for: "${message}"*\n\n## Goal Description\n${message}\n\n## User Review Required\n> [!NOTE]\n> Review the generated plan files in the workspace. Mark tasks as complete in task.md.\n\n## Proposed Changes\n- [NEW] Code modifications based on AI instructions\n- Interactive terminal tests to verify output\n`;
-      if (userId) await getWorkspaceService(userId).writeFile("implementation_plan.md", planContent, { source: "agent", actor: "agent" });
+      if (workspaceServiceOverride || userId) await (workspaceServiceOverride || getWorkspaceService(userId)).writeFile("implementation_plan.md", planContent, { source: "agent", actor: "agent" });
       else await fs.writeFile(path.resolve(workspaceDir, "implementation_plan.md"), planContent, "utf8");
 
       // Create task.md
       const taskContent = `# 🎯 Task Checklist\n\n- [ ] Analyze user prompt: "${message.slice(0, 50)}..."\n- [ ] Run design phase and review dependencies\n- [ ] Write new code blocks and verify implementation\n- [ ] Run terminal-based execution tests\n`;
-      if (userId) await getWorkspaceService(userId).writeFile("task.md", taskContent, { source: "agent", actor: "agent" });
+      if (workspaceServiceOverride || userId) await (workspaceServiceOverride || getWorkspaceService(userId)).writeFile("task.md", taskContent, { source: "agent", actor: "agent" });
       else await fs.writeFile(path.resolve(workspaceDir, "task.md"), taskContent, "utf8");
       
       // Create walkthrough.md
       const walkthroughContent = `# 🚶 Workspace Walkthrough\n\n*Auto-generated walkthrough summary*\n\n## Changes Made\n- Initialized meta files in workspace explorer\n- Ready for coding actions\n`;
-      if (userId) await getWorkspaceService(userId).writeFile("walkthrough.md", walkthroughContent, { source: "agent", actor: "agent" });
+      if (workspaceServiceOverride || userId) await (workspaceServiceOverride || getWorkspaceService(userId)).writeFile("walkthrough.md", walkthroughContent, { source: "agent", actor: "agent" });
       else await fs.writeFile(path.resolve(workspaceDir, "walkthrough.md"), walkthroughContent, "utf8");
     }
   } catch (err) {
@@ -192,12 +192,14 @@ export async function runAgent({
   workspaceId,
   userId,
   sessionId,
+  workspaceService = null,
+  allowedTools = null,
   maxIterations = 15,
   signal,
   onEvent,
 }) {
   // Auto-generate workspace plan and chat logs
-  await writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir, userId);
+  await writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir, userId, workspaceService);
 
   // Build messages array
   const messages = [];
@@ -233,9 +235,11 @@ export async function runAgent({
   }
   messages.push({ role: "user", content: userMessageContent });
 
-  // Get ALL registered tools — no filtering, agent gets everything
+  // Restrict task agents to an explicit capability set when supplied.
   const allTools = getToolDefinitions();
-  const tools = allTools;
+  const tools = Array.isArray(allowedTools)
+    ? allTools.filter((tool) => allowedTools.includes(tool.function.name))
+    : allTools;
   let totalTokens = 0;
   let iteration = 0;
 
@@ -251,7 +255,7 @@ export async function runAgent({
       data: { turn: iteration, maxTurns: maxIterations, turnId: currentTurnId },
     });
 
-    const toolContext = { workspaceDir, workspaceId, userId, sessionId, turnId: currentTurnId, signal };
+    const toolContext = { workspaceDir, workspaceId, userId, sessionId, turnId: currentTurnId, signal, workspaceService, allowedTools };
 
     let textContent = "";
     let pendingToolCalls = [];
