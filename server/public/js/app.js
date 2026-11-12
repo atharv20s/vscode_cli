@@ -696,7 +696,7 @@ class App {
           this.currentUser = data.user;
           localStorage.setItem("token", data.token);
 
-          if (data.githubToken) {
+          if (data.user?.hasGithub) {
             localStorage.removeItem("github_user_token");
             await this.loadGitHubRepos();
           }
