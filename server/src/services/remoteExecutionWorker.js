@@ -202,6 +202,21 @@ export async function proxyRemotePreview(req, res, { workspaceId, port, previewP
   if (!["GET", "HEAD"].includes(req.method.toUpperCase())) init.body = body;
   const response = await fetch(new URL(route, url), init);
   res.status(response.status);
+  const contentType = response.headers.get("content-type") || "";
+  const token = String(req.originalUrl || "").split("/")[2] || "";
+  const prefix = "/preview/" + token + "/";
+  if (contentType.includes("text/html")) {
+    const html = await response.text();
+    const rewritten = html
+      .replace(/((?:src|href|action|poster)\\s*=\\s*[\"'])\\/(?!\\/)/gi, "$1" + prefix)
+      .replace(/url\\(\\s*(['\"]?)\\/(?!\\/)/gi, "url($1" + prefix);
+    for (const [name, value] of response.headers) {
+      if (["connection", "transfer-encoding", "content-encoding", "content-length", "keep-alive"].includes(name.toLowerCase())) continue;
+      res.setHeader(name, value);
+    }
+    res.setHeader("Cache-Control", "no-store");
+    return res.send(rewritten);
+  }
   for (const [name, value] of response.headers) {
     if (["connection", "transfer-encoding", "content-encoding", "content-length", "keep-alive"].includes(name.toLowerCase())) continue;
     res.setHeader(name, value);
