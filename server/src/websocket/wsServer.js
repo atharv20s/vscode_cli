@@ -8,7 +8,7 @@
 import path from "path";
 import crypto from "crypto";
 import { WebSocketServer } from "ws";
-import { verifyToken } from "../middleware/auth.js";
+import { verifyToken, generatePreviewToken } from "../middleware/auth.js";
 import { runAgent } from "../services/agentService.js";
 import { config } from "../config/env.js";
 import { getWorkspaceService } from "../services/workspaceService.js";
@@ -221,6 +221,7 @@ export function initWebSocketServer(httpServer) {
     ws.on("error", (err) => {
       logger.error("WebSocket error", { error: err.message });
       executionService.detachInteractive(ws.terminalSessionId, ws);
+      try { ws.remoteTerminal?.close(); } catch {}
       removeConnection(ws);
     });
 
@@ -297,9 +298,19 @@ async function handleMessage(ws, msg, user) {
 
     // Live Application Preview Controls
     case "preview.start":
-    case "preview_start":
-      await ws.previewService.startPreview({ ...payload, cwd: ws.workspaceService.workspaceRoot });
+    case "preview_start": {
+      const command = payload?.command || "npm run dev";
+      const port = Number(payload?.port) || (/\b(vite|astro)\b/i.test(command) ? (/\bastro\b/i.test(command) ? 4321 : 5173) : /\b(uvicorn|fastapi|http\.server)\b/i.test(command) ? 8000 : 3000);
+      await ws.previewService.startPreview({
+        ...payload,
+        command,
+        port,
+        cwd: ws.workspaceService.workspaceRoot,
+        workspaceDir: ws.workspaceService.workspaceRoot,
+        previewToken: ws.userId && ws.workspaceKey ? generatePreviewToken(ws.userId, ws.workspaceKey, port) : null,
+      });
       break;
+    }
 
     case "preview.stop":
     case "preview_stop":
