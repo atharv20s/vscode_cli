@@ -24,9 +24,9 @@ router.use(githubLimiter);
 
 // Capability URLs are intentionally public; possession of the unguessable,
 // expiring token grants only the role selected by the task owner.
-router.get("/shares/:token", getSharedTask);
-router.post("/shares/:token/comments", addSharedTaskComment);
-router.post("/shares/:token/instructions", submitSharedTaskInstruction);
+router.get("/shares", getSharedTask);
+router.post("/shares/comments", addSharedTaskComment);
+router.post("/shares/instructions", submitSharedTaskInstruction);
 
 router.use(requireAuth);
 
