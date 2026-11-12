@@ -113,6 +113,53 @@ class RepoAgentQueue {
     await client.del(CANCEL_PREFIX + taskId);
   }
 
+  async heartbeatWorker(workerId, metadata = {}) {
+    const client = await this.connect();
+    const value = {
+      workerId,
+      host: metadata.host || "",
+      pid: metadata.pid || 0,
+      currentTaskId: metadata.currentTaskId || null,
+      updatedAt: new Date().toISOString(),
+    };
+    await client.set("ath:repo-agent:worker:" + workerId, JSON.stringify(value), "EX", 30);
+    return value;
+  }
+
+  async unregisterWorker(workerId) {
+    if (!this.client) return;
+    await this.client.del("ath:repo-agent:worker:" + workerId);
+  }
+
+  async listWorkers() {
+    const client = await this.connect();
+    let cursor = "0";
+    const keys = [];
+    do {
+      const result = await client.scan(cursor, "MATCH", "ath:repo-agent:worker:*", "COUNT", 100);
+      cursor = result[0];
+      keys.push(...result[1]);
+    } while (cursor !== "0");
+    if (!keys.length) return [];
+    const values = await client.mget(...keys);
+    return values.flatMap(value => {
+      if (!value) return [];
+      try { return [JSON.parse(value)]; } catch { return []; }
+    });
+  }
+
+  async deadLetter(taskId, attempt, reason) {
+    const client = await this.connect();
+    return client.xadd(
+      "ath:repo-agent:dead",
+      "*",
+      "taskId", String(taskId),
+      "attempt", String(attempt || 0),
+      "reason", String(reason || "worker failure").slice(0,3000),
+      "failedAt", new Date().toISOString()
+    );
+  }
+
   async close() {
     if (this.client) {
       await this.client.quit().catch(() => {});
