@@ -46,7 +46,6 @@ function signedRequest(method, key, body = Buffer.alloc(0)) {
   return {
     url: new URL(pathname, config.base.origin),
     headers: {
-      host,
       "x-amz-date": amzDate,
       "x-amz-content-sha256": payloadHash,
       authorization,
