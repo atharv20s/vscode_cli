@@ -367,7 +367,6 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     await fs.mkdir(taskDir, { recursive: true, mode: 0o700 });
     await cloneRepository(token, task.owner, task.repo, task.base_branch, repoPath, taskDir);
 
-    await removeProtectedFiles(repoPath, protectedPaths);
     if (abort.signal.aborted) {
       patchTask(userId, taskId, { status: "cancelled" });
       appendEvent(userId, taskId, { type: "status", data: { status: "cancelled" } });
@@ -382,6 +381,9 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
       });
       await runProcess("git", ["checkout", "--detach", task.base_sha], { cwd: repoPath, env: gitEnv });
     }
+
+    // Remove tracked secrets only after pinning the checkout to the selected base SHA.
+    await removeProtectedFiles(repoPath, protectedPaths);
 
     // Publishing happens through GitHub's API. The agent does not need Git metadata.
     await fs.rm(path.join(repoPath, ".git"), { recursive: true, force: true });
