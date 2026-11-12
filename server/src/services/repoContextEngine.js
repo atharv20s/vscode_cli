@@ -15,11 +15,20 @@ function words(value) {
 
 async function safeRead(root, relative, maxBytes = 18000) {
   try {
-    const target = path.resolve(root, relative);
-    const rel = path.relative(root, target);
+    const absoluteRoot = await fs.realpath(root);
+    const target = path.resolve(absoluteRoot, relative);
+    const rel = path.relative(absoluteRoot, target);
     if (rel.startsWith("..") || path.isAbsolute(rel)) return "";
-    const stat = await fs.lstat(target);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxBytes) return "";
+
+    const segments = rel.split(path.sep).filter(Boolean);
+    let current = absoluteRoot;
+    for (let index = 0; index < segments.length; index++) {
+      current = path.join(current, segments[index]);
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) return "";
+      if (index < segments.length - 1 && !stat.isDirectory()) return "";
+      if (index === segments.length - 1 && (!stat.isFile() || stat.size > maxBytes)) return "";
+    }
     return (await fs.readFile(target, "utf8")).slice(0, maxBytes);
   } catch {
     return "";
