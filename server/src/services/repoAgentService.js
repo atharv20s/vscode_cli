@@ -368,9 +368,6 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     await cloneRepository(token, task.owner, task.repo, task.base_branch, repoPath, taskDir);
 
     await removeProtectedFiles(repoPath, protectedPaths);
-    // The host uses the GitHub API to publish the diff; the agent never needs
-    // local Git metadata, remote URLs, or credential helpers.
-    await fs.rm(path.join(repoPath, ".git"), { recursive: true, force: true });
     if (abort.signal.aborted) {
       patchTask(userId, taskId, { status: "cancelled" });
       appendEvent(userId, taskId, { type: "status", data: { status: "cancelled" } });
@@ -385,6 +382,9 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
       });
       await runProcess("git", ["checkout", "--detach", task.base_sha], { cwd: repoPath, env: gitEnv });
     }
+
+    // Publishing happens through GitHub's API. The agent does not need Git metadata.
+    await fs.rm(path.join(repoPath, ".git"), { recursive: true, force: true });
 
     const workspaceService = createScopedWorkspaceService(repoPath, workspaceId);
     // No local fallback: task code only runs when Docker isolation is available.
