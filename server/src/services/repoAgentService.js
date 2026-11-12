@@ -573,6 +573,17 @@ export async function startRepoAgentTask(options) {
   return publicTask(rowForUser(userId, taskId));
 }
 
+/**
+ * Mark tasks interrupted by an API worker restart instead of displaying them
+ * as permanently running when their in-memory sandbox no longer exists.
+ */
+export function recoverRepoAgentTasks() {
+  const result = getDatabase().prepare(
+    "UPDATE repo_agent_tasks SET status = 'interrupted', error = 'Server restarted before this task completed.', updated_at = datetime('now') WHERE status IN ('queued','cloning','running','publishing')"
+  ).run();
+  return result.changes;
+}
+
 export function getRepoAgentTask(userId, taskId) {
   return publicTask(rowForUser(userId, taskId));
 }
