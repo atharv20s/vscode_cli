@@ -65,17 +65,14 @@ class App {
   handleUrlAuth() {
     const urlParams = new URLSearchParams(window.location.search);
     const token = urlParams.get("token");
-    const ghToken = urlParams.get("github_token");
+    localStorage.removeItem("github_user_token");
 
     if (token) {
       this.token = token;
       localStorage.setItem("token", token);
     }
-    if (ghToken) {
-      localStorage.setItem("github_user_token", ghToken);
-    }
-
-    if (token || ghToken) {
+    
+    if (token) {
       window.history.replaceState({}, document.title, window.location.pathname);
       this.logTerminal("Successfully authenticated with GitHub!", "success");
     }
@@ -700,7 +697,7 @@ class App {
           localStorage.setItem("token", data.token);
 
           if (data.githubToken) {
-            localStorage.setItem("github_user_token", data.githubToken);
+            localStorage.removeItem("github_user_token");
             await this.loadGitHubRepos();
           }
 
@@ -791,7 +788,7 @@ class App {
             this.token = data.token;
             localStorage.setItem("token", data.token);
           }
-          localStorage.setItem("github_user_token", tokenVal);
+          localStorage.removeItem("github_user_token");
 
           if (ghModal) ghModal.classList.add("hidden");
 
@@ -808,6 +805,26 @@ class App {
           directTokenBtn.disabled = false;
           directTokenBtn.innerHTML = '<i data-lucide="check-circle"></i> Connect & Save';
           if (window.lucide) window.lucide.createIcons();
+        }
+      });
+    }
+
+    // Repository-scoped agent: task execution happens in a dedicated Docker workspace.
+    const runRepoAgentBtn = document.getElementById("btn-run-repo-agent");
+    const repoRefreshBtn = document.getElementById("btn-refresh-repos");
+    const repoSelect = document.getElementById("repo-agent-select");
+    if (runRepoAgentBtn) {
+      runRepoAgentBtn.addEventListener("click", () => this.startRepositoryAgentTask());
+    }
+    if (repoRefreshBtn) {
+      repoRefreshBtn.addEventListener("click", () => this.loadGitHubRepos());
+    }
+    if (repoSelect) {
+      repoSelect.addEventListener("change", () => {
+        const selected = repoSelect.options[repoSelect.selectedIndex];
+        const baseInput = document.getElementById("repo-agent-base");
+        if (baseInput && selected?.dataset?.baseBranch) {
+          baseInput.value = selected.dataset.baseBranch;
         }
       });
     }
@@ -1323,37 +1340,228 @@ class App {
    */
   async loadGitHubRepos() {
     const repoList = document.getElementById("github-repo-list");
+    const repoSelect = document.getElementById("repo-agent-select");
     if (!repoList) return;
 
+    repoList.textContent = "Loading repositories...";
     try {
-      const ghToken = localStorage.getItem("github_user_token") || "";
       const response = await fetch("/api/github/repos", {
-        headers: {
-          Authorization: `Bearer ${this.token || ""}`,
-          "X-GitHub-Token": ghToken,
-        },
+        headers: { Authorization: "Bearer " + (this.token || "") },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        repoList.textContent = data.message || "Unable to load GitHub repositories. Reconnect GitHub and try again.";
+        return;
+      }
+
+      const repos = Array.isArray(data.repos) ? data.repos : [];
+      if (repoSelect) {
+        repoSelect.replaceChildren();
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = repos.length ? "Choose a repository" : "No repositories found";
+        repoSelect.appendChild(placeholder);
+      }
+      repoList.replaceChildren();
+
+      if (!repos.length) {
+        repoList.textContent = "No repositories available to this GitHub account.";
+      } else {
+        for (const repo of repos) {
+          const fullName = repo.fullName || (repo.owner + "/" + repo.name);
+          const option = document.createElement("option");
+          option.value = fullName;
+          option.dataset.baseBranch = repo.defaultBranch || "main";
+          option.textContent = fullName + " (" + (repo.language || "Unknown") + ")";
+          repoSelect?.appendChild(option);
+
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "tree-item";
+          item.style.cssText = "width:100%;padding:8px 0;text-align:left;background:transparent;border:0;color:inherit;cursor:pointer;";
+          const icon = document.createElement("i");
+          icon.dataset.lucide = "git-fork";
+          icon.className = "tree-icon";
+          const details = document.createElement("span");
+          const title = document.createElement("span");
+          title.style.cssText = "display:block;font-weight:500;color:var(--text-main);";
+          title.textContent = fullName;
+          const meta = document.createElement("span");
+          meta.style.cssText = "display:block;font-size:11px;color:var(--text-dim);";
+          meta.textContent = (repo.language || "Unknown") + " • " + (repo.stars || 0) + " stars";
+          details.append(title, meta);
+          item.append(icon, details);
+          item.addEventListener("click", () => {
+            if (repoSelect) {
+              repoSelect.value = fullName;
+              const base = document.getElementById("repo-agent-base");
+              if (base) base.value = repo.defaultBranch || "main";
+            }
+          });
+          repoList.appendChild(item);
+        }
+      }
+
+      if (window.lucide) window.lucide.createIcons();
+      await this.loadRepositoryAgentTasks();
+    } catch (error) {
+      repoList.textContent = "GitHub request failed: " + error.message;
+    }
+  }
+
+  async startRepositoryAgentTask() {
+    const runButton = document.getElementById("btn-run-repo-agent");
+    const status = document.getElementById("repo-agent-status");
+    const selected = document.getElementById("repo-agent-select")?.value || "";
+    const prompt = document.getElementById("repo-agent-prompt")?.value?.trim() || "";
+    const baseBranch = document.getElementById("repo-agent-base")?.value?.trim() || "";
+
+    if (!selected.includes("/")) {
+      if (status) status.textContent = "Choose a GitHub repository first.";
+      return;
+    }
+    if (!prompt) {
+      if (status) status.textContent = "Describe what the agent should implement.";
+      return;
+    }
+
+    const parts = selected.split("/");
+    const owner = parts.shift();
+    const repo = parts.join("/");
+    if (runButton) {
+      runButton.disabled = true;
+      runButton.textContent = "Starting isolated agent...";
+    }
+    if (status) status.textContent = "Checking repository permissions and creating the task...";
+    try {
+      const response = await fetch(
+        "/api/github/repos/" + encodeURIComponent(owner) + "/" + encodeURIComponent(repo) + "/agent-tasks",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + (this.token || ""),
+          },
+          body: JSON.stringify({ prompt, baseBranch: baseBranch || undefined }),
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Could not start repository agent task.");
+      const task = data.task;
+      if (status) status.textContent = "Task " + task.id + " queued. The agent will work in its own Docker workspace and open a draft PR.";
+      const promptInput = document.getElementById("repo-agent-prompt");
+      if (promptInput) promptInput.value = "";
+      await this.renderRepositoryAgentTask(task);
+      this.pollRepositoryAgentTask(task.id);
+    } catch (error) {
+      if (status) status.textContent = error.message;
+    } finally {
+      if (runButton) {
+        runButton.disabled = false;
+        runButton.textContent = "Run sandboxed agent & open draft PR";
+      }
+    }
+  }
+
+  async loadRepositoryAgentTasks() {
+    try {
+      const response = await fetch("/api/github/agent-tasks", {
+        headers: { Authorization: "Bearer " + (this.token || "") },
       });
       if (!response.ok) return;
-
       const data = await response.json();
-      if (data.repos && data.repos.length > 0) {
-        repoList.innerHTML = "";
-        data.repos.forEach((repo) => {
-          const item = document.createElement("div");
-          item.className = "tree-item";
-          item.style.padding = "8px 0";
-          item.innerHTML = `
-            <i data-lucide="git-fork" class="tree-icon"></i>
-            <div>
-              <div style="font-weight:500;color:var(--text-main);">${repo.name}</div>
-              <div style="font-size:11px;color:var(--text-dim);">${repo.language} • ${repo.stars} stars</div>
-            </div>
-          `;
-          repoList.appendChild(item);
-        });
-        lucide.createIcons();
+      const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+      const list = document.getElementById("repo-agent-task-list");
+      if (list) list.replaceChildren();
+      for (const task of tasks) {
+        await this.renderRepositoryAgentTask(task);
+        if (["queued", "cloning", "running", "publishing"].includes(task.status)) {
+          this.pollRepositoryAgentTask(task.id);
+        }
       }
-    } catch { }
+    } catch (error) {
+      console.warn("Repository agent task list could not be loaded:", error);
+    }
+  }
+
+  async renderRepositoryAgentTask(task) {
+    const list = document.getElementById("repo-agent-task-list");
+    const status = document.getElementById("repo-agent-status");
+    if (!list || !task) return;
+    let card = list.querySelector('[data-task-id="' + CSS.escape(task.id) + '"]');
+    if (!card) {
+      card = document.createElement("div");
+      card.dataset.taskId = task.id;
+      card.style.cssText = "border:1px solid var(--border-subtle);border-radius:7px;padding:9px;margin-top:8px;font-size:12px;";
+      list.prepend(card);
+    }
+    card.replaceChildren();
+    const heading = document.createElement("div");
+    heading.style.fontWeight = "600";
+    heading.textContent = task.owner + "/" + task.repo + " · " + task.status.replaceAll("_", " ");
+    const branch = document.createElement("div");
+    branch.style.cssText = "color:var(--text-dim);margin-top:4px;word-break:break-all;";
+    branch.textContent = task.branch + " → " + task.baseBranch;
+    card.append(heading, branch);
+
+    const lastEvent = Array.isArray(task.events) ? [...task.events].reverse().find(event => event.type === "status" || event.type === "error") : null;
+    if (lastEvent?.data?.message) {
+      const message = document.createElement("div");
+      message.style.cssText = "color:var(--text-dim);margin-top:4px;";
+      message.textContent = lastEvent.data.message;
+      card.appendChild(message);
+    }
+    if (task.error) {
+      const error = document.createElement("div");
+      error.style.cssText = "color:#f87171;margin-top:5px;white-space:pre-wrap;";
+      error.textContent = task.error;
+      card.appendChild(error);
+    }
+    if (task.pullRequest?.url) {
+      const link = document.createElement("a");
+      link.href = task.pullRequest.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Open draft PR #" + task.pullRequest.number;
+      link.style.cssText = "display:inline-block;margin-top:7px;color:var(--accent-light);";
+      card.appendChild(link);
+      if (status) status.textContent = "Draft PR created. Review the diff and CI checks on GitHub before merging.";
+    } else if (status && task.status === "completed_no_changes") {
+      status.textContent = "Agent completed without repository changes; no PR was opened.";
+    } else if (status && task.status === "failed") {
+      status.textContent = "Repository agent failed: " + (task.error || "See task details.");
+    } else if (status && task.status === "cancelled") {
+      status.textContent = "Repository agent task cancelled.";
+    }
+    return card;
+  }
+
+  pollRepositoryAgentTask(taskId) {
+    if (!taskId) return;
+    const poll = async () => {
+      try {
+        const response = await fetch("/api/github/agent-tasks/" + encodeURIComponent(taskId), {
+          headers: { Authorization: "Bearer " + (this.token || "") },
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        const task = data.task;
+        await this.renderRepositoryAgentTask(task);
+        if (["queued", "cloning", "running", "publishing"].includes(task.status)) {
+          this.repoAgentPollTimers = this.repoAgentPollTimers || new Map();
+          const previous = this.repoAgentPollTimers.get(taskId);
+          if (previous) clearTimeout(previous);
+          this.repoAgentPollTimers.set(taskId, setTimeout(poll, 2500));
+        } else if (this.repoAgentPollTimers) {
+          clearTimeout(this.repoAgentPollTimers.get(taskId));
+          this.repoAgentPollTimers.delete(taskId);
+        }
+      } catch (error) {
+        console.warn("Repository agent status poll failed:", error);
+      }
+    };
+    this.repoAgentPollTimers = this.repoAgentPollTimers || new Map();
+    if (!this.repoAgentPollTimers.has(taskId)) poll();
   }
 
   /**
