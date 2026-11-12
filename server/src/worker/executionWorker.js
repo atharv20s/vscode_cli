@@ -375,6 +375,48 @@ async function proxyPreviewHttp(req, res) {
   }
 }
 
+async function resolvePreviewCommand(root, command, port) {
+  const text = String(command || "").trim();
+  let packageJson = {};
+  try { packageJson = JSON.parse(await fs.promises.readFile(path.join(root, "package.json"), "utf8")); } catch {}
+  const allDeps = { ...(packageJson.dependencies || {}), ...(packageJson.devDependencies || {}) };
+  const devScript = String(packageJson.scripts?.dev || "");
+  const isNext = /next/.test(text + " " + devScript) || Boolean(allDeps.next);
+  const isVite = /vite/.test(text + " " + devScript) || Boolean(allDeps.vite);
+  const isAstro = /astro/.test(text + " " + devScript) || Boolean(allDeps.astro);
+
+  if (/\buvicorn\b/.test(text)) {
+    let next = text;
+    if (!/--host(?:=|\s)/.test(next)) next += " --host 0.0.0.0";
+    if (!/--port(?:=|\s)/.test(next)) next += " --port " + port;
+    return next;
+  }
+  if (/\bflask\s+run\b/.test(text)) {
+    let next = text;
+    if (!/--host(?:=|\s)/.test(next)) next += " --host 0.0.0.0";
+    if (!/--port(?:=|\s)/.test(next)) next += " --port " + port;
+    return next;
+  }
+  if (/\bpython(?:3)?\s+-m\s+http\.server\b/.test(text)) {
+    let next = text;
+    if (!/--bind(?:=|\s)/.test(next)) next += " --bind 0.0.0.0";
+    if (!/(?:^|\s)\d{2,5}(?:\s|$)/.test(next)) next += " " + port;
+    return next;
+  }
+
+  const npmDev = /\b(?:npm\s+run\s+dev|pnpm\s+dev|yarn\s+dev|bun\s+run\s+dev)\b/.test(text);
+  if (npmDev && (isNext || isVite || isAstro)) {
+    if (/--host(?:name)?(?:=|\s)/.test(text)) return text;
+    const flag = isNext ? "--hostname" : "--host";
+    const args = flag + " 0.0.0.0 --port " + port;
+    return text + (text.includes(" -- ") ? " " : " -- ") + args;
+  }
+  if (/\bvite\b|\bastro\b/.test(text) && !/--host(?:=|\s)/.test(text)) {
+    return text + " --host 0.0.0.0 --port " + port;
+  }
+  return text;
+}
+
 async function startPreviewOnWorker(input) {
   const { workspaceId, files, cwd = ".", command, port } = input;
   if (!safeWorkspaceId(workspaceId) || typeof command !== "string" || !command.trim() || command.length > 20000 || !validatePreviewPort(port)) {
@@ -385,6 +427,7 @@ async function startPreviewOnWorker(input) {
   return withWorkspaceLock(workspaceId, () => withWorkspaceFileLock(workspaceId, async () => {
     await replaceWorkspace(root, files);
     await persistWorkspaceSnapshot(workspaceId, root);
+    const previewCommand = await resolvePreviewCommand(root, command, port);
     const resolvedCwd = path.resolve(root, cwd);
     if (resolvedCwd !== root && !resolvedCwd.startsWith(root + path.sep)) throw new Error("Preview working directory escaped workspace.");
     const container = await dockerWorkspaceRuntime.ensureContainer(workspaceId, root);
@@ -394,7 +437,7 @@ async function startPreviewOnWorker(input) {
     const script = 'nohup setsid /bin/bash -lc "$ATH_PREVIEW_COMMAND" > /tmp/ath-preview-' + port + '.log 2>&1 < /dev/null & echo $! > /tmp/ath-preview-' + port + '.pid; cat /tmp/ath-preview-' + port + '.pid';
     const pid = execDocker([
       "exec", "-w", containerCwd,
-      "-e", "ATH_PREVIEW_COMMAND=" + command,
+      "-e", "ATH_PREVIEW_COMMAND=" + previewCommand,
       "-e", "PORT=" + port, "-e", "HOST=0.0.0.0", "-e", "HOSTNAME=0.0.0.0",
       container, "/bin/bash", "-lc", script,
     ], { encoding: "utf8" }).trim();
