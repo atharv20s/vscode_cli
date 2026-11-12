@@ -280,6 +280,116 @@ app.post("/v1/execute", express.raw({ type: "application/json", limit: "20mb" })
   }
 });
 
+function validatePreviewPort(port) {
+  return Number.isInteger(Number(port)) && Number(port) >= 1024 && Number(port) <= 65535;
+}
+
+function getPreviewPath(req, workspaceId, port) {
+  const parsed = new URL(req.originalUrl, "http://worker");
+  const prefix = "/v1/preview/" + workspaceId + "/" + port;
+  const suffix = parsed.pathname.slice(prefix.length) || "/";
+  return (suffix.startsWith("/") ? suffix : "/" + suffix) + parsed.search;
+}
+
+async function waitForPreview(address, port, timeoutMs = 30000) {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    try {
+      const response = await fetch("http://" + address + ":" + port + "/", { signal: AbortSignal.timeout(1200) });
+      if (response.status < 500) return true;
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  return false;
+}
+
+async function proxyPreviewHttp(req, res) {
+  const workspaceId = req.params.workspaceId;
+  const port = Number(req.params.port);
+  if (!safeWorkspaceId(workspaceId) || !validatePreviewPort(port)) return res.status(400).end();
+  try {
+    const address = await dockerWorkspaceRuntime.getContainerAddress(workspaceId);
+    const upstream = http.request({
+      hostname: address, port, method: req.method,
+      path: getPreviewPath(req, workspaceId, port),
+      headers: {
+        accept: req.headers.accept || "*/*",
+        "content-type": req.headers["content-type"],
+        "content-length": Buffer.isBuffer(req.body) ? req.body.length : 0,
+        "user-agent": req.headers["user-agent"] || "ATH-IDE-Preview-Proxy",
+        host: address + ":" + port,
+        "x-forwarded-host": req.headers.host || "",
+        "x-forwarded-proto": "https",
+      },
+    }, upstreamRes => {
+      res.statusCode = upstreamRes.statusCode || 502;
+      for (const [name, value] of Object.entries(upstreamRes.headers)) {
+        if (["connection", "transfer-encoding", "keep-alive", "content-length"].includes(name.toLowerCase())) continue;
+        if (name.toLowerCase() === "x-frame-options") continue;
+        res.setHeader(name, value);
+      }
+      upstreamRes.pipe(res);
+    });
+    upstream.on("error", error => {
+      if (!res.headersSent) res.status(502).json({ error: "PreviewUnavailable", message: error.message });
+      else res.end();
+    });
+    upstream.end(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
+  } catch (error) {
+    if (!res.headersSent) res.status(502).json({ error: "PreviewUnavailable", message: error.message });
+    else res.end();
+  }
+}
+
+async function startPreviewOnWorker(input) {
+  const { workspaceId, files, cwd = ".", command, port } = input;
+  if (!safeWorkspaceId(workspaceId) || typeof command !== "string" || !command.trim() || command.length > 20000 || !validatePreviewPort(port)) {
+    throw new Error("Invalid preview request.");
+  }
+  if (typeof cwd !== "string" || cwd.startsWith("/") || cwd.split("/").some(part => part === "..")) throw new Error("Invalid preview working directory.");
+  const root = workspaceRootFor(workspaceId);
+  return withWorkspaceLock(workspaceId, () => withWorkspaceFileLock(workspaceId, async () => {
+    await replaceWorkspace(root, files);
+    const resolvedCwd = path.resolve(root, cwd);
+    if (resolvedCwd !== root && !resolvedCwd.startsWith(root + path.sep)) throw new Error("Preview working directory escaped workspace.");
+    const container = await dockerWorkspaceRuntime.ensureContainer(workspaceId, root);
+    const script = "nohup /bin/bash -lc 'echo $ > /tmp/ath-preview-" + port + ".pid; exec /bin/bash -lc \\"$ATH_PREVIEW_COMMAND\\"' > /tmp/ath-preview-" + port + ".log 2>&1 < /dev/null & echo $!";
+    const pid = execDocker([
+      "exec", "-e", "ATH_PREVIEW_COMMAND=" + command,
+      "-e", "PORT=" + port, "-e", "HOST=0.0.0.0", "-e", "HOSTNAME=0.0.0.0",
+      container, "/bin/bash", "-lc", script,
+    ], { encoding: "utf8" }).trim();
+    const address = await dockerWorkspaceRuntime.getContainerAddress(workspaceId);
+    const ready = await waitForPreview(address, port);
+    if (!ready) {
+      let log = "";
+      try { log = execDocker(["exec", container, "tail", "-n", "80", "/tmp/ath-preview-" + port + ".log"], { encoding: "utf8" }); } catch {}
+      throw new Error("Preview server did not become ready on port " + port + ". " + log.slice(-5000));
+    }
+    return { success: true, workspaceId, port, pid, status: "running" };
+  }));
+}
+
+async function stopPreviewOnWorker(workspaceId, port) {
+  if (!safeWorkspaceId(workspaceId) || !validatePreviewPort(port)) throw new Error("Invalid preview stop request.");
+  const container = await dockerWorkspaceRuntime.ensureContainer(workspaceId, workspaceRootFor(workspaceId));
+  const script = "if [ -f /tmp/ath-preview-" + port + ".pid ]; then kill \\"$(cat /tmp/ath-preview-" + port + ".pid)\\" 2>/dev/null || true; rm -f /tmp/ath-preview-" + port + ".pid; fi";
+  try { execDocker(["exec", container, "/bin/bash", "-lc", script]); } catch {}
+  return { success: true, stopped: true, port };
+}
+app.post("/v1/preview/start", express.raw({ type: "application/json", limit: "20mb" }), verifyRequest, async (req, res) => {
+  try { res.json(await startPreviewOnWorker(JSON.parse(req.body.toString("utf8")))); }
+  catch (error) {
+    const status = /Invalid|escaped|outside workspace|snapshot|transfer limit/.test(error.message) ? 400 : error.code === "WORKSPACE_BUSY" ? 423 : 502;
+    res.status(status).json({ error: status === 400 || status === 423 ? error.message : "Preview failed to start.", detail: error.message.slice(0, 5000) });
+  }
+});
+app.post("/v1/preview/stop", express.raw({ type: "application/json", limit: "64kb" }), verifyRequest, async (req, res) => {
+  try { const input = JSON.parse(req.body.toString("utf8")); res.json(await stopPreviewOnWorker(input.workspaceId, input.port)); }
+  catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.all("/v1/preview/:workspaceId/:port/*", express.raw({ type: () => true, limit: "4mb" }), verifyRequest, proxyPreviewHttp);
+
 const { errors } = validateConfig();
 if (errors.length) throw new Error("Worker configuration invalid: " + errors.join("; "));
 if (config.executionRuntime !== "docker") throw new Error("Execution worker requires EXECUTION_RUNTIME=docker.");
@@ -398,6 +508,44 @@ server.on("upgrade", async (req, socket, head) => {
   let parsed;
   try { parsed = new URL(req.url, "http://worker"); }
   catch { socket.destroy(); return; }
+  if (parsed.pathname.startsWith("/v1/preview/")) {
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const workspaceId = parts[2];
+    const port = Number(parts[3]);
+    if (!safeWorkspaceId(workspaceId) || !validatePreviewPort(port) ||
+        !verifySignature({ method: "GET", requestPath: req.url, body: Buffer.alloc(0), headers: req.headers })) {
+      socket.write("HTTP/1.1 401 Unauthorized\\r\\nConnection: close\\r\\n\\r\\n");
+      socket.destroy();
+      return;
+    }
+    try {
+      const address = await dockerWorkspaceRuntime.getContainerAddress(workspaceId);
+      const prefix = "/v1/preview/" + workspaceId + "/" + port;
+      const suffix = parsed.pathname.slice(prefix.length) || "/";
+      const upstream = http.request({
+        hostname: address, port, method: "GET", path: suffix + parsed.search,
+        headers: { ...req.headers, host: address + ":" + port },
+      });
+      upstream.on("upgrade", (response, upstreamSocket, upstreamHead) => {
+        const status = "HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\\r\\n";
+        const responseHeaders = Object.entries(response.headers).map(([name, value]) => name + ": " + value + "\\r\\n").join("");
+        socket.write(status + responseHeaders + "\\r\\n");
+        if (upstreamHead && upstreamHead.length) socket.write(upstreamHead);
+        if (head && head.length) upstreamSocket.write(head);
+        upstreamSocket.pipe(socket);
+        socket.pipe(upstreamSocket);
+      });
+      upstream.on("response", response => {
+        socket.write("HTTP/" + response.httpVersion + " " + response.statusCode + " " + response.statusMessage + "\\r\\n");
+        for (const [name, value] of Object.entries(response.headers)) socket.write(name + ": " + value + "\\r\\n");
+        socket.write("\\r\\n");
+        response.pipe(socket);
+      });
+      upstream.on("error", () => socket.destroy());
+      upstream.end();
+    } catch { socket.destroy(); }
+    return;
+  }
   if (parsed.pathname !== "/v1/terminal") return;
 
   if (!verifySignature({
