@@ -8,6 +8,8 @@
 import { registerTool } from "./index.js";
 import { getPreviewService } from "../services/previewService.js";
 import { getWorkspaceServiceForContext } from "../services/workspaceService.js";
+import { generatePreviewToken } from "../middleware/auth.js";
+import { config } from "../config/env.js";
 
 export function registerPreviewTools() {
   // 1. start_preview
@@ -51,6 +53,8 @@ export function registerPreviewTools() {
           command: args.command || "npm run dev",
           cwd,
           port: args.port || null,
+          workspaceDir: baseDir,
+          previewToken: ctx.userId && ctx.workspaceKey ? generatePreviewToken(ctx.userId, ctx.workspaceKey) : null,
         });
 
         if (result.success) {
@@ -114,6 +118,10 @@ export function registerPreviewTools() {
     async (args, ctx = {}) => {
       const previewService = getPreviewService(ctx.workspaceId);
       const state = previewService.getPreviewState();
+      if (state.status === "running" && ctx.userId && ctx.workspaceKey && config.previewPublicUrl) {
+        const token = generatePreviewToken(ctx.userId, ctx.workspaceKey);
+        state.url = config.previewPublicUrl.replace(/\/$/, "") + "/preview/" + token + "/";
+      }
       return {
         success: true,
         output: JSON.stringify(state, null, 2),
