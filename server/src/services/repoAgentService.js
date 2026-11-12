@@ -384,9 +384,9 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     // No local fallback: task code only runs when Docker isolation is available.
     await dockerWorkspaceRuntime.ensureContainer(workspaceId, repoPath, { network: "none" });
     await patchTask(userId, taskId, { status: "running" });
-    appendEvent(userId, taskId, {
+    await appendEvent(userId, taskId, {
       type: "status",
-      data: { status: "running", message: "Agent is running in the dedicated Docker workspace." },
+      data: { status: "running", message: "Agent pipeline is running in the dedicated Docker workspace." },
     });
 
     const pipelineResult = await runRepoAgentPipeline({
@@ -410,16 +410,13 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     });
 
     if (abortSignal.aborted) {
-      patchTask(userId, taskId, { status: "cancelled" });
-      appendEvent(userId, taskId, { type: "status", data: { status: "cancelled" } });
+      await patchTask(userId, taskId, { status: "cancelled" });
+      await appendEvent(userId, taskId, { type: "status", data: { status: "cancelled" } });
       return;
     }
 
-    if (agentFailed) {
-      throw new Error("The model agent reported an execution error. No PR was created; inspect events and retry.");
-    }
     await patchTask(userId, taskId, { status: "publishing" });
-    appendEvent(userId, taskId, {
+    await appendEvent(userId, taskId, {
       type: "status",
       data: { status: "publishing", message: "Collecting changes and creating a draft PR." },
     });
@@ -429,7 +426,7 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
     const changes = await scanWorkspace(repoPath, baseEntries);
     if (!changes.length) {
       await patchTask(userId, taskId, { status: "completed_no_changes" });
-      appendEvent(userId, taskId, {
+      await appendEvent(userId, taskId, {
         type: "status",
         data: { status: "completed_no_changes", message: "No repository changes were produced; no PR was opened." },
       });
@@ -444,11 +441,11 @@ async function executeTask(task, token, octokit, baseTreeSha, baseEntries, prote
       baseTreeSha: baseTreeSha,
       baseSha: task.base_sha,
       changes: changes,
-      summary: pipelineResult.implementationSummary + "\\n\\nQuality review: " + pipelineResult.review,
+      summary: pipelineResult.implementationSummary + "\n\nQuality review: " + pipelineResult.review,
     });
     await patchTask(userId, taskId, { status: "review_ready", pr_url: pr.url, pr_number: pr.number });
     await appendEvent(userId, taskId, { type: "pull_request", data: { ...pr, draft: true } });
-    appendEvent(userId, taskId, {
+    await appendEvent(userId, taskId, {
       type: "status",
       data: { status: "review_ready", message: "Draft PR opened. Human review is required before merge." },
     });
