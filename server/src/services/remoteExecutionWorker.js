@@ -208,8 +208,8 @@ export async function proxyRemotePreview(req, res, { workspaceId, port, previewP
   if (contentType.includes("text/html")) {
     const html = await response.text();
     const rewritten = html
-      .replace(/((?:src|href|action|poster)\\s*=\\s*[\"'])\\/(?!\\/)/gi, "$1" + prefix)
-      .replace(/url\\(\\s*(['\"]?)\\/(?!\\/)/gi, "url($1" + prefix);
+      .replace(/((?:src|href|action|poster)\s*=\s*[\"'])\/(?!\/)/gi, "$1" + prefix)
+      .replace(/url\(\s*(['\"]?)\/(?!\/)/gi, "url($1" + prefix);
     for (const [name, value] of response.headers) {
       if (["connection", "transfer-encoding", "content-encoding", "content-length", "keep-alive"].includes(name.toLowerCase())) continue;
       res.setHeader(name, value);
