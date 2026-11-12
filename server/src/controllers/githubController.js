@@ -1,97 +1,106 @@
 /**
- * GitHub Controller — API endpoints for user repos, commit sync, and PRs.
+ * GitHub Controller — Server-side GitHub access and repository agent tasks.
  */
-
+import { findUserById } from "../db/database.js";
+import { repoAgentQueue } from "../services/repoAgentQueue.js";
 import {
   listUserRepos,
   getRepoTree as fetchRepoTree,
-  commitFilesToRepo,
-  getRepoFileContent,
 } from "../services/githubService.js";
-import fs from "fs/promises";
-import path from "path";
-import { config } from "../config/env.js";
+import {
+  startRepoAgentTask,
+  getRepoAgentTask,
+  listRepoAgentTasks,
+  cancelRepoAgentTask,
+} from "../services/repoAgentService.js";
 
 /**
- * Extract GitHub token from user session or headers.
+ * GitHub credentials stay in the server-side user record. Never accept PATs
+ * from query strings or browser-supplied headers for authenticated operations.
  */
 function getGitHubToken(req) {
-  return (
-    req.user?.githubAccessToken ||
-    req.headers["x-github-token"] ||
-    req.query.github_token ||
-    process.env.GITHUB_PERSONAL_ACCESS_TOKEN ||
-    ""
-  );
+  if (!req.user?.id) return "";
+  const user = findUserById(req.user.id);
+  return user?.github_access_token || "";
 }
 
-/**
- * GET /api/github/repos — List repositories for authenticated user.
- */
 export async function listRepos(req, res) {
   const token = getGitHubToken(req);
   if (!token) {
     return res.status(400).json({
       error: "GitHubNotConnected",
-      message: "Connect your GitHub account or paste a GitHub Token to list repositories.",
+      message: "Connect GitHub in your account settings before selecting a repository.",
     });
   }
-
   try {
     const repos = await listUserRepos(token);
-    res.json({ repos });
-  } catch (err) {
-    res.status(500).json({ error: "GitHubError", message: err.message });
+    return res.json({ repos });
+  } catch (error) {
+    return res.status(502).json({ error: "GitHubError", message: error.message });
   }
 }
 
-/**
- * GET /api/github/repos/:owner/:repo/tree?branch=main
- */
 export async function getRepoTree(req, res) {
-  const { owner, repo } = req.params;
-  const branch = req.query.branch || "main";
   const token = getGitHubToken(req);
-
+  if (!token) return res.status(400).json({ error: "GitHubNotConnected" });
+  const owner = req.params.owner;
+  const repo = req.params.repo;
+  const branch = typeof req.query.branch === "string" ? req.query.branch : "main";
   try {
     const tree = await fetchRepoTree(token, owner, repo, branch);
-    res.json({ owner, repo, branch, tree });
-  } catch (err) {
-    res.status(500).json({ error: "GitHubError", message: err.message });
+    return res.json({ owner: owner, repo: repo, branch: branch, tree: tree });
+  } catch (error) {
+    return res.status(502).json({ error: "GitHubError", message: error.message });
   }
 }
 
-/**
- * POST /api/github/repos/:owner/:repo/commit
- * Body: { branch, files: [{ path, content }], commitMessage }
- */
-export async function commitFiles(req, res) {
-  const { owner, repo } = req.params;
-  const { branch = "main", files = [], commitMessage } = req.body;
+export async function createRepositoryAgentTask(req, res) {
   const token = getGitHubToken(req);
-
-  if (!token) {
-    return res.status(400).json({
-      error: "GitHubNotConnected",
-      message: "Connect your GitHub account or configure a GitHub access token.",
-    });
-  }
-
-  if (!files || files.length === 0) {
-    return res.status(400).json({ error: "BadRequest", message: "No files provided to commit." });
-  }
-
+  if (!token) return res.status(400).json({ error: "GitHubNotConnected" });
   try {
-    const result = await commitFilesToRepo(token, {
-      owner,
-      repo,
-      branch,
-      files,
-      commitMessage: commitMessage || "Automated commit via Agentic AI Studio",
+    const task = await startRepoAgentTask({
+      userId: req.user.id,
+      token: token,
+      owner: req.params.owner,
+      repo: req.params.repo,
+      prompt: req.body?.prompt,
+      baseBranch: req.body?.baseBranch,
     });
+    return res.status(202).json({ success: true, task: task });
+  } catch (error) {
+    const status = Number.isInteger(error.statusCode) ? error.statusCode : 502;
+    return res.status(status).json({ error: "RepositoryAgentError", message: error.message });
+  }
+}
 
-    res.json({ success: true, ...result });
-  } catch (err) {
-    res.status(500).json({ error: "GitHubError", message: err.message });
+export async function getRepositoryAgentTask(req, res) {
+  const task = await getRepoAgentTask(req.user.id, req.params.taskId);
+  if (!task) return res.status(404).json({ error: "TaskNotFound" });
+  return res.json({ task: task });
+}
+
+export async function getRepositoryAgentTasks(req, res) {
+  return res.json({ tasks: await listRepoAgentTasks(req.user.id) });
+}
+
+export async function cancelRepositoryAgentTask(req, res) {
+  const task = await cancelRepoAgentTask(req.user.id, req.params.taskId);
+  if (!task) return res.status(404).json({ error: "TaskNotFound" });
+  return res.json({ success: true, task: task });
+}
+
+/** Return aggregate worker health without exposing hostnames or process IDs. */
+export async function getRepositoryAgentWorkerPool(req,res) {
+  try {
+    const workers = await repoAgentQueue.listWorkers();
+    return res.json({
+      queue: "redis-streams",
+      onlineWorkers: workers.length,
+      busyWorkers: workers.filter(worker => Boolean(worker.currentTaskId)).length,
+      idleWorkers: workers.filter(worker => !worker.currentTaskId).length,
+      lastHeartbeat: workers.map(worker=>worker.updatedAt).sort().at(-1) || null,
+    });
+  } catch(error) {
+    return res.status(503).json({error:"WorkerPoolUnavailable",message:"Repository agent queue is unavailable."});
   }
 }

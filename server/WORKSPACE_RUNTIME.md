@@ -68,6 +68,20 @@ Before production activation, complete and test all of the following:
 
 No VM, cloud resource, secret, or deployment is created by this repository change.
 
+## GitHub repository agent tasks
+
+Repository-connected background coding agents now use a separate Redis Streams worker tier. The API persists the task and enqueues its ID; dedicated Linux workers load the owner's GitHub connection from shared Postgres, clone the pinned repository SHA, run the multi-agent pipeline inside a task-specific Docker sandbox, and publish a draft PR only after deterministic checks and reviewer approval.
+
+See [REPO_AGENT_WORKERS.md](./REPO_AGENT_WORKERS.md) for the API/worker split, Postgres and Redis configuration, worker startup, scaling, context rounds, quality gates, share roles and operational limitations.
+
+Important deployment boundaries:
+
+- Production API/worker task state requires shared Postgres and Redis; SQLite is single-worker development only.
+- Each repository worker host must have Docker Engine, Git, the workspace image, and a local writable `WORKSPACE_ROOT`.
+- The API enqueues tasks; it does not run repository code inside the browser request process.
+- Worker networking is disabled by default. Package registry access requires `REPO_AGENT_NETWORK=bridge` plus a host-level egress firewall or allowlisted proxy. Docker bridge mode alone is not an egress security control.
+- No cloud resources, VM, secrets or deployment are provisioned by this repository code.
+
 ## Network access
 
 Container networking defaults to `none`. This blocks workspace code from reaching the internet and other host/network services. Package downloads require a deliberate egress design. Do not set `DOCKER_WORKSPACE_NETWORK=bridge` as a shortcut: bridge networking alone is not an egress security boundary.

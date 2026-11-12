@@ -5,7 +5,7 @@
  * in isolated AGENT_BACKGROUND mode via ExecutionService & ProcessSupervisor.
  */
 
-import { getWorkspaceService } from "../services/workspaceService.js";
+import { getWorkspaceServiceForContext } from "../services/workspaceService.js";
 import { registerTool } from "./index.js";
 import { config } from "../config/env.js";
 import { executionService } from "../services/executionService.js";
@@ -47,6 +47,14 @@ export function registerShellTools() {
     async (args, ctx = {}) => {
       const trimmedCmd = (args.command || "").trim();
 
+      // Repository agents have no Git credentials, network, or interactive
+      // approval channel. Reject operations that would otherwise wait for an
+      // approval event that cannot be delivered to this task workspace.
+      if (String(ctx.workspaceId || "").startsWith("repo-agent-") &&
+          /git\\s+(push|remote|config)|\\b(npm\\s+publish|curl|wget|ssh|scp|sftp|nc|netcat|ftp)\\b/i.test(trimmedCmd)) {
+        return { success: false, error: "This operation is disabled in the isolated repository agent." };
+      }
+
       // Guard against bare interactive REPLs that hang indefinitely
       if (/^(python|python3|py|node|irb|php -a|bash|sh|powershell|pwsh|cmd)$/i.test(trimmedCmd)) {
         return {
@@ -81,7 +89,7 @@ export function registerShellTools() {
       }
 
       // 2. Resolve working directory
-      const workspace = getWorkspaceService(ctx.userId);
+      const workspace = getWorkspaceServiceForContext(ctx);
       const baseDir = workspace.workspaceRoot;
       const target = workspace.resolvePath(args.working_dir || ".");
       if (!target.safe) {

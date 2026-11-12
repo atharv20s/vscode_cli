@@ -3,6 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    // Remove capability tokens from the address bar before third-party assets load.
+    (function () {
+      var url = new URL(window.location.href);
+      var fragment = new URLSearchParams(url.hash.slice(1));
+      var token = fragment.get("share") || url.searchParams.get("share");
+      if (!token) return;
+      window.__ATH_IDE_SHARE_TOKEN = token;
+      url.searchParams.delete("share");
+      url.hash = "";
+      window.history.replaceState({}, document.title, url.pathname + url.search);
+    })();
+  </script>
   <title>ATH IDE — Autonomous AI Development Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -167,10 +180,30 @@
           <div class="github-panel-content" id="github-repo-list">
             <div class="empty-state">
               <i data-lucide="github"></i>
-              <p>Connect your GitHub account to clone, commit, and push directly from the agent.</p>
+              <p>Connect GitHub to choose a repository for an isolated coding task.</p>
               <button id="btn-connect-gh-inline" class="primary-btn">Connect GitHub</button>
             </div>
           </div>
+          <section id="repo-agent-panel" style="padding:12px;border-top:1px solid var(--border-subtle);">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--text-dim);margin-bottom:8px;">REPOSITORY AGENT</div>
+            <label for="repo-agent-select" style="display:block;font-size:12px;margin:8px 0 4px;">Repository</label>
+            <select id="repo-agent-select" style="width:100%;padding:8px;background:var(--bg-secondary);color:var(--text-main);border:1px solid var(--border-subtle);border-radius:6px;">
+              <option value="">Connect GitHub and load repositories</option>
+            </select>
+            <label for="repo-agent-base" style="display:block;font-size:12px;margin:8px 0 4px;">Base branch</label>
+            <input id="repo-agent-base" type="text" placeholder="Default branch" style="width:100%;box-sizing:border-box;padding:8px;background:var(--bg-secondary);color:var(--text-main);border:1px solid var(--border-subtle);border-radius:6px;">
+            <label for="repo-agent-prompt" style="display:block;font-size:12px;margin:8px 0 4px;">What should the agent change?</label>
+            <textarea id="repo-agent-prompt" rows="4" maxlength="10000" placeholder="Example: Add request validation to the user registration endpoint and add tests." style="width:100%;box-sizing:border-box;resize:vertical;padding:8px;background:var(--bg-secondary);color:var(--text-main);border:1px solid var(--border-subtle);border-radius:6px;font:inherit;font-size:12px;"></textarea>
+            <label for="repo-agent-share-permission" style="display:block;font-size:12px;margin:8px 0 4px;">Default share access</label>
+            <select id="repo-agent-share-permission" style="width:100%;padding:8px;background:var(--bg-secondary);color:var(--text-main);border:1px solid var(--border-subtle);border-radius:6px;">
+              <option value="view">View only</option>
+              <option value="comment">View + comment</option>
+              <option value="edit">Submit follow-up agent instructions</option>
+            </select>
+            <button id="btn-run-repo-agent" class="primary-btn" style="width:100%;margin-top:9px;">Run sandboxed agent &amp; open draft PR</button>
+            <div id="repo-agent-status" role="status" aria-live="polite" style="font-size:12px;color:var(--text-dim);margin-top:9px;">Agent tasks run in a dedicated Docker workspace. PRs are drafts; nothing is auto-merged.</div>
+            <div id="repo-agent-task-list" style="margin-top:10px;"></div>
+          </section>
         </div>
 
         <!-- MCP Servers View -->
@@ -635,6 +668,16 @@
       </div>
     </div>
   </div>
+
+
+  <section id="repo-agent-share-view" class="repo-agent-share-view" hidden>
+    <div class="repo-share-shell">
+      <div class="repo-share-brand"><span>ATH IDE</span><span class="repo-share-label">SHARED AGENT TASK</span></div>
+      <div id="repo-share-content" class="repo-share-content">
+        <p>Loading shared task…</p>
+      </div>
+    </div>
+  </section>
 
   <!-- Scripts -->
   <script src="/js/websocket.js"></script>

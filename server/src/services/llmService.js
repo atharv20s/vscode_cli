@@ -1,297 +1,122 @@
 /**
- * Multi-Provider LLM Service with Multimodal Vision Support & Intelligent Failover
- *
- * Wraps the OpenAI SDK to support multiple LLM providers:
- * - Mistral AI Direct (Codestral, Mistral Small/Large, Pixtral Vision)
- * - OpenRouter (proxies Claude, GPT-4o, Gemini, Llama)
- * - OpenAI Direct
- * - Ollama Local
- *
- * Handles streaming, tool calling, multimodal image payload formatting, and token tracking.
+ * Model-aware LLM routing. No silent free-model downgrade: every attempt is
+ * explicit, observable and uses a model configured for that provider.
  */
-
 import OpenAI from "openai";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 
-/** Available core models and Vision models */
 export const MODEL_PRESETS = {
-  "devstral-low": {
-    id: "mistral-small-latest",
-    openrouterId: "openrouter/free",
-    name: "Mistral Small (Fast / Efficient)",
-    tier: "low",
-    provider: "mistral",
-    temperature: 0.2,
-    maxTokens: 4096,
-    supportsTools: true,
-    multimodal: false,
-  },
-  devstral: {
-    id: "codestral-latest",
-    openrouterId: "openrouter/free",
-    name: "Codestral AI (Full Agent & Coding)",
-    tier: "medium",
-    provider: "mistral",
-    temperature: 0.3,
-    maxTokens: 8192,
-    supportsTools: true,
-    multimodal: false,
-  },
-  "devstral-high": {
-    id: "codestral-latest",
-    openrouterId: "openrouter/free",
-    name: "Codestral AI (High Performance Coding)",
-    tier: "high",
-    provider: "mistral",
-    temperature: 0.4,
-    maxTokens: 8192,
-    supportsTools: true,
-    multimodal: false,
-  },
-  vision: {
-    id: "pixtral-12b-2409",
-    openrouterId: "openrouter/free",
-    name: "Pixtral Vision (Multimodal)",
-    tier: "medium",
-    provider: "mistral",
-    temperature: 0.3,
-    maxTokens: 4096,
-    supportsTools: true,
-    multimodal: true,
-  },
+  "devstral-low": { tier: "fast", name: "Fast", temperature: 0.2, maxTokens: 4096, multimodal: false },
+  devstral: { tier: "coding", name: "Coding", temperature: 0.15, maxTokens: 8192, multimodal: false },
+  "devstral-high": { tier: "reasoning", name: "Reasoning", temperature: 0.1, maxTokens: 12288, multimodal: false },
+  vision: { tier: "vision", name: "Vision", temperature: 0.2, maxTokens: 4096, multimodal: true },
 };
-
-/**
- * Get the OpenAI client configured for a specific provider.
- * @param {string} provider - 'mistral', 'openrouter', 'openai', or 'ollama'
- * @returns {OpenAI}
- */
-function getClient(provider = "mistral") {
-  const mistralKey = config.mistralKey || process.env.MISTRAL_API_KEY;
-  const openrouterKey = config.openrouterKey || process.env.OPENROUTER_API_KEY;
-
-  if (provider === "mistral" && mistralKey) {
-    return new OpenAI({
-      apiKey: mistralKey,
-      baseURL: "https://api.mistral.ai/v1",
-    });
-  }
-
-  if (provider === "openrouter" || (!mistralKey && openrouterKey)) {
-    return new OpenAI({
-      apiKey: openrouterKey,
-      baseURL: config.openrouterBaseUrl || "https://openrouter.ai/api/v1",
-      defaultHeaders: {
-        "HTTP-Referer": "https://github.com/atharv20s/vscode_cli",
-        "X-Title": "Agentic CLI",
-      },
-    });
-  }
-
-  if (provider === "openai" && config.openaiKey) {
-    return new OpenAI({
-      apiKey: config.openaiKey,
-      baseURL: "https://api.openai.com/v1",
-    });
-  }
-
-  if (provider === "ollama") {
-    return new OpenAI({
-      apiKey: "ollama",
-      baseURL: config.ollamaBaseUrl,
-    });
-  }
-
-  // Fallback to whichever key exists
-  const activeKey = mistralKey || openrouterKey || config.openaiKey || "dev-key";
-  const baseUrl = mistralKey ? "https://api.mistral.ai/v1" : "https://openrouter.ai/api/v1";
-  return new OpenAI({ apiKey: activeKey, baseURL: baseUrl });
+const PROVIDER_MODELS = {
+  openrouter: { fast: config.openrouterFastModel, coding: config.openrouterCodingModel, reasoning: config.openrouterReasoningModel, vision: config.openrouterVisionModel },
+  mistral: { fast: config.mistralFastModel, coding: config.mistralCodingModel, reasoning: config.mistralReasoningModel, vision: config.mistralVisionModel },
+  openai: { fast: config.openaiFastModel, coding: config.openaiCodingModel, reasoning: config.openaiReasoningModel, vision: config.openaiVisionModel },
+};
+function providerKey(provider) {
+  return provider === "openrouter" ? config.openrouterKey : provider === "mistral" ? config.mistralKey : provider === "openai" ? config.openaiKey : null;
 }
-
-/**
- * Send a streaming chat completion request to the LLM.
- */
-export async function streamChatCompletion({ messages, tools, model, onEvent, signal }) {
-  let preset = MODEL_PRESETS[model] || MODEL_PRESETS["devstral"];
-
-  // Auto-switch to vision model if any message contains image data
-  const hasImages = messages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url"));
-  if (hasImages && preset && !preset.multimodal) {
-    logger.info("Multimodal images detected in request -- switching to Vision-capable model");
-    preset = MODEL_PRESETS["vision"];
+function getClient(provider) {
+  const apiKey = providerKey(provider);
+  if (!apiKey) throw new Error("No API key configured for provider " + provider + ".");
+  const options = { apiKey };
+  if (provider === "openrouter") {
+    options.baseURL = config.openrouterBaseUrl;
+    options.defaultHeaders = { "HTTP-Referer": "https://github.com/atharv20s/vscode_cli", "X-Title": "ATH IDE" };
+  } else if (provider === "mistral") options.baseURL = "https://api.mistral.ai/v1";
+  else if (provider === "openai") options.baseURL = "https://api.openai.com/v1";
+  else throw new Error("Unsupported LLM provider: " + provider);
+  return new OpenAI(options);
+}
+function resolveTier(model) {
+  if (MODEL_PRESETS[model]) return MODEL_PRESETS[model].tier;
+  return ["fast","coding","reasoning","vision"].includes(model) ? model : "coding";
+}
+function resolveAttempts(tier) {
+  const providers = [config.defaultLlmProvider, ...config.llmFallbackProviders]
+    .filter((value,index,array) => value && array.indexOf(value) === index);
+  return providers.map(provider => ({ provider, model: PROVIDER_MODELS[provider]?.[tier] }))
+    .filter(item => providerKey(item.provider) && item.model);
+}
+export async function streamChatCompletion({ messages, tools, model = "coding", onEvent, signal }) {
+  let tier = resolveTier(model);
+  if (messages.some(message => Array.isArray(message.content) && message.content.some(part => part.type === "image_url"))) tier = "vision";
+  const attempts = resolveAttempts(tier);
+  if (!attempts.length) {
+    const error = new Error("No model is configured for the " + tier + " tier. Configure a provider API key and its tier-specific model. ATH IDE will not silently use a free fallback.");
+    error.code = "LLM_MODEL_NOT_CONFIGURED";
+    onEvent({ type: "error", data: { message: error.message, code: error.code } });
+    return;
   }
-
-  // Determine failover priority based on config and available keys
-  const defaultProvider = config.defaultLlmProvider || (config.openrouterKey ? "openrouter" : "mistral");
-  const attempts = [];
-
-  if (defaultProvider === "openrouter" && config.openrouterKey) {
-    attempts.push({ provider: "openrouter", model: preset?.openrouterId || config.openrouterModel || "openrouter/free" });
-    if (config.mistralKey) {
-      attempts.push({ provider: "mistral", model: preset?.id || "codestral-latest" });
+  const preset = Object.values(MODEL_PRESETS).find(item => item.tier === tier) || MODEL_PRESETS.devstral;
+  const base = { messages, stream: true, max_tokens: preset.maxTokens, temperature: preset.temperature };
+  if (tools?.length) { base.tools = tools; base.tool_choice = "auto"; }
+  let response = null, selected = null, lastError = null;
+  for (const attempt of attempts) {
+    if (signal?.aborted) return;
+    try {
+      logger.info("Starting LLM request", { tier, provider: attempt.provider, model: attempt.model });
+      response = await getClient(attempt.provider).chat.completions.create({ ...base, model: attempt.model }, { signal });
+      selected = attempt;
+      break;
+    } catch (error) {
+      lastError = error;
+      logger.warn("LLM provider attempt failed", { provider: attempt.provider, model: attempt.model, status: error.status, message: error.message });
+      if ([400,401,403,404,413,422].includes(error.status)) break;
     }
-  } else {
-    if (config.mistralKey) {
-      attempts.push({ provider: "mistral", model: preset?.id || "codestral-latest" });
-      attempts.push({ provider: "mistral", model: "mistral-small-latest" });
-    }
-    if (config.openrouterKey) {
-      attempts.push({ provider: "openrouter", model: preset?.openrouterId || config.openrouterModel || "openrouter/free" });
-    }
   }
-
-  if (attempts.length === 0) {
-    attempts.push({ provider: "openrouter", model: "openrouter/free" });
+  if (!response) {
+    const error = lastError || new Error("All configured LLM providers failed.");
+    onEvent({ type: "error", data: { message: "AI Engine Error: " + error.message, status: error.status } });
+    return;
   }
-
-  const baseKwargs = {
-    messages,
-    stream: true,
-    max_tokens: preset?.maxTokens || 4096,
-    temperature: preset?.temperature !== undefined ? preset.temperature : 0.4,
-  };
-
-  if (tools && tools.length > 0) {
-    baseKwargs.tools = tools;
-    baseKwargs.tool_choice = "auto";
-  }
-
-  logger.info("LLM request initiated", { attemptsCount: attempts.length, messageCount: messages.length });
-
+  onEvent({ type: "model_selected", data: { tier, provider: selected.provider, model: selected.model, fallback: attempts[0] !== selected } });
+  let fullContent = "";
+  const accumulated = {};
   try {
-    let response = null;
-    let lastError = null;
-
-    for (const attempt of attempts) {
-      if (signal?.aborted) return;
-      try {
-        const client = getClient(attempt.provider);
-        const attemptKwargs = { ...baseKwargs, model: attempt.model };
-        logger.info(`Attempting LLM call`, { provider: attempt.provider, model: attempt.model });
-        response = await client.chat.completions.create(attemptKwargs, { signal });
-        logger.info(`LLM call successfully established`, { provider: attempt.provider, model: attempt.model });
-        break;
-      } catch (err) {
-        lastError = err;
-        logger.warn(`LLM attempt failed (${attempt.provider} / ${attempt.model}): ${err.message}. Trying next fallback...`);
-      }
-    }
-
-    if (!response) {
-      throw lastError || new Error("All configured LLM providers and fallbacks failed.");
-    }
-
-    let fullContent = "";
-    const toolCallsAcc = {};
-
     for await (const chunk of response) {
       if (signal?.aborted) break;
-
-      if (chunk.usage) {
-        onEvent({
-          type: "usage",
-          data: {
-            promptTokens: chunk.usage.prompt_tokens,
-            completionTokens: chunk.usage.completion_tokens,
-            totalTokens: chunk.usage.total_tokens,
-          },
-        });
-      }
-
-      if (!chunk.choices || chunk.choices.length === 0) continue;
-
-      const choice = chunk.choices[0];
-      const delta = choice.delta;
-
-      // Stream text content
-      if (delta.content) {
-        fullContent += delta.content;
-        onEvent({
-          type: "text_delta",
-          data: { content: delta.content, text: delta.content },
-        });
-      }
-
-      // Stream tool calls
-      if (delta.tool_calls) {
-        for (const tc of delta.tool_calls) {
-          const idx = tc.index !== undefined ? tc.index : 0;
-          if (!toolCallsAcc[idx]) {
-            toolCallsAcc[idx] = {
-              id: tc.id || `call_${idx}_${Date.now()}`,
-              name: "",
-              arguments: "",
-            };
-          }
-          if (tc.id) toolCallsAcc[idx].id = tc.id;
-          if (tc.function?.name) {
-            const chunkName = tc.function.name;
-            if (!toolCallsAcc[idx].name) {
-              toolCallsAcc[idx].name = chunkName;
-            } else if (chunkName === toolCallsAcc[idx].name) {
-              // Full name repeated in chunk, keep as is
-            } else if (chunkName.startsWith(toolCallsAcc[idx].name)) {
-              toolCallsAcc[idx].name = chunkName;
-            } else if (!toolCallsAcc[idx].name.includes(chunkName)) {
-              toolCallsAcc[idx].name += chunkName;
-            }
-          }
-          if (tc.function?.arguments) {
-            toolCallsAcc[idx].arguments += tc.function.arguments;
-          }
-        }
+      if (chunk.usage) onEvent({ type: "usage", data: { promptTokens: chunk.usage.prompt_tokens, completionTokens: chunk.usage.completion_tokens, totalTokens: chunk.usage.total_tokens, provider: selected.provider, model: selected.model } });
+      if (!chunk.choices?.length) continue;
+      const delta = chunk.choices[0].delta || {};
+      if (delta.content) { fullContent += delta.content; onEvent({ type: "text_delta", data: { content: delta.content, text: delta.content } }); }
+      for (const call of delta.tool_calls || []) {
+        const index = call.index ?? 0;
+        if (!accumulated[index]) accumulated[index] = { id: call.id || "call_" + index, name: "", arguments: "" };
+        if (call.id) accumulated[index].id = call.id;
+        if (call.function?.name) accumulated[index].name = call.function.name;
+        if (call.function?.arguments) accumulated[index].arguments += call.function.arguments;
       }
     }
-
-    // Assemble tool calls
-    const completedToolCalls = Object.values(toolCallsAcc).map((tc) => {
-      let parsedArgs = {};
-      try {
-        parsedArgs = typeof tc.arguments === "string" ? JSON.parse(tc.arguments) : tc.arguments;
-      } catch {
-        parsedArgs = { raw: tc.arguments };
-      }
-      return {
-        id: tc.id,
-        name: tc.name.trim(),
-        arguments: parsedArgs,
-        rawArguments: typeof tc.arguments === "string" ? tc.arguments : JSON.stringify(tc.arguments || {}),
-      };
+    const toolCalls = Object.values(accumulated).map(call => {
+      let args;
+      try { args = JSON.parse(call.arguments || "{}"); } catch { args = { raw: call.arguments }; }
+      return { id: call.id, name: call.name.trim(), arguments: args, rawArguments: call.arguments };
     });
-
-    if (completedToolCalls.length > 0) {
-      onEvent({
-        type: "tool_calls",
-        data: { toolCalls: completedToolCalls },
-      });
-    } else {
-      onEvent({
-        type: "text_complete",
-        data: { content: fullContent },
-      });
-    }
-  } catch (err) {
-    if (signal?.aborted) return;
-    logger.error("LLM streaming error", { error: err.message, status: err.status });
-    onEvent({
-      type: "error",
-      data: { message: `AI Engine Error: ${err.message}`, status: err.status },
-    });
+    if (toolCalls.length) onEvent({ type: "tool_calls", data: { toolCalls } });
+    else onEvent({ type: "text_complete", data: { content: fullContent } });
+  } catch (error) {
+    if (!signal?.aborted) onEvent({ type: "error", data: { message: "AI Engine Error: " + error.message, status: error.status } });
   }
 }
-
-/**
- * Get the list of all available models with metadata.
- */
 export function getAvailableModels() {
-  return Object.entries(MODEL_PRESETS).map(([key, preset]) => ({
-    key,
-    id: preset.id,
-    name: preset.name,
-    tier: preset.tier,
-    provider: preset.provider,
-    multimodal: preset.multimodal,
-    free: true,
-  }));
+  return Object.entries(MODEL_PRESETS).map(([key,preset]) => {
+    const providerOrder = [config.defaultLlmProvider, ...config.llmFallbackProviders];
+    const selected = providerOrder.map(provider => [provider, PROVIDER_MODELS[provider]])
+      .find(([provider,models]) => providerKey(provider) && models?.[preset.tier]);
+    return {
+      key,
+      id: selected?.[1][preset.tier] || "",
+      name: preset.name,
+      tier: preset.tier,
+      provider: selected?.[0] || "",
+      multimodal: preset.multimodal,
+      configured: Boolean(selected),
+      free: false,
+    };
+  });
 }

@@ -20,7 +20,7 @@ class DockerWorkspaceRuntime {
     this.containers = new Map();
   }
 
-  async ensureContainer(workspaceId, workspaceDir) {
+  async ensureContainer(workspaceId, workspaceDir, options = {}) {
     if (config.executionRuntime !== "docker") {
       throw new Error("Docker workspace runtime is disabled. Set EXECUTION_RUNTIME=docker on a worker with Docker Engine access.");
     }
@@ -30,10 +30,15 @@ class DockerWorkspaceRuntime {
 
     const name = containerName(workspaceId);
     const existing = this.containers.get(name);
-    if (existing?.workspaceDir === workspaceDir) return name;
+    if (options.replaceExisting) {
+      try { execFileSync(config.dockerBinary, ["rm", "-f", name], { stdio: "ignore", timeout: 15000 }); } catch {}
+      this.containers.delete(name);
+    } else if (existing?.workspaceDir === workspaceDir) {
+      return name;
+    }
 
     const docker = config.dockerBinary;
-    try {
+    if (!options.replaceExisting) try {
       const raw = execFileSync(docker, ["inspect", name], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -67,7 +72,7 @@ class DockerWorkspaceRuntime {
         "run", "-d", "--name", name,
         "--label", "app=ath-ide",
         "--label", `workspace=${name}`,
-        "--restart", "unless-stopped",
+        "--restart", options.restartPolicy || "unless-stopped",
         "--memory", "1g",
         "--memory-swap", "1g",
         "--cpus", "1",
@@ -78,7 +83,7 @@ class DockerWorkspaceRuntime {
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
         "--user", `${uid}:${gid}`,
         "-e", "HOME=/tmp",
-        "--network", config.dockerWorkspaceNetwork,
+        "--network", options.network || config.dockerWorkspaceNetwork,
         "-v", `${workspaceDir}:/workspace:rw`,
         "-w", "/workspace",
         config.dockerImage,

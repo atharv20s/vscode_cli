@@ -17,12 +17,12 @@ import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 const IGNORED_DIRS = new Set(["node_modules", ".git", ".worktrees", "dist", "build", ".next", ".cache"]);
 
 class WorkspaceService {
-  constructor(root = config.workspaceRoot, workspaceId = "system") {
+  constructor(root = config.workspaceRoot, workspaceId = "system", options = {}) {
     this.workspaceRoot = path.resolve(root);
     this.workspaceId = workspaceId;
     this.watcher = null;
     this._recentInternalMutations = new Map(); // path -> timestamp
-    this._initWatcher();
+    if (options.watch !== false) this._initWatcher();
   }
 
   /**
@@ -48,6 +48,12 @@ class WorkspaceService {
       };
     }
 
+    // Repository task agents must never inspect or mutate Git's control data.
+    if (this.workspaceId.startsWith("repo-agent-") &&
+        relativePath.split(path.sep).some((part) => part.toLowerCase() === ".git")) {
+      return { safe: false, resolved, relative: relativePath.split(path.sep).join("/") };
+    }
+
     // Resolve the deepest existing ancestor so symlinks cannot redirect a
     // missing/new target outside the workspace. realpathSync also canonicalizes
     // the workspace root and existing target before the containment check.
@@ -68,6 +74,10 @@ class WorkspaceService {
       const realAncestor = fs.realpathSync(existingAncestor);
       const canonicalTarget = path.join(realAncestor, ...missingSegments);
       const canonicalRelative = path.relative(realRoot, canonicalTarget);
+      if (this.workspaceId.startsWith("repo-agent-") &&
+          canonicalRelative.split(path.sep).some((part) => part.toLowerCase() === ".git")) {
+        return { safe: false, resolved, relative: relativePath.split(path.sep).join("/") };
+      }
       const canonicalInsideRoot =
         canonicalRelative === "" ||
         (canonicalRelative !== ".." &&
@@ -257,6 +267,8 @@ class WorkspaceService {
    */
   _alignRuntimeOwnership(targetPath) {
     if (config.executionRuntime !== "docker") return;
+    // Docker Desktop on Windows mediates bind-mount permissions through ACLs.
+    if (process.platform === "win32" || typeof fs.chownSync !== "function") return;
     const uid = config.dockerWorkspaceUid;
     const gid = config.dockerWorkspaceGid;
     let current = targetPath;
@@ -352,6 +364,29 @@ const workspaceServices = new Map();
  * authenticated user. The opaque directory name prevents usernames/IDs from
  * becoming path components and avoids traversal through crafted identities.
  */
+/**
+ * Create a disposable, task-scoped workspace rooted at an application-generated
+ * directory. Callers must never pass a user-controlled filesystem path here.
+ */
+export function createScopedWorkspaceService(root, workspaceId) {
+  if (typeof root !== "string" || !path.isAbsolute(root) || !workspaceId) {
+    throw new Error("A task workspace requires an absolute root and workspace ID.");
+  }
+  const resolvedRoot = path.resolve(root);
+  fs.mkdirSync(resolvedRoot, { recursive: true, mode: 0o700 });
+  return new WorkspaceService(resolvedRoot, String(workspaceId), { watch: false });
+}
+
+/**
+ * Resolve the workspace service for an agent tool call. A task-scoped service
+ * takes precedence over the user's general workspace, preventing repository
+ * tasks from reading or editing sibling user projects.
+ */
+export function getWorkspaceServiceForContext(ctx = {}) {
+  if (ctx.workspaceService) return ctx.workspaceService;
+  return getWorkspaceService(ctx.userId || ctx.workspaceId);
+}
+
 export function getWorkspaceService(userId) {
   if (typeof userId !== "string" || !userId.trim()) {
     throw new Error("An authenticated workspace owner is required.");

@@ -22,17 +22,33 @@ export const config = {
 
   // Database (PostgreSQL / Neon / Supabase or SQLite fallback)
   databaseUrl: process.env.DATABASE_URL || "",
+  redisUrl: process.env.REDIS_URL || "",
 
-  // LLM Providers
-  defaultLlmProvider: process.env.DEFAULT_LLM_PROVIDER || (process.env.OPENROUTER_API_KEY ? "openrouter" : "mistral"),
+  // LLM Providers and explicit quality tiers
+  defaultLlmProvider: (process.env.DEFAULT_LLM_PROVIDER || (process.env.OPENROUTER_API_KEY ? "openrouter" : process.env.MISTRAL_API_KEY ? "mistral" : "openai")).toLowerCase(),
+  llmFallbackProviders: (process.env.LLM_FALLBACK_PROVIDERS || "").split(",").map(value => value.trim().toLowerCase()).filter(Boolean),
   openrouterKey: process.env.OPENROUTER_API_KEY || "",
   openrouterBaseUrl: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
-  openrouterModel: process.env.OPENROUTER_MODEL || "openrouter/free",
+  openrouterFastModel: process.env.OPENROUTER_FAST_MODEL || "",
+  openrouterCodingModel: process.env.OPENROUTER_CODING_MODEL || "",
+  openrouterReasoningModel: process.env.OPENROUTER_REASONING_MODEL || "",
+  openrouterVisionModel: process.env.OPENROUTER_VISION_MODEL || "",
   mistralKey: process.env.MISTRAL_API_KEY || "",
-
+  mistralFastModel: process.env.MISTRAL_FAST_MODEL || "mistral-small-latest",
+  mistralCodingModel: process.env.MISTRAL_CODING_MODEL || "codestral-latest",
+  mistralReasoningModel: process.env.MISTRAL_REASONING_MODEL || "mistral-large-latest",
+  mistralVisionModel: process.env.MISTRAL_VISION_MODEL || "pixtral-12b-2409",
   openaiKey: process.env.OPENAI_API_KEY || "",
+  openaiFastModel: process.env.OPENAI_FAST_MODEL || "",
+  openaiCodingModel: process.env.OPENAI_CODING_MODEL || "",
+  openaiReasoningModel: process.env.OPENAI_REASONING_MODEL || "",
+  openaiVisionModel: process.env.OPENAI_VISION_MODEL || "",
   anthropicKey: process.env.ANTHROPIC_API_KEY || "",
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1",
+  llmContextWindowTokens: Math.max(8192, parseInt(process.env.LLM_CONTEXT_WINDOW_TOKENS || "65536", 10)),
+  llmContextBudgetTokens: Math.max(4096, parseInt(process.env.LLM_CONTEXT_BUDGET_TOKENS || "48000", 10)),
+  llmOutputReserveTokens: Math.max(1024, parseInt(process.env.LLM_OUTPUT_RESERVE_TOKENS || "8192", 10)),
+  llmContextSafetyTokens: Math.max(512, parseInt(process.env.LLM_CONTEXT_SAFETY_TOKENS || "2048", 10)),
 
   // Tavily Search
   tavilyKey: process.env.TAVILY_API_KEY || "",
@@ -52,6 +68,8 @@ export const config = {
   dockerBinary: process.env.DOCKER_BIN || "docker",
   dockerImage: process.env.DOCKER_WORKSPACE_IMAGE || "ath-ide-workspace:local",
   dockerWorkspaceNetwork: process.env.DOCKER_WORKSPACE_NETWORK || "none",
+  repoAgentNetwork: process.env.REPO_AGENT_NETWORK || "none",
+  repoAgentTokenKey: process.env.REPO_AGENT_TOKEN_KEY || "",
   dockerWorkspaceUid: parseInt(process.env.DOCKER_WORKSPACE_UID || "1000", 10),
   dockerWorkspaceGid: parseInt(process.env.DOCKER_WORKSPACE_GID || "1000", 10),
 
@@ -98,12 +116,14 @@ export function validateConfig() {
   const warnings = [];
   const errors = [];
 
-  if (!config.openrouterKey && !config.openaiKey) {
+  if (!config.openrouterKey && !config.openaiKey && !config.mistralKey) {
     warnings.push(
-      "No LLM API key found. Set OPENROUTER_API_KEY or OPENAI_API_KEY in your .env file."
+      "No LLM API key found. Set OPENROUTER_API_KEY, MISTRAL_API_KEY or OPENAI_API_KEY in your .env file."
     );
   }
 
+  if (!["openrouter","mistral","openai"].includes(config.defaultLlmProvider)) errors.push("DEFAULT_LLM_PROVIDER must be openrouter, mistral or openai.");
+  for (const provider of config.llmFallbackProviders) if (!["openrouter","mistral","openai"].includes(provider)) errors.push("Unsupported LLM fallback provider: " + provider);
   if (!config.tavilyKey) {
     warnings.push(
       "TAVILY_API_KEY not set -- web search will be unavailable. Get a free key at https://tavily.com"
@@ -122,6 +142,10 @@ export function validateConfig() {
     );
   }
 
+  if (config.llmContextBudgetTokens + config.llmOutputReserveTokens + config.llmContextSafetyTokens >= config.llmContextWindowTokens) {
+    errors.push("LLM_CONTEXT_BUDGET_TOKENS + LLM_OUTPUT_RESERVE_TOKENS + LLM_CONTEXT_SAFETY_TOKENS must be smaller than LLM_CONTEXT_WINDOW_TOKENS.");
+  }
+
   if (!["disabled", "docker", "remote"].includes(config.executionRuntime)) {
     errors.push("EXECUTION_RUNTIME must be disabled, docker, or remote.");
   }
@@ -134,6 +158,12 @@ export function validateConfig() {
 
   if (!["none", "bridge"].includes(config.dockerWorkspaceNetwork)) {
     errors.push("DOCKER_WORKSPACE_NETWORK must be none or bridge.");
+  }
+  if (!["none", "bridge"].includes(config.repoAgentNetwork)) {
+    errors.push("REPO_AGENT_NETWORK must be none or bridge.");
+  }
+  if (config.repoAgentTokenKey && !/^[a-f0-9]{64}$/i.test(config.repoAgentTokenKey)) {
+    errors.push("REPO_AGENT_TOKEN_KEY must be a 64-character hexadecimal key (32 bytes).");
   }
 
   if (!Number.isInteger(config.dockerWorkspaceUid) || config.dockerWorkspaceUid < 1 || !Number.isInteger(config.dockerWorkspaceGid) || config.dockerWorkspaceGid < 1) {

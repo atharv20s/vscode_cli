@@ -15,6 +15,7 @@ import path from "path";
 import { streamChatCompletion } from "./llmService.js";
 import { getToolDefinitions, executeTool } from "../tools/index.js";
 import { logger } from "../config/logger.js";
+import { config } from "../config/env.js";
 import { terminalContextService } from "./terminalContextService.js";
 import { worldStateService } from "./worldStateService.js";
 import { ContextSelector } from "./contextSelector.js";
@@ -81,38 +82,43 @@ function estimateTokens(text) {
  * Prunes large intermediate tool outputs and trims older turns if total context approaches limit.
  * Keeps system prompt and recent turns 100% intact.
  */
-function compactContext(messages, maxTokenBudget = 85000) {
-  let totalEstimated = messages.reduce((acc, m) => {
-    let contentLen = typeof m.content === "string" ? m.content.length : JSON.stringify(m.content || "").length;
-    return acc + Math.ceil(contentLen / 4);
-  }, 0);
+function compactContext(messages, maxTokenBudget = Math.max(4096, config.llmContextBudgetTokens || 48000)) {
+  const estimate = value => Math.ceil(String(value || "").length / 3.5);
+  const messageTokens = message => estimate(
+    typeof message.content === "string" ? message.content : JSON.stringify(message.content || "")
+  ) + estimate(message.tool_calls || "");
+  const total = list => list.reduce((sum, message) => sum + messageTokens(message), 0);
+  if (total(messages) <= maxTokenBudget) return messages;
 
-  if (totalEstimated <= maxTokenBudget) {
-    return messages;
-  }
-
-  logger.info(`Context window compaction triggered (${totalEstimated} estimated tokens -> budget: ${maxTokenBudget})`);
-
-  // System prompt is always preserved (index 0)
-  const systemMsg = messages[0];
-  const otherMsgs = messages.slice(1);
-
-  // Compact older tool results first (anything older than the last 6 messages)
-  const cutoffIndex = Math.max(0, otherMsgs.length - 6);
-
-  const compacted = otherMsgs.map((msg, idx) => {
-    if (idx < cutoffIndex && msg.role === "tool" && typeof msg.content === "string" && msg.content.length > 500) {
-      return {
-        ...msg,
-        content: msg.content.slice(0, 300) + `\n... [${msg.content.length - 300} characters omitted for context optimization. Full content stored in database & filesystem]`,
-      };
-    }
-    return msg;
+  logger.info("Context compaction triggered", { estimatedTokens: total(messages), budget: maxTokenBudget });
+  const system = messages[0];
+  const rest = messages.slice(1);
+  const recentStart = Math.max(0, rest.length - 10);
+  const compacted = rest.map((message, index) => {
+    if (index >= recentStart || message.role !== "tool") return message;
+    const content = typeof message.content === "string" ? message.content : JSON.stringify(message.content || "");
+    if (content.length <= 900) return message;
+    const head = content.slice(0, 450);
+    const tail = content.slice(-250);
+    return { ...message, content: head + "\n...[older tool output compacted; retrieve the full file/output again if needed]...\n" + tail };
   });
 
-  return [systemMsg, ...compacted];
+  let result = [system, ...compacted];
+  // If still above budget, replace older conversational turns with explicit
+  // omission markers. Keep the system prompt and the newest tool-call cycle.
+  for (let index = 0; total(result) > maxTokenBudget && index < Math.max(0, result.length - 10); index++) {
+    const message = result[index + 1];
+    if (!message || message.role === "system" || message.role === "tool") continue;
+    if (message.role === "assistant" && message.tool_calls) continue;
+    const originalTokens = messageTokens(message);
+    if (originalTokens < 300) continue;
+    result[index + 1] = {
+      role: message.role,
+      content: "[Earlier conversation turn compacted (" + originalTokens + " estimated tokens). Its durable decisions should be retrieved from session memory if needed.]",
+    };
+  }
+  return result;
 }
-
 /**
  * Run the autonomous agent loop.
  *
@@ -131,7 +137,7 @@ function compactContext(messages, maxTokenBudget = 85000) {
  * Write Antigravity-style plan and chat history logs directly to the user's workspace
  * so they appear in the file explorer.
  */
-async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir, userId) {
+async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir, userId, workspaceServiceOverride = null) {
   if (!workspaceDir) return;
   try {
     // 1. Create/update chat_session.md
@@ -139,7 +145,7 @@ async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDi
       .map((msg) => `### **${msg.role === "user" ? "👤 User" : "🤖 Assistant"}**\n${msg.content}\n`)
       .join("\n---\n\n");
     const chatSessionContent = `# 💬 ATH IDE Chat Session\n\n*Updated: ${new Date().toLocaleString()}*\n\n## Current Prompts & Messages\n\n${historyText}\n### **👤 User**\n${message}\n`;
-    if (userId) await getWorkspaceService(userId).writeFile("chat_session.md", chatSessionContent, { source: "agent", actor: "agent" });
+    if (workspaceServiceOverride || userId) await (workspaceServiceOverride || getWorkspaceService(userId)).writeFile("chat_session.md", chatSessionContent, { source: "agent", actor: "agent" });
     else await fs.writeFile(path.resolve(workspaceDir, "chat_session.md"), chatSessionContent, "utf8");
 
     // 2. Determine if user prompt is requesting architectural changes/plans
@@ -149,17 +155,17 @@ async function writeWorkspaceMetaFiles(message, conversationHistory, workspaceDi
     if (needsPlan) {
       // Create implementation_plan.md
       const planContent = `# 📋 Workspace Implementation Plan\n\n*Auto-generated plan for: "${message}"*\n\n## Goal Description\n${message}\n\n## User Review Required\n> [!NOTE]\n> Review the generated plan files in the workspace. Mark tasks as complete in task.md.\n\n## Proposed Changes\n- [NEW] Code modifications based on AI instructions\n- Interactive terminal tests to verify output\n`;
-      if (userId) await getWorkspaceService(userId).writeFile("implementation_plan.md", planContent, { source: "agent", actor: "agent" });
+      if (workspaceServiceOverride || userId) await (workspaceServiceOverride || getWorkspaceService(userId)).writeFile("implementation_plan.md", planContent, { source: "agent", actor: "agent" });
       else await fs.writeFile(path.resolve(workspaceDir, "implementation_plan.md"), planContent, "utf8");
 
       // Create task.md
       const taskContent = `# 🎯 Task Checklist\n\n- [ ] Analyze user prompt: "${message.slice(0, 50)}..."\n- [ ] Run design phase and review dependencies\n- [ ] Write new code blocks and verify implementation\n- [ ] Run terminal-based execution tests\n`;
-      if (userId) await getWorkspaceService(userId).writeFile("task.md", taskContent, { source: "agent", actor: "agent" });
+      if (workspaceServiceOverride || userId) await (workspaceServiceOverride || getWorkspaceService(userId)).writeFile("task.md", taskContent, { source: "agent", actor: "agent" });
       else await fs.writeFile(path.resolve(workspaceDir, "task.md"), taskContent, "utf8");
       
       // Create walkthrough.md
       const walkthroughContent = `# 🚶 Workspace Walkthrough\n\n*Auto-generated walkthrough summary*\n\n## Changes Made\n- Initialized meta files in workspace explorer\n- Ready for coding actions\n`;
-      if (userId) await getWorkspaceService(userId).writeFile("walkthrough.md", walkthroughContent, { source: "agent", actor: "agent" });
+      if (workspaceServiceOverride || userId) await (workspaceServiceOverride || getWorkspaceService(userId)).writeFile("walkthrough.md", walkthroughContent, { source: "agent", actor: "agent" });
       else await fs.writeFile(path.resolve(workspaceDir, "walkthrough.md"), walkthroughContent, "utf8");
     }
   } catch (err) {
@@ -192,12 +198,17 @@ export async function runAgent({
   workspaceId,
   userId,
   sessionId,
+  workspaceService = null,
+  persistWorkspaceMeta = true,
+  allowedTools = null,
   maxIterations = 15,
   signal,
   onEvent,
 }) {
-  // Auto-generate workspace plan and chat logs
-  await writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir, userId);
+  // General IDE chats write workspace meta files; isolated repo tasks opt out.
+  if (persistWorkspaceMeta) {
+    await writeWorkspaceMetaFiles(message, conversationHistory, workspaceDir, userId, workspaceService);
+  }
 
   // Build messages array
   const messages = [];
@@ -233,9 +244,11 @@ export async function runAgent({
   }
   messages.push({ role: "user", content: userMessageContent });
 
-  // Get ALL registered tools — no filtering, agent gets everything
+  // Restrict task agents to an explicit capability set when supplied.
   const allTools = getToolDefinitions();
-  const tools = allTools;
+  const tools = Array.isArray(allowedTools)
+    ? allTools.filter((tool) => allowedTools.includes(tool.function.name))
+    : allTools;
   let totalTokens = 0;
   let iteration = 0;
 
@@ -251,7 +264,7 @@ export async function runAgent({
       data: { turn: iteration, maxTurns: maxIterations, turnId: currentTurnId },
     });
 
-    const toolContext = { workspaceDir, workspaceId, userId, sessionId, turnId: currentTurnId, signal };
+    const toolContext = { workspaceDir, workspaceId, userId, sessionId, turnId: currentTurnId, signal, workspaceService, allowedTools };
 
     let textContent = "";
     let pendingToolCalls = [];
@@ -284,13 +297,18 @@ export async function runAgent({
 
           case "usage":
             totalTokens += event.data.totalTokens || 0;
+            onEvent({ type: "usage", data: event.data });
+            break;
+
+          case "model_selected":
+            onEvent({ type: "model_selected", data: event.data });
             break;
 
           case "error":
             gotError = true;
             let errMsg = event.data?.message || "An unexpected error occurred.";
             if (errMsg.includes("402") || errMsg.includes("credits") || errMsg.includes("in-flight")) {
-              errMsg = "⚠️ OpenRouter Credit Limit: OpenRouter requires available credits for 'mistralai/devstral-2512'. Please top up $1 on openrouter.ai/credits or switch to 🟢 Low Usage mode.";
+              errMsg = "The configured AI provider rejected this request because of insufficient credits or a rate limit. Check provider billing/limits or explicitly configure an available fallback model.";
             }
             onEvent({ type: "error", data: { ...event.data, message: errMsg } });
             break;

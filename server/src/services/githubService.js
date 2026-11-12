@@ -9,6 +9,7 @@
  */
 
 import { Octokit } from "@octokit/rest";
+import crypto from "crypto";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { cacheGet, cacheSet, cacheKey } from "./cacheService.js";
@@ -32,7 +33,8 @@ export function getOctokit(accessToken) {
  * @returns {Promise<Array>}
  */
 export async function listUserRepos(accessToken) {
-  const key = cacheKey("github:repos", accessToken || "default");
+  const tokenFingerprint = accessToken ? crypto.createHash("sha256").update(accessToken).digest("hex") : "default";
+  const key = cacheKey("github:repos", tokenFingerprint);
   const cached = cacheGet(key);
   if (cached) return cached;
 
@@ -84,11 +86,15 @@ export async function getRepoTree(accessToken, owner, repo, branch = "main") {
       ref: `heads/${branch}`,
     });
 
-    const treeSha = refData.object.sha;
+    const commitResponse = await octokit.git.getCommit({
+      owner,
+      repo,
+      commit_sha: refData.object.sha,
+    });
     const { data: treeData } = await octokit.git.getTree({
       owner,
       repo,
-      tree_sha: treeSha,
+      tree_sha: commitResponse.data.tree.sha,
       recursive: "true",
     });
 

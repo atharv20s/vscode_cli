@@ -7,7 +7,7 @@
 
 import { registerTool } from "./index.js";
 import { getPreviewService } from "../services/previewService.js";
-import { getWorkspaceService } from "../services/workspaceService.js";
+import { getWorkspaceServiceForContext } from "../services/workspaceService.js";
 
 export function registerPreviewTools() {
   // 1. start_preview
@@ -40,7 +40,7 @@ export function registerPreviewTools() {
     },
     async (args, ctx = {}) => {
       const previewService = getPreviewService(ctx.workspaceId);
-      const workspace = getWorkspaceService(ctx.userId);
+      const workspace = getWorkspaceServiceForContext(ctx);
       const baseDir = workspace.workspaceRoot;
       const target = workspace.resolvePath(args.working_dir || ".");
       if (!target.safe) return { success: false, error: "Preview directory is outside your workspace." };

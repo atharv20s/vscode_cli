@@ -53,7 +53,7 @@ app.use(
   cors({
     origin: "*",
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "X-User-Id", "*"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "X-User-Id", "X-ATH-Share-Token", "*"],
   })
 );
 
@@ -233,6 +233,9 @@ async function startServer() {
     // Initialize Built-in Agent Tools
     initializeTools();
     logger.info("Agent tool registry initialized");
+
+    // Repository-agent tasks are durable in Postgres and Redis Streams.
+    // Dedicated consumers reclaim expired pending messages after worker restarts.
 
     // Initialize WebSocket Server
     initWebSocketServer(server);
