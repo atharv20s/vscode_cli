@@ -267,6 +267,8 @@ class WorkspaceService {
    */
   _alignRuntimeOwnership(targetPath) {
     if (config.executionRuntime !== "docker") return;
+    // Docker Desktop on Windows mediates bind-mount permissions through ACLs.
+    if (process.platform === "win32" || typeof fs.chownSync !== "function") return;
     const uid = config.dockerWorkspaceUid;
     const gid = config.dockerWorkspaceGid;
     let current = targetPath;
