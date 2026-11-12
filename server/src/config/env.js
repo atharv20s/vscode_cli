@@ -22,6 +22,7 @@ export const config = {
 
   // Database (PostgreSQL / Neon / Supabase or SQLite fallback)
   databaseUrl: process.env.DATABASE_URL || "",
+  redisUrl: process.env.REDIS_URL || "",
 
   // LLM Providers
   defaultLlmProvider: process.env.DEFAULT_LLM_PROVIDER || (process.env.OPENROUTER_API_KEY ? "openrouter" : "mistral"),
