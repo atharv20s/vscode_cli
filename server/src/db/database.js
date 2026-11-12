@@ -91,6 +91,45 @@ export function initDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_repo_agent_tasks_user
       ON repo_agent_tasks(user_id, created_at DESC);
+    
+    CREATE TABLE IF NOT EXISTS repo_agent_context_rounds (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL REFERENCES repo_agent_tasks(id) ON DELETE CASCADE,
+      round_number INTEGER NOT NULL,
+      agent_role TEXT NOT NULL,
+      status TEXT NOT NULL,
+      input_summary TEXT,
+      output_summary TEXT,
+      evidence_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(task_id, round_number, agent_role)
+    );
+
+    CREATE TABLE IF NOT EXISTS repo_agent_shares (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES repo_agent_tasks(id) ON DELETE CASCADE,
+      owner_user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      permission TEXT NOT NULL CHECK (permission IN ('view','comment','edit')),
+      expires_at TEXT,
+      revoked_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS repo_agent_share_comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      share_id TEXT NOT NULL REFERENCES repo_agent_shares(id) ON DELETE CASCADE,
+      author_label TEXT NOT NULL DEFAULT 'Collaborator',
+      body TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_repo_agent_rounds_task
+      ON repo_agent_context_rounds(task_id, round_number);
+    CREATE INDEX IF NOT EXISTS idx_repo_agent_shares_task
+      ON repo_agent_shares(task_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS cache_entries (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
