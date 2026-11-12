@@ -18,7 +18,7 @@ export const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   isDev: (process.env.NODE_ENV || "development") === "development",
   publicUrl: process.env.PUBLIC_URL || "",
-  previewPublicUrl: (process.env.PREVIEW_PUBLIC_URL || "").replace(/\\/$/, ""),
+  previewPublicUrl: (process.env.PREVIEW_PUBLIC_URL || "").replace(/\/$/, ""),
   logLevel: process.env.LOG_LEVEL || "info",
 
   // Database (PostgreSQL / Neon / Supabase or SQLite fallback)
