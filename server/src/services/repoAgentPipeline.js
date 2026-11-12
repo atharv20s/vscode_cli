@@ -100,7 +100,7 @@ async function detectChecks(root, context) {
     if (scripts.build) checks.push({
       name: "build",
       command: manager === "pnpm" ? "pnpm build" : manager === "yarn" ? "yarn build" : "npm run build",
-      blocked: !hasNodeModules && Object.keys(manifest.dependencies || {}).length + Object.keys(manifest.devDependencies || {}).length > 0,
+      blocked: !hasNodeModules && config.repoAgentNetwork !== "bridge" && Object.keys(manifest.dependencies || {}).length + Object.keys(manifest.devDependencies || {}).length > 0,
     });
     if (scripts.typecheck) checks.push({
       name: "typecheck",
@@ -115,8 +115,20 @@ async function detectChecks(root, context) {
   }
   if (context.samples.some(item => item.path === "Cargo.toml")) checks.push({ name: "cargo-test", command: "cargo test --locked", blocked: false });
   if (context.samples.some(item => item.path === "go.mod")) checks.push({ name: "go-test", command: "go test ./...", blocked: false });
-  if (context.samples.some(item => item.path === "pyproject.toml") || await fs.access(path.join(root,"pytest.ini")).then(()=>true).catch(()=>false)) {
-    checks.push({ name: "pytest", command: "python -m pytest -q", blocked: false });
+  const hasPythonTests = context.filePaths?.some(name =>
+    /(^|\\/)(test_[^/]+\\.py|[^/]+_test\\.py)$/i.test(name)
+  );
+  if (context.samples.some(item => item.path === "pyproject.toml") ||
+      context.samples.some(item => item.path === "requirements.txt") ||
+      context.samples.some(item => item.path === "pytest.ini") ||
+      hasPythonTests) {
+    checks.push({
+      name: "pytest",
+      command: await fs.access(path.join(root,".venv","bin","python")).then(()=>true).catch(()=>false)
+        ? ".venv/bin/python -m pytest -q"
+        : "python3 -m pytest -q",
+      blocked: false,
+    });
   }
   return checks.slice(0,4);
 }
@@ -163,18 +175,17 @@ async function prepareDependencies({ root, workspaceId, context, signal, onEvent
 
   if (context.samples.some(item=>item.path==="pyproject.toml") ||
       await fs.access(path.join(root,"requirements.txt")).then(()=>true).catch(()=>false)) {
-    const hasPytest = await fs.access(path.join(root,".venv","bin","python")).then(()=>true).catch(()=>false);
-    const hasVenv = await fs.access(path.join(root,".venv","Scripts","python.exe")).then(()=>true).catch(()=>false);
-    if (!hasPytest && !hasVenv) {
+    const hasVenv = await fs.access(path.join(root,".venv","bin","python")).then(()=>true).catch(()=>false);
+    if (!hasVenv) {
       if (config.repoAgentNetwork !== "bridge") {
         return {
           name:"python-dependency-install",command:"python -m pip install",success:false,blocked:true,
           exitCode:null,output:"Python project dependencies are not prepared and REPO_AGENT_NETWORK=none blocks package downloads.",
         };
       }
-      let command = "python -m pip install --user -e .";
+      let command = "python3 -m venv .venv && .venv/bin/python -m pip install -e . pytest";
       if (await fs.access(path.join(root,"requirements.txt")).then(()=>true).catch(()=>false)) {
-        command = "python -m pip install --user -r requirements.txt";
+        command = "python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt pytest";
       }
       onEvent?.({type:"dependency_install_start",data:{manager:"pip",command}});
       const result = await dockerWorkspaceRuntime.execute({
@@ -218,7 +229,10 @@ async function runDeterministicChecks({ task, root, workspaceId, context, signal
   const checks = await detectChecks(root,context);
   const results = [];
   const dependencyResult = await prepareDependencies({root,workspaceId,context,signal,onEvent});
-  if (dependencyResult) results.push(dependencyResult);
+  if (dependencyResult) {
+    results.push(dependencyResult);
+    if (!dependencyResult.success) return results;
+  }
   for (const check of checks) {
     if (signal?.aborted) throw new Error("Task cancelled during verification.");
     if (check.blocked) {
