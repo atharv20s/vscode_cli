@@ -1,4 +1,4 @@
-import { getDatabase, findUserById } from "../db/database.js";
+import { getDatabase } from "../db/database.js";
 import { getPostgresPool } from "../db/postgres.js";
 
 function pool() { return getPostgresPool(); }
@@ -19,14 +19,24 @@ export async function countActiveRepoTasks(userId) {
 export async function createRepoTask(task) {
   if (pool()) {
     const result = await pool().query(
-      "INSERT INTO repo_agent_tasks (id,user_id,owner,repo,base_branch,base_sha,branch,prompt,workspace_path,status,events_json) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'','queued','[]'::jsonb) RETURNING *",
-      [task.id,task.userId,task.owner,task.repo,task.baseBranch,task.baseSha,task.branch,task.prompt]
+      "INSERT INTO repo_agent_tasks (id,user_id,owner,repo,base_branch,base_sha,branch,prompt,workspace_path,status,events_json,github_token_ciphertext,github_token_iv,github_token_tag) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'','queued','[]'::jsonb,$9,$10,$11) RETURNING *",
+      [
+        task.id,task.userId,task.owner,task.repo,task.baseBranch,task.baseSha,task.branch,task.prompt,
+        task.credential?.github_token_ciphertext || null,
+        task.credential?.github_token_iv || null,
+        task.credential?.github_token_tag || null,
+      ]
     );
     return result.rows[0];
   }
   getDatabase().prepare(
-    "INSERT INTO repo_agent_tasks (id,user_id,owner,repo,base_branch,base_sha,branch,prompt,workspace_path,status,events_json) VALUES (?,?,?,?,?,?,?,?,?,'queued','[]')"
-  ).run(task.id,task.userId,task.owner,task.repo,task.baseBranch,task.baseSha,task.branch,task.prompt,task.workspacePath || "");
+    "INSERT INTO repo_agent_tasks (id,user_id,owner,repo,base_branch,base_sha,branch,prompt,workspace_path,status,events_json,github_token_ciphertext,github_token_iv,github_token_tag) VALUES (?,?,?,?,?,?,?,?,?,'queued','[]',?,?,?)"
+  ).run(
+    task.id,task.userId,task.owner,task.repo,task.baseBranch,task.baseSha,task.branch,task.prompt,task.workspacePath || "",
+    task.credential?.github_token_ciphertext || null,
+    task.credential?.github_token_iv || null,
+    task.credential?.github_token_tag || null
+  );
   return getDatabase().prepare("SELECT * FROM repo_agent_tasks WHERE id = ?").get(task.id);
 }
 
@@ -89,12 +99,17 @@ export async function appendRepoTaskEvent(taskId, event) {
   await updateRepoTask(taskId, { events_json: events });
 }
 
-export async function getRepoTaskGithubToken(userId) {
+export async function getRepoTaskGithubToken(taskId) {
   if (pool()) {
-    const result = await pool().query("SELECT github_access_token FROM users WHERE id = $1", [userId]);
-    return result.rows[0]?.github_access_token || "";
+    const result = await pool().query(
+      "SELECT github_token_ciphertext,github_token_iv,github_token_tag FROM repo_agent_tasks WHERE id = $1",
+      [taskId]
+    );
+    return result.rows[0] || null;
   }
-  return findUserById(userId)?.github_access_token || "";
+  return getDatabase().prepare(
+    "SELECT github_token_ciphertext,github_token_iv,github_token_tag FROM repo_agent_tasks WHERE id = ?"
+  ).get(taskId) || null;
 }
 
 export async function saveRepoContextRound(taskId, round) {
