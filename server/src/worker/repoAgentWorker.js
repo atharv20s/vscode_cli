@@ -67,7 +67,7 @@ async function consumeMessage(message) {
       await repoAgentQueue.ack(message.id);
       return;
     }
-    if (["review_ready","completed_no_changes","cancelled"].includes(task.status)) {
+    if (["review_ready","completed_no_changes","cancelled","failed"].includes(task.status)) {
       await repoAgentQueue.ack(message.id);
       return;
     }
