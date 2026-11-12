@@ -1250,7 +1250,7 @@ class App {
         } else {
           this.updateUserUI(data.user);
         }
-        if (data.user?.hasGithub || localStorage.getItem("github_user_token")) {
+        if (data.user?.hasGithub) {
           await this.loadGitHubRepos();
         }
       } else {
@@ -1282,7 +1282,7 @@ class App {
       if (popoverEmail) popoverEmail.textContent = displayEmail;
       if (avatarBadge) avatarBadge.textContent = displayEmail[0].toUpperCase();
 
-      if (user.hasGithub || localStorage.getItem("github_user_token")) {
+      if (user.hasGithub) {
         if (ghBtn) ghBtn.style.borderColor = "var(--success)";
         if (ghLabel) ghLabel.textContent = `GitHub: Linked`;
       } else {
@@ -1327,7 +1327,7 @@ class App {
       avatarEl.src = this.currentUser.avatarUrl || `https://api.dicebear.com/7.x/identicon/svg?seed=${this.currentUser.username}`;
     }
     if (ghStatusEl) {
-      const hasGh = this.currentUser.hasGithub || localStorage.getItem("github_user_token");
+      const hasGh = Boolean(this.currentUser.hasGithub);
       ghStatusEl.innerHTML = hasGh
         ? '<i data-lucide="check-circle" style="color:#22c55e;"></i> <span style="color:#22c55e;font-weight:600;">GitHub Token Linked & Active</span>'
         : '<i data-lucide="alert-circle" style="color:#f59e0b;"></i> <span style="color:#f59e0b;">GitHub Token Not Linked</span>';
