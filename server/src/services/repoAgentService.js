@@ -170,6 +170,33 @@ function inside(root, target) {
   );
 }
 
+async function removeProtectedFiles(repoPath, protectedPaths) {
+  for (const relative of protectedPaths) {
+    const segments = relative.split("/");
+    let parent = repoPath;
+    let safeParent = true;
+    for (const segment of segments.slice(0, -1)) {
+      parent = path.join(parent, segment);
+      try {
+        const stat = await fs.lstat(parent);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) { safeParent = false; break; }
+      } catch (error) {
+        if (error.code === "ENOENT") safeParent = false; else throw error;
+        break;
+      }
+    }
+    if (!safeParent) continue;
+    const target = path.join(parent, segments[segments.length - 1]);
+    if (!inside(repoPath, target)) throw new Error("Protected path escaped repository root.");
+    try {
+      const stat = await fs.lstat(target);
+      if (stat.isFile() || stat.isSymbolicLink()) await fs.unlink(target);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+}
+
 async function scanWorkspace(repoPath, baseEntries) {
   const current = new Map();
   let scannedBytes = 0;
