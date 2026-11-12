@@ -356,7 +356,7 @@ async function startPreviewOnWorker(input) {
     await stopPreviewOnWorker(workspaceId, port);
     const relativeCwd = path.relative(root, resolvedCwd).split(path.sep).join("/") || ".";
     const containerCwd = relativeCwd === "." ? "/workspace" : "/workspace/" + relativeCwd;
-    const script = "nohup setsid /bin/bash -lc \\"$ATH_PREVIEW_COMMAND\\" > /tmp/ath-preview-" + port + ".log 2>&1 < /dev/null & echo $! > /tmp/ath-preview-" + port + ".pid; cat /tmp/ath-preview-" + port + ".pid";
+    const script = 'nohup setsid /bin/bash -lc "$ATH_PREVIEW_COMMAND" > /tmp/ath-preview-' + port + '.log 2>&1 < /dev/null & echo $! > /tmp/ath-preview-' + port + '.pid; cat /tmp/ath-preview-' + port + '.pid';
     const pid = execDocker([
       "exec", "-w", containerCwd,
       "-e", "ATH_PREVIEW_COMMAND=" + command,
