@@ -13,6 +13,11 @@ export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, 
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<TerminalStatus>("Waiting for API");
+  const previewReadyRef = useRef(onPreviewReady);
+  const previewStoppedRef = useRef(onPreviewStopped);
+
+  useEffect(() => { previewReadyRef.current = onPreviewReady; }, [onPreviewReady]);
+  useEffect(() => { previewStoppedRef.current = onPreviewStopped; }, [onPreviewStopped]);
 
   useEffect(() => {
     if (!containerRef.current || apiStatus !== "API online") {
@@ -59,12 +64,11 @@ export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, 
       }
       setStatus(retryDelay === 800 ? "Connecting" : "Reconnecting");
       const url = new URL(getWebSocketUrl());
-      url.searchParams.set("token", token);
       url.searchParams.set("workspace", workspaceId);
       url.searchParams.set("terminalSessionId", terminalSessionId as string);
 
       try {
-        socket = new WebSocket(url.toString());
+        socket = new WebSocket(url.toString(), ["ath-auth", token]);
       } catch {
         scheduleReconnect();
         return;
@@ -91,9 +95,9 @@ export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, 
           const output = payload.text ?? payload.data ?? "";
           if (typeof output === "string" && output) terminal?.write(output);
         } else if (packet.type === "preview.ready") {
-          if (typeof payload.url === "string") onPreviewReady?.(payload.url);
+          if (typeof payload.url === "string") previewReadyRef.current?.(payload.url);
         } else if (packet.type === "preview.stopped") {
-          onPreviewStopped?.();
+          previewStoppedRef.current?.();
         } else if (packet.type === "terminal.exit" || packet.type === "terminal_exit") {
           terminal?.write("\r\n[terminal process exited]\r\n");
           setStatus("Unavailable");
@@ -172,7 +176,7 @@ export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, 
       socket?.close();
       terminal?.dispose();
     };
-  }, [workspaceId, apiStatus, onPreviewReady, onPreviewStopped]);
+  }, [workspaceId, apiStatus]);
 
   return (
     <div className="h-full w-full min-h-0 relative">
