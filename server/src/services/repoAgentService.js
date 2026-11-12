@@ -510,13 +510,23 @@ export async function processRepoAgentTask(taskId, options = {}) {
   const token = decryptRepoAgentToken(credential);
 
   const octokit = getOctokit(token);
-  const commitResponse = await octokit.git.getCommit({
-    owner: row.owner, repo: row.repo, commit_sha: row.base_sha,
-  });
+  let commitResponse;
+  let treeResponse;
+  try {
+    commitResponse = await octokit.git.getCommit({
+      owner: row.owner, repo: row.repo, commit_sha: row.base_sha,
+    });
+    const baseTreeSha = commitResponse.data.tree.sha;
+    treeResponse = await octokit.git.getTree({
+      owner: row.owner, repo: row.repo, tree_sha: baseTreeSha, recursive: "true",
+    });
+  } catch (error) {
+    // Invalid/revoked credentials and missing repository objects will not heal
+    // through queue retries; fail fast instead of retrying the same API request.
+    if ([401,404,422].includes(Number(error.status))) error.retryable = false;
+    throw error;
+  }
   const baseTreeSha = commitResponse.data.tree.sha;
-  const treeResponse = await octokit.git.getTree({
-    owner: row.owner, repo: row.repo, tree_sha: baseTreeSha, recursive: "true",
-  });
   if (treeResponse.data.truncated || (treeResponse.data.tree || []).length > MAX_TREE_ENTRIES) {
     const error = new Error("Repository tree exceeds the 25,000-entry task limit.");
     error.retryable = false;
