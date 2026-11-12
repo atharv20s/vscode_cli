@@ -234,12 +234,8 @@ async function startServer() {
     initializeTools();
     logger.info("Agent tool registry initialized");
 
-    // Mark tasks left mid-flight by a prior process as interrupted.
-    const { recoverRepoAgentTasks } = await import("./services/repoAgentService.js");
-    const interruptedTasks = recoverRepoAgentTasks();
-    if (interruptedTasks > 0) {
-      logger.warn("Marked interrupted repository agent tasks after restart", { count: interruptedTasks });
-    }
+    // Repository-agent tasks are durable in Postgres and Redis Streams.
+    // Dedicated consumers reclaim expired pending messages after worker restarts.
 
     // Initialize WebSocket Server
     initWebSocketServer(server);
