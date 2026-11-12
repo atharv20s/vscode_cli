@@ -150,9 +150,13 @@ export function initWebSocketServer(httpServer) {
     ws.isAlive = true;
     ws.sessionId = `conn_${crypto.randomUUID()}`;
 
-    // Authenticate via query param: /ws?token=<jwt>
+    // Browser WebSocket APIs cannot set Authorization headers. Carry the JWT
+    // as a negotiated subprotocol instead of a query parameter so reverse
+    // proxies and access logs do not record it as part of the request URL.
     const url = new URL(req.url, `http://${req.headers.host}`);
-    const token = url.searchParams.get("token");
+    const offeredProtocols = String(req.headers["sec-websocket-protocol"] || "")
+      .split(",").map(value => value.trim()).filter(Boolean);
+    const token = offeredProtocols[0] === "ath-auth" ? offeredProtocols[1] : null;
     let user = null;
 
     if (token) {
