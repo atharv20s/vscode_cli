@@ -53,6 +53,7 @@ export const config = {
   dockerBinary: process.env.DOCKER_BIN || "docker",
   dockerImage: process.env.DOCKER_WORKSPACE_IMAGE || "ath-ide-workspace:local",
   dockerWorkspaceNetwork: process.env.DOCKER_WORKSPACE_NETWORK || "none",
+  repoAgentNetwork: process.env.REPO_AGENT_NETWORK || "none",
   dockerWorkspaceUid: parseInt(process.env.DOCKER_WORKSPACE_UID || "1000", 10),
   dockerWorkspaceGid: parseInt(process.env.DOCKER_WORKSPACE_GID || "1000", 10),
 
@@ -135,6 +136,9 @@ export function validateConfig() {
 
   if (!["none", "bridge"].includes(config.dockerWorkspaceNetwork)) {
     errors.push("DOCKER_WORKSPACE_NETWORK must be none or bridge.");
+  }
+  if (!["none", "bridge"].includes(config.repoAgentNetwork)) {
+    errors.push("REPO_AGENT_NETWORK must be none or bridge.");
   }
 
   if (!Number.isInteger(config.dockerWorkspaceUid) || config.dockerWorkspaceUid < 1 || !Number.isInteger(config.dockerWorkspaceGid) || config.dockerWorkspaceGid < 1) {
