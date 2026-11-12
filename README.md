@@ -188,3 +188,20 @@ All subsystems communicate through standardized event envelopes on the central E
 ## License
 
 MIT License. Developed for autonomous agentic software development workflows.
+
+
+## Browser studio runtime
+
+The Next.js studio now connects to authenticated backend endpoints for streamed
+agent chat, model discovery, workspace session listing/creation, file browsing
+and version-checked editing. The editor uses Monaco; the integrated browser
+terminal uses xterm.js + FitAddon over WebSocket to the server's node-pty
+session manager. Repository coding tasks can be created and tracked in the
+agent-task panel.
+
+For production, mount the same durable volume at `WORKSPACE_STORAGE_ROOT` on
+every API replica and set `NEXT_PUBLIC_WS_URL` to the public secure WebSocket
+endpoint. A browser terminal reconnects only while the owning worker process
+remains alive. Shared cross-replica file events, durable terminal migration,
+object storage, autoscaling and production preview proxying remain separate
+infrastructure milestones; the current code does not provision cloud resources.

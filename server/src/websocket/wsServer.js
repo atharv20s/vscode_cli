@@ -6,11 +6,13 @@
  */
 
 import path from "path";
+import crypto from "crypto";
 import { WebSocketServer } from "ws";
 import { verifyToken } from "../middleware/auth.js";
 import { runAgent } from "../services/agentService.js";
 import { config } from "../config/env.js";
 import { getWorkspaceService } from "../services/workspaceService.js";
+import { ensureWorkspaceSession } from "../services/workspaceSessionService.js";
 import { logger } from "../config/logger.js";
 import {
   addConnection,
@@ -45,7 +47,7 @@ export function initWebSocketServer(httpServer) {
     wss.clients.forEach((ws) => {
       if (ws.isAlive === false) {
         logger.warn("Terminating dead WebSocket connection");
-        executionService.killInteractive(ws.sessionId);
+        executionService.detachInteractive(ws.terminalSessionId, ws);
         removeConnection(ws);
         return ws.terminate();
       }
@@ -57,6 +59,7 @@ export function initWebSocketServer(httpServer) {
   // Idle cleanup
   const idleCleanupInterval = setInterval(() => {
     disconnectIdle();
+    executionService.cleanupIdleSessions(config.terminalIdleTtlMs);
   }, 5 * 60 * 1000);
 
   wss.on("close", () => {
@@ -143,13 +146,17 @@ export function initWebSocketServer(httpServer) {
     broadcastScoped("permission.resolved", envelope);
   });
 
-  wss.on("connection", (ws, req) => {
+  wss.on("connection", async (ws, req) => {
     ws.isAlive = true;
-    ws.sessionId = `sess_${Math.random().toString(36).slice(2, 9)}`;
+    ws.sessionId = `conn_${crypto.randomUUID()}`;
 
-    // Authenticate via query param: /ws?token=<jwt>
+    // Browser WebSocket APIs cannot set Authorization headers. Carry the JWT
+    // as a negotiated subprotocol instead of a query parameter so reverse
+    // proxies and access logs do not record it as part of the request URL.
     const url = new URL(req.url, `http://${req.headers.host}`);
-    const token = url.searchParams.get("token");
+    const offeredProtocols = String(req.headers["sec-websocket-protocol"] || "")
+      .split(",").map(value => value.trim()).filter(Boolean);
+    const token = offeredProtocols[0] === "ath-auth" ? offeredProtocols[1] : null;
     let user = null;
 
     if (token) {
@@ -165,8 +172,17 @@ export function initWebSocketServer(httpServer) {
     }
 
     ws.userId = user?.id || ws.sessionId;
-    ws.workspaceService = getWorkspaceService(ws.userId);
+    const requestedWorkspace = url.searchParams.get("workspace") || "default";
+    try {
+      await ensureWorkspaceSession(ws.userId, requestedWorkspace);
+      ws.workspaceService = getWorkspaceService(ws.userId, requestedWorkspace);
+    } catch {
+      ws.close(4003, "Invalid workspace");
+      return;
+    }
     ws.workspaceId = ws.workspaceService.workspaceId;
+    const requestedTerminalId = url.searchParams.get("terminalSessionId") || "";
+    ws.terminalSessionId = /^[a-f0-9-]{36}$/i.test(requestedTerminalId) ? requestedTerminalId : crypto.randomUUID();
     ws.previewService = getPreviewService(ws.workspaceId);
 
     addConnection(ws, user || { id: ws.userId, username: "guest" });
@@ -195,13 +211,13 @@ export function initWebSocketServer(httpServer) {
     });
 
     ws.on("close", () => {
-      executionService.killInteractive(ws.sessionId);
+      executionService.detachInteractive(ws.terminalSessionId, ws);
       removeConnection(ws);
     });
 
     ws.on("error", (err) => {
       logger.error("WebSocket error", { error: err.message });
-      executionService.killInteractive(ws.sessionId);
+      executionService.detachInteractive(ws.terminalSessionId, ws);
       removeConnection(ws);
     });
 
@@ -310,12 +326,13 @@ async function handleMessage(ws, msg, user) {
     // Terminal Session Lifecycle
     case "terminal_init":
     case "terminal.init":
-      await executionService.spawnInteractiveSession(ws.sessionId, {
+      await executionService.spawnInteractiveSession(ws.terminalSessionId, {
         shellType: payload?.shell || "bash",
         cols: payload?.cols || 80,
         rows: payload?.rows || 24,
         workspaceDir: ws.workspaceService.workspaceRoot,
         workspaceId: ws.workspaceId,
+        userId: ws.userId,
         ws,
       });
       break;
@@ -325,11 +342,12 @@ async function handleMessage(ws, msg, user) {
     case "terminal.input":
     case "terminal.keystroke":
       eventBus.publish(EVENT_TOPICS.TERMINAL_INPUT, {}, {
-        sessionId: ws.sessionId,
+        sessionId: ws.terminalSessionId,
+        workspaceId: ws.workspaceId,
         source: "ui",
         actor: "user",
       });
-      executionService.writeInteractive(ws.sessionId, payload?.data ?? payload?.command ?? "");
+      executionService.writeInteractive(ws.terminalSessionId, payload?.data ?? payload?.command ?? "", ws.userId, ws.workspaceId);
       break;
 
     // Submitted Command (Enter pressed)
@@ -338,7 +356,8 @@ async function handleMessage(ws, msg, user) {
         command: payload?.command || "",
         cwd: payload?.cwd || config.workspaceRoot,
       }, {
-        sessionId: ws.sessionId,
+        sessionId: ws.terminalSessionId,
+        workspaceId: ws.workspaceId,
         source: "ui",
         actor: "user",
       });
@@ -349,11 +368,12 @@ async function handleMessage(ws, msg, user) {
       eventBus.publish(EVENT_TOPICS.TERMINAL_PASTE, {
         text: payload?.text || "",
       }, {
-        sessionId: ws.sessionId,
+        sessionId: ws.terminalSessionId,
+        workspaceId: ws.workspaceId,
         source: "ui",
         actor: "user",
       });
-      executionService.writeInteractive(ws.sessionId, payload?.text || "");
+      executionService.writeInteractive(ws.terminalSessionId, payload?.text || "", ws.userId, ws.workspaceId);
       break;
 
     // Terminal Dimensions Resize
@@ -367,7 +387,7 @@ async function handleMessage(ws, msg, user) {
         source: "ui",
         actor: "user",
       });
-      executionService.resizeInteractive(ws.sessionId, payload?.cols, payload?.rows);
+      executionService.resizeInteractive(ws.terminalSessionId, payload?.cols, payload?.rows, ws.userId, ws.workspaceId);
       break;
 
     default:

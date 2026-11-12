@@ -28,15 +28,15 @@ class ExecutionService {
   /**
    * Write to a user interactive terminal session.
    */
-  writeInteractive(sessionId, data) {
-    return terminalSessionManager.write(sessionId, data);
+  writeInteractive(sessionId, data, userId = null, workspaceId = null) {
+    return terminalSessionManager.write(sessionId, data, userId, workspaceId);
   }
 
   /**
    * Resize a user interactive terminal session.
    */
-  resizeInteractive(sessionId, cols, rows) {
-    return terminalSessionManager.resize(sessionId, cols, rows);
+  resizeInteractive(sessionId, cols, rows, userId = null, workspaceId = null) {
+    return terminalSessionManager.resize(sessionId, cols, rows, userId, workspaceId);
   }
 
   /**
@@ -44,6 +44,14 @@ class ExecutionService {
    */
   killInteractive(sessionId) {
     return terminalSessionManager.destroySession(sessionId);
+  }
+
+  detachInteractive(sessionId, ws) {
+    return terminalSessionManager.detachSession(sessionId, ws);
+  }
+
+  cleanupIdleSessions(maxIdleMs) {
+    return terminalSessionManager.cleanupIdleSessions(maxIdleMs);
   }
 
   /**

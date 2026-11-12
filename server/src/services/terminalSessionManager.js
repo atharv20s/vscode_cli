@@ -9,6 +9,7 @@
 import { logger } from "../config/logger.js";
 import { config } from "../config/env.js";
 import { eventBus } from "../websocket/eventBus.js";
+import { sendMessage } from "../websocket/connectionManager.js";
 import { LocalBackend } from "./backends/localBackend.js";
 import { RemoteSSHBackend } from "./backends/remoteSSHBackend.js";
 import { DockerBackend } from "./backends/dockerBackend.js";
@@ -59,7 +60,19 @@ class TerminalSessionManager {
    * @returns {Promise<TerminalSession>}
    */
   async createSession(sessionId, options = {}) {
-    this.destroySession(sessionId);
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
+      if (existing.userId !== (options.userId || null) || existing.workspaceId !== (options.workspaceId || "default")) {
+        throw new Error("Terminal session ownership mismatch.");
+      }
+      existing.backendInstance?.attach?.(options.ws);
+      existing.ws = options.ws || null;
+      existing.lastActivityAt = Date.now();
+      existing.state = "ready";
+      if (existing.outputBuffer && existing.ws) sendMessage(existing.ws, "terminal.output", { text: existing.outputBuffer, sessionId });
+      this._emitStateChange(existing, "ready", { reconnected: true });
+      return existing;
+    }
 
     const cwd = options.workspaceDir || options.cwd || config.workspaceRoot;
     const shell = options.shellType || "powershell";
@@ -67,6 +80,12 @@ class TerminalSessionManager {
     const rows = options.rows || 24;
     const workspaceId = options.workspaceId || "default";
     const backendType = config.executionRuntime === "docker" ? "docker" : (options.backendType || (options.remoteHost ? "remote_ssh" : "local"));
+    const userSessions = Array.from(this.sessions.values()).filter(item => item.userId === (options.userId || null) && item.state !== "exited" && item.state !== "error");
+    if (userSessions.length >= config.terminalMaxSessionsPerUser) {
+      const error = new Error("Terminal session limit reached for this account.");
+      error.code = "TERMINAL_SESSION_LIMIT";
+      throw error;
+    }
 
     // Do not spawn shells inside the shared API container in production. The
     // remote SSH adapter is not yet a per-user isolated runtime either.
@@ -76,6 +95,9 @@ class TerminalSessionManager {
 
     const session = {
       sessionId,
+      userId: options.userId || null,
+      ws: options.ws || null,
+      outputBuffer: "",
       workspaceId,
       backend: backendType,
       cwd,
@@ -97,6 +119,7 @@ class TerminalSessionManager {
         session.backendInstance = backend;
         const ptyProcess = await backend.spawnShell({
           sessionId, workspaceId, workspaceDir: cwd, cols, rows, ws: options.ws,
+          onData: data => this._handleSessionOutput(sessionId, data),
           onExit: (code) => this._handleSessionExit(sessionId, code),
         });
         session.pid = ptyProcess?.pid || null;
@@ -138,6 +161,7 @@ class TerminalSessionManager {
         rows,
         cwd,
         ws: options.ws,
+        onData: data => this._handleSessionOutput(sessionId, data),
         onExit: (code) => {
           this._handleSessionExit(sessionId, code);
         },
@@ -152,6 +176,8 @@ class TerminalSessionManager {
     } catch (err) {
       session.state = "error";
       this._emitStateChange(session, "error", { error: err.message });
+      try { session.backendInstance?.kill?.(sessionId); } catch {}
+      this.sessions.delete(sessionId);
       logger.error(`TerminalSessionManager: Failed to create session ${sessionId}: ${err.message}`);
       throw err;
     }
@@ -163,8 +189,9 @@ class TerminalSessionManager {
    * @param {string} sessionId
    * @param {string} data
    */
-  write(sessionId, data) {
+  write(sessionId, data, userId = null, workspaceId = null) {
     const session = this.sessions.get(sessionId);
+    if (session && userId && (session.userId !== userId || session.workspaceId !== workspaceId)) throw new Error("Terminal session access denied.");
     if (!session || !session.backendInstance) {
       logger.warn(`TerminalSessionManager: Write failed - session not found: ${sessionId}`);
       return false;
@@ -182,9 +209,11 @@ class TerminalSessionManager {
    * @param {number} cols
    * @param {number} rows
    */
-  resize(sessionId, cols, rows) {
+  resize(sessionId, cols, rows, userId = null, workspaceId = null) {
     const session = this.sessions.get(sessionId);
+    if (session && userId && (session.userId !== userId || session.workspaceId !== workspaceId)) throw new Error("Terminal session access denied.");
     if (session && session.backendInstance) {
+      session.lastActivityAt = Date.now();
       session.cols = cols || session.cols;
       session.rows = rows || session.rows;
       session.backendInstance.resize(sessionId, session.cols, session.rows);
@@ -209,6 +238,29 @@ class TerminalSessionManager {
       this._emitStateChange(session, "disconnected");
       this.sessions.delete(sessionId);
       logger.info(`TerminalSessionManager: Destroyed session ${sessionId}`);
+    }
+  }
+
+  _handleSessionOutput(sessionId, data) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.outputBuffer = (session.outputBuffer + data).slice(-262144);
+    if (session.ws) sendMessage(session.ws, "terminal.output", { text: data, sessionId });
+  }
+
+  detachSession(sessionId, ws) {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.ws !== ws) return false;
+    session.backendInstance?.detach?.(ws);
+    session.ws = null;
+    session.lastActivityAt = Date.now();
+    return true;
+  }
+
+  cleanupIdleSessions(maxIdleMs = 30 * 60 * 1000) {
+    const now = Date.now();
+    for (const [sessionId, session] of this.sessions) {
+      if (!session.ws && now - session.lastActivityAt > maxIdleMs) this.destroySession(sessionId);
     }
   }
 

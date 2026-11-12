@@ -144,6 +144,33 @@ export function initDatabase() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS llm_daily_usage (
+      user_id TEXT NOT NULL,
+      usage_date TEXT NOT NULL,
+      spent_usd REAL NOT NULL DEFAULT 0,
+      reserved_usd REAL NOT NULL DEFAULT 0,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      request_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, usage_date)
+    );
+
+    CREATE TABLE IF NOT EXISTS llm_usage_reservations (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      usage_date TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      reserved_usd REAL NOT NULL,
+      actual_usd REAL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT DEFAULT (datetime('now')),
+      settled_at TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_conversations_session ON conversations(session_id);
     CREATE INDEX IF NOT EXISTS idx_cache_created ON cache_entries(created_at);
@@ -302,6 +329,20 @@ export function getConversation(id) {
   return getDatabase().prepare("SELECT * FROM conversations WHERE id = ?").get(id);
 }
 
+export function getConversationForUser(id, userId) {
+  if (!id || !userId) return null;
+  return getDatabase().prepare("SELECT * FROM conversations WHERE id = ? AND user_id = ?").get(id, userId);
+}
+
+export function updateConversationMessagesForUser(id, messages, totalTokens, userId) {
+  if (!id || !userId) return { changes: 0 };
+  return getDatabase()
+    .prepare(
+      `UPDATE conversations SET messages = ?, total_tokens = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?`
+    )
+    .run(JSON.stringify(messages), totalTokens, id, userId);
+}
+
 export function updateConversationMessages(id, messages, totalTokens) {
   return getDatabase()
     .prepare(
@@ -310,35 +351,29 @@ export function updateConversationMessages(id, messages, totalTokens) {
     .run(JSON.stringify(messages), totalTokens, id);
 }
 
-export function updateConversationTitle(id, title) {
+export function updateConversationTitle(id, title, userId = null) {
+  if (!userId) return { changes: 0 };
   return getDatabase()
-    .prepare("UPDATE conversations SET title = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(title, id);
+    .prepare("UPDATE conversations SET title = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
+    .run(title, id, userId);
 }
 
-export function deleteConversation(id) {
-  return getDatabase().prepare("DELETE FROM conversations WHERE id = ?").run(id);
+export function deleteConversation(id, userId = null) {
+  if (!userId) return { changes: 0 };
+  return getDatabase().prepare("DELETE FROM conversations WHERE id = ? AND user_id = ?").run(id, userId);
 }
 
-export function listConversations(userIdOrSessionId) {
-  if (userIdOrSessionId) {
-    return getDatabase()
-      .prepare(`
-        SELECT c.id, c.title, c.model, c.total_tokens, c.messages, c.created_at, c.updated_at
-        FROM conversations c
-        LEFT JOIN sessions s ON c.session_id = s.id
-        WHERE c.user_id = ?
-           OR c.session_id = ?
-           OR s.user_id = ?
-           OR s.id = ?
-        ORDER BY c.updated_at DESC
-        LIMIT 100
-      `)
-      .all(userIdOrSessionId, userIdOrSessionId, userIdOrSessionId, userIdOrSessionId);
-  }
+export function listConversations(userId) {
+  if (!userId) return [];
   return getDatabase()
-    .prepare("SELECT id, title, model, total_tokens, messages, created_at, updated_at FROM conversations ORDER BY updated_at DESC LIMIT 50")
-    .all();
+    .prepare(`
+      SELECT id, title, model, total_tokens, messages, created_at, updated_at
+      FROM conversations
+      WHERE user_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 100
+    `)
+    .all(userId);
 }
 
 // ============================================

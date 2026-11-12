@@ -15,19 +15,55 @@ import {
 } from "../controllers/fileController.js";
 import { LocalBackend } from "../services/backends/localBackend.js";
 import { config } from "../config/env.js";
+import { listWorkspaceSessions, createWorkspaceSession } from "../services/workspaceSessionService.js";
 
 const router = Router();
 
-router.get("/files", requireAuth, listFiles);
-router.get("/file", requireAuth, readFile);
-router.post("/file", requireAuth, writeFile);
-router.delete("/file", requireAuth, deleteFile);
-router.post("/move", requireAuth, moveFile);
-router.post("/folder", requireAuth, createFolder);
-router.post("/exec", requireAuth, execCommand);
+router.get("/sessions", requireAuth, async (req, res) => {
+  try {
+    return res.json({
+      sessions: await listWorkspaceSessions(req.user.id),
+      quotaBytes: config.workspaceQuotaBytes,
+      maxFileBytes: config.workspaceMaxFileBytes,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "WorkspaceRegistryError", message: error.message });
+  }
+});
+
+router.post("/sessions", requireAuth, async (req, res) => {
+  try {
+    return res.status(201).json({ session: await createWorkspaceSession(req.user.id, req.body?.name) });
+  } catch (error) {
+    const status = error.code === "WORKSPACE_SESSION_LIMIT" ? 429 : error.code === "WORKSPACE_BUSY" ? 423 : 400;
+    return res.status(status).json({ error: error.code || "BadRequest", message: error.message });
+  }
+});
+
+router.use(requireAuth, async (req, res, next) => {
+  const workspaceId = req.get("X-Workspace-Id") || "default";
+  if (workspaceId === "default") return next();
+  try {
+    const sessions = await listWorkspaceSessions(req.user.id);
+    if (!sessions.some(session => session.id === workspaceId)) {
+      return res.status(404).json({ error: "WorkspaceNotFound", message: "Workspace does not exist for this account." });
+    }
+    return next();
+  } catch (error) {
+    return res.status(503).json({ error: "WorkspaceRegistryUnavailable", message: "Workspace registry is unavailable." });
+  }
+});
+
+router.get("/files", listFiles);
+router.get("/file", readFile);
+router.post("/file", writeFile);
+router.delete("/file", deleteFile);
+router.post("/move", moveFile);
+router.post("/folder", createFolder);
+router.post("/exec", execCommand);
 
 // Shell Provider Route
-router.get("/terminal/shells", requireAuth, (req, res) => {
+router.get("/terminal/shells", (req, res) => {
   const shells = config.executionRuntime === "docker" ? ["bash", "sh"] : config.executionRuntime === "remote" ? [] : LocalBackend.detectAvailableShells();
   res.json({ shells });
 });

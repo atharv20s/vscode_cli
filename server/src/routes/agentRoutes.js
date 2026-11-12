@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireAuth, optionalAuth } from "../middleware/auth.js";
+import { requireAuth } from "../middleware/auth.js";
 import { agentLimiter } from "../middleware/rateLimiter.js";
 import {
   chatStream,
@@ -19,9 +19,9 @@ router.post("/chat", requireAuth, agentLimiter, chatStream);
 router.get("/models", listModels);
 
 // Conversations CRUD
-router.get("/conversations", optionalAuth, getConversations);
-router.post("/conversations", optionalAuth, createNewConversation);
-router.patch("/conversations/:id", optionalAuth, renameConversation);
-router.delete("/conversations/:id", optionalAuth, removeConversation);
+router.get("/conversations", requireAuth, getConversations);
+router.post("/conversations", requireAuth, createNewConversation);
+router.patch("/conversations/:id", requireAuth, renameConversation);
+router.delete("/conversations/:id", requireAuth, removeConversation);
 
 export default router;

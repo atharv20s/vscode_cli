@@ -48,12 +48,32 @@ jobs:
           cd server
           npm test
 
+  web-build:
+    name: 🌐 Build and Type-check Studio Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+      - name: Set up Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm install --no-audit --no-fund
+      - name: Type-check frontend
+        working-directory: web
+        run: npx tsc --noEmit
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+
   # ============================================================================
   # 2. Build, Push Docker Container & Deploy to Google Cloud Platform
   # ============================================================================
   deploy:
     name: 🚀 Build Docker & Deploy to GCP
-    needs: test
+    needs: [test, web-build]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 

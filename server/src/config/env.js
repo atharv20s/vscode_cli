@@ -49,6 +49,13 @@ export const config = {
   llmContextBudgetTokens: Math.max(4096, parseInt(process.env.LLM_CONTEXT_BUDGET_TOKENS || "48000", 10)),
   llmOutputReserveTokens: Math.max(1024, parseInt(process.env.LLM_OUTPUT_RESERVE_TOKENS || "8192", 10)),
   llmContextSafetyTokens: Math.max(512, parseInt(process.env.LLM_CONTEXT_SAFETY_TOKENS || "2048", 10)),
+  llmDailyBudgetUsd: Math.max(0, Number.parseFloat(process.env.LLM_DAILY_BUDGET_USD || "0") || 0),
+  llmModelPricing: (() => {
+    try {
+      const parsed = JSON.parse(process.env.LLM_MODEL_PRICING_JSON || "{}");
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch { return {}; }
+  })(),
 
   // Tavily Search
   tavilyKey: process.env.TAVILY_API_KEY || "",
@@ -72,6 +79,14 @@ export const config = {
   repoAgentTokenKey: process.env.REPO_AGENT_TOKEN_KEY || "",
   dockerWorkspaceUid: parseInt(process.env.DOCKER_WORKSPACE_UID || "1000", 10),
   dockerWorkspaceGid: parseInt(process.env.DOCKER_WORKSPACE_GID || "1000", 10),
+
+  // Workspace persistence and safety limits. Production should use a durable shared mount.
+  workspaceStorageRoot: process.env.WORKSPACE_STORAGE_ROOT ? path.resolve(process.env.WORKSPACE_STORAGE_ROOT) : "",
+  workspaceQuotaBytes: Math.max(10 * 1024 * 1024, parseInt(process.env.WORKSPACE_QUOTA_BYTES || "268435456", 10)),
+  workspaceMaxFileBytes: Math.max(64 * 1024, parseInt(process.env.WORKSPACE_MAX_FILE_BYTES || "2097152", 10)),
+  workspaceMaxSessionsPerUser: Math.max(1, Math.min(50, parseInt(process.env.WORKSPACE_MAX_SESSIONS_PER_USER || "10", 10))),
+  terminalIdleTtlMs: Math.max(60000, parseInt(process.env.TERMINAL_IDLE_TTL_MS || "1800000", 10)),
+  terminalMaxSessionsPerUser: Math.max(1, Math.min(20, parseInt(process.env.TERMINAL_MAX_SESSIONS_PER_USER || "3", 10))),
 
   // Workspace (where user files are sandboxed)
   workspaceRoot: (() => {
@@ -142,12 +157,20 @@ export function validateConfig() {
     );
   }
 
+  if (config.llmDailyBudgetUsd > 0 && !config.isDev && !config.databaseUrl) {
+    errors.push("LLM_DAILY_BUDGET_USD requires DATABASE_URL in production so spend limits are shared across instances.");
+  }
+
   if (config.llmContextBudgetTokens + config.llmOutputReserveTokens + config.llmContextSafetyTokens >= config.llmContextWindowTokens) {
     errors.push("LLM_CONTEXT_BUDGET_TOKENS + LLM_OUTPUT_RESERVE_TOKENS + LLM_CONTEXT_SAFETY_TOKENS must be smaller than LLM_CONTEXT_WINDOW_TOKENS.");
   }
 
   if (!["disabled", "docker", "remote"].includes(config.executionRuntime)) {
     errors.push("EXECUTION_RUNTIME must be disabled, docker, or remote.");
+  }
+
+  if (!config.isDev && !config.workspaceStorageRoot) {
+    warnings.push("WORKSPACE_STORAGE_ROOT is not set. Cloud workspace data may be lost when the application instance is replaced; configure a durable shared volume before production use.");
   }
 
   if (config.executionRuntime === "remote") {

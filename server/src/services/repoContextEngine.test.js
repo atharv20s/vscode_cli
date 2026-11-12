@@ -70,3 +70,36 @@ test("repository context expands through relative imports and respects a token b
     await fs.rm(root,{recursive:true,force:true});
   }
 });
+
+
+test("Tree-sitter retrieval finds declarations and cross-file call sites", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ath-symbol-index-"));
+  try {
+    await fs.mkdir(path.join(root, "src"), { recursive: true });
+    await fs.writeFile(path.join(root, "src", "sessionService.js"), [
+      "export function rotateAccessToken(userId) {",
+      "  return userId;",
+      "}",
+      "export class SessionManager {}",
+    ].join("\n"));
+    await fs.writeFile(path.join(root, "src", "loginController.js"), [
+      'import { rotateAccessToken } from "./sessionService.js";',
+      "export function login(userId) {",
+      "  return rotateAccessToken(userId);",
+      "}",
+    ].join("\n"));
+
+    const context = await buildRepositoryContext(root, "Fix rotateAccessToken handling in login controller");
+    assert.equal(context.symbolIndex.available, true, context.symbolIndex.reason || "Tree-sitter runtime unavailable");
+    assert.ok(context.symbolIndex.declarations.some(item =>
+      item.name === "rotateAccessToken" && item.path === "src/sessionService.js"
+    ));
+    assert.ok(context.symbolIndex.references.some(item =>
+      item.name === "rotateAccessToken" && item.path === "src/loginController.js"
+    ));
+    assert.ok(context.samples.some(item => item.path === "src/sessionService.js"));
+    assert.match(formatRepositoryContext(context), /Tree-sitter structural symbol matches/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});

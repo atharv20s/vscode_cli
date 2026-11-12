@@ -279,6 +279,7 @@ export async function runAgent({
       tools: tools.length > 0 ? tools : undefined,
       model,
       signal,
+      userId,
       onEvent: (event) => {
         if (signal?.aborted) return;
         switch (event.type) {
