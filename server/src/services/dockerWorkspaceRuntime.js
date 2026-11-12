@@ -20,7 +20,7 @@ class DockerWorkspaceRuntime {
     this.containers = new Map();
   }
 
-  async ensureContainer(workspaceId, workspaceDir) {
+  async ensureContainer(workspaceId, workspaceDir, options = {}) {
     if (config.executionRuntime !== "docker") {
       throw new Error("Docker workspace runtime is disabled. Set EXECUTION_RUNTIME=docker on a worker with Docker Engine access.");
     }
@@ -78,7 +78,7 @@ class DockerWorkspaceRuntime {
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
         "--user", `${uid}:${gid}`,
         "-e", "HOME=/tmp",
-        "--network", config.dockerWorkspaceNetwork,
+        "--network", options.network || config.dockerWorkspaceNetwork,
         "-v", `${workspaceDir}:/workspace:rw`,
         "-w", "/workspace",
         config.dockerImage,
