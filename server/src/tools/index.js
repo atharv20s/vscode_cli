@@ -99,6 +99,10 @@ const TOOL_ALIASES = {
  */
 export async function executeTool(name, args, context = {}) {
   const resolvedName = TOOL_ALIASES[name] || name;
+  if (Array.isArray(context.allowedTools) && !context.allowedTools.includes(resolvedName)) {
+    return { success: false, error: `Tool ${resolvedName} is not enabled for this agent workspace.` };
+  }
+
   const tool = tools.get(resolvedName) || tools.get(name);
   if (!tool) {
     return { success: false, error: `Unknown tool: ${name}` };
