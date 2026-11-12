@@ -15,6 +15,7 @@ import path from "path";
 import { streamChatCompletion } from "./llmService.js";
 import { getToolDefinitions, executeTool } from "../tools/index.js";
 import { logger } from "../config/logger.js";
+import { config } from "../config/env.js";
 import { terminalContextService } from "./terminalContextService.js";
 import { worldStateService } from "./worldStateService.js";
 import { ContextSelector } from "./contextSelector.js";
@@ -81,38 +82,44 @@ function estimateTokens(text) {
  * Prunes large intermediate tool outputs and trims older turns if total context approaches limit.
  * Keeps system prompt and recent turns 100% intact.
  */
-function compactContext(messages, maxTokenBudget = 85000) {
-  let totalEstimated = messages.reduce((acc, m) => {
-    let contentLen = typeof m.content === "string" ? m.content.length : JSON.stringify(m.content || "").length;
-    return acc + Math.ceil(contentLen / 4);
-  }, 0);
+function compactContext(messages, maxTokenBudget = Math.max(4096,
+  (config.llmContextBudgetTokens || 48000) + (config.llmOutputReserveTokens || 8192) + (config.llmContextSafetyTokens || 2048))) {
+  const estimate = value => Math.ceil(String(value || "").length / 3.5);
+  const messageTokens = message => estimate(
+    typeof message.content === "string" ? message.content : JSON.stringify(message.content || "")
+  ) + estimate(message.tool_calls || "");
+  const total = list => list.reduce((sum, message) => sum + messageTokens(message), 0);
+  if (total(messages) <= maxTokenBudget) return messages;
 
-  if (totalEstimated <= maxTokenBudget) {
-    return messages;
-  }
-
-  logger.info(`Context window compaction triggered (${totalEstimated} estimated tokens -> budget: ${maxTokenBudget})`);
-
-  // System prompt is always preserved (index 0)
-  const systemMsg = messages[0];
-  const otherMsgs = messages.slice(1);
-
-  // Compact older tool results first (anything older than the last 6 messages)
-  const cutoffIndex = Math.max(0, otherMsgs.length - 6);
-
-  const compacted = otherMsgs.map((msg, idx) => {
-    if (idx < cutoffIndex && msg.role === "tool" && typeof msg.content === "string" && msg.content.length > 500) {
-      return {
-        ...msg,
-        content: msg.content.slice(0, 300) + `\n... [${msg.content.length - 300} characters omitted for context optimization. Full content stored in database & filesystem]`,
-      };
-    }
-    return msg;
+  logger.info("Context compaction triggered", { estimatedTokens: total(messages), budget: maxTokenBudget });
+  const system = messages[0];
+  const rest = messages.slice(1);
+  const recentStart = Math.max(0, rest.length - 10);
+  const compacted = rest.map((message, index) => {
+    if (index >= recentStart || message.role !== "tool") return message;
+    const content = typeof message.content === "string" ? message.content : JSON.stringify(message.content || "");
+    if (content.length <= 900) return message;
+    const head = content.slice(0, 450);
+    const tail = content.slice(-250);
+    return { ...message, content: head + "\n...[older tool output compacted; retrieve the full file/output again if needed]...\n" + tail };
   });
 
-  return [systemMsg, ...compacted];
+  let result = [system, ...compacted];
+  // If still above budget, replace older conversational turns with explicit
+  // omission markers. Keep the system prompt and the newest tool-call cycle.
+  for (let index = 0; total(result) > maxTokenBudget && index < Math.max(0, result.length - 10); index++) {
+    const message = result[index + 1];
+    if (!message || message.role === "system" || message.role === "tool") continue;
+    if (message.role === "assistant" && message.tool_calls) continue;
+    const originalTokens = messageTokens(message);
+    if (originalTokens < 300) continue;
+    result[index + 1] = {
+      role: message.role,
+      content: "[Earlier conversation turn compacted (" + originalTokens + " estimated tokens). Its durable decisions should be retrieved from session memory if needed.]",
+    };
+  }
+  return result;
 }
-
 /**
  * Run the autonomous agent loop.
  *
