@@ -13,6 +13,7 @@ import { logger } from "../config/logger.js";
 import { config } from "../config/env.js";
 import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 import { killProcessTree } from "./processSupervisor.js";
+import { startRemotePreview, stopRemotePreview } from "./remoteExecutionWorker.js";
 
 /** Regex patterns for detecting localhost URLs and assigned ports */
 const URL_PATTERNS = [
@@ -57,13 +58,44 @@ class PreviewService {
     port = null,
     shell = "powershell",
     timeout = 30000,
+    workspaceDir = null,
+    previewToken = null,
   } = {}) {
-    if (!config.isDev) {
-      throw new Error("Live preview must be proxied from the isolated workspace container; host-process previews are disabled in production.");
+    if (!config.isDev && config.executionRuntime !== "remote") {
+      throw new Error("Live preview requires the isolated remote workspace runtime in production.");
     }
 
-    // 1. Stop any currently active preview server
     await this.stopPreview();
+
+    if (config.executionRuntime === "remote") {
+      if (!workspaceDir || !previewToken || !config.previewPublicUrl) {
+        throw new Error("Remote preview requires PREVIEW_PUBLIC_URL on a separate preview origin and a workspace capability token.");
+      }
+      const previewPort = Number(port) || 3000;
+      this.workspaceDir = workspaceDir;
+      this.previewToken = previewToken;
+      this.state = { status: "starting", command, cwd, port: previewPort, url: null, pid: null, startedAt: Date.now(), error: null };
+      eventBus.publish(EVENT_TOPICS.PREVIEW_STARTED, { command, cwd, timestamp: this.state.startedAt }, {
+        workspaceId: this.workspaceId, source: "preview", actor: "agent",
+      });
+      try {
+        const result = await startRemotePreview({ workspaceId: this.workspaceId, workspaceDir, cwd, command, port: previewPort });
+        const url = config.previewPublicUrl.replace(/\/$/, "") + "/preview/" + previewToken + "/";
+        this.remotePreview = true;
+        this.state = { status: "running", command, cwd, port: result.port, url, pid: result.pid || null, startedAt: this.state.startedAt, error: null };
+        eventBus.publish(EVENT_TOPICS.PREVIEW_READY, { url, port: result.port, pid: result.pid || null, command }, {
+          workspaceId: this.workspaceId, source: "preview", actor: "agent",
+        });
+        return { success: true, url, port: result.port, pid: result.pid || null };
+      } catch (error) {
+        this.state.status = "failed";
+        this.state.error = error.message;
+        eventBus.publish(EVENT_TOPICS.PREVIEW_FAILED, { error: error.message }, {
+          workspaceId: this.workspaceId, source: "preview", actor: "agent",
+        });
+        throw error;
+      }
+    }
 
     this.state = {
       status: "starting",
@@ -228,6 +260,20 @@ class PreviewService {
    * @returns {Promise<boolean>}
    */
   async stopPreview() {
+    if (this.remotePreview && this.state.port) {
+      try { await stopRemotePreview({ workspaceId: this.workspaceId, port: this.state.port }); }
+      catch (error) { logger.warn("Remote preview stop notice", { workspaceId: this.workspaceId, error: error.message }); }
+      this.remotePreview = false;
+      const wasRunning = this.state.status !== "stopped";
+      this.state.status = "stopped";
+      this.state.url = null;
+      this.state.port = null;
+      this.state.pid = null;
+      if (wasRunning) eventBus.publish(EVENT_TOPICS.PREVIEW_STOPPED, { timestamp: Date.now() }, {
+        workspaceId: this.workspaceId, source: "preview", actor: "system",
+      });
+      return true;
+    }
     if (this.state.pid) {
       logger.info(`PreviewService: Stopping preview process tree (PID: ${this.state.pid})`);
       await killProcessTree(this.state.pid);
@@ -270,6 +316,8 @@ class PreviewService {
       command: this.state.command,
       cwd: this.state.cwd,
       port: this.state.port,
+      workspaceDir: this.workspaceDir,
+      previewToken: this.previewToken,
     });
   }
 

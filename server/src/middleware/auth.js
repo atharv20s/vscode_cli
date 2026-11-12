@@ -121,11 +121,11 @@ export function optionalAuth(req, res, next) {
  * Issue a short-lived, preview-only capability token. It cannot authenticate API
  * requests or open a WebSocket; it only grants read access to one workspace.
  */
-export function generatePreviewToken(userId, workspaceId) {
+export function generatePreviewToken(userId, workspaceId, port = null) {
   return jwt.sign(
-    { sub: userId, workspaceId, purpose: "workspace-preview" },
+    { sub: userId, workspaceId, port: Number.isInteger(Number(port)) ? Number(port) : null, purpose: "workspace-preview" },
     config.jwtSecret,
-    { expiresIn: "15m", audience: "ath-ide-preview" }
+    { expiresIn: "24h", audience: "ath-ide-preview" }
   );
 }
 
@@ -133,16 +133,27 @@ export function generatePreviewToken(userId, workspaceId) {
  * Authenticate /preview/:token/* requests and retain the token in the URL path
  * so relative CSS, JS, and image assets inherit the same preview capability.
  */
+export function verifyPreviewToken(token) {
+  try {
+    const decoded = jwt.verify(token, config.jwtSecret, { audience: "ath-ide-preview" });
+    if (decoded.purpose !== "workspace-preview" || !decoded.sub || !decoded.workspaceId) return null;
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
 export function previewAuth(req, res, next) {
   const [token, ...segments] = req.path.split("/").filter(Boolean);
   if (!token) return res.status(401).json({ error: "PreviewTokenRequired" });
   try {
-    const decoded = jwt.verify(token, config.jwtSecret, { audience: "ath-ide-preview" });
-    if (decoded.purpose !== "workspace-preview" || !decoded.sub || !decoded.workspaceId) {
-      return res.status(401).json({ error: "InvalidPreviewToken" });
-    }
+    const decoded = verifyPreviewToken(token);
+    if (!decoded) return res.status(401).json({ error: "InvalidPreviewToken" });
     req.user = { id: decoded.sub };
     req.previewWorkspaceId = decoded.workspaceId;
+    req.previewPort = Number.isInteger(decoded.port) && decoded.port >= 1024 && decoded.port <= 65535
+      ? decoded.port
+      : null;
     req.previewPath = segments.map(segment => decodeURIComponent(segment)).join("/") || "index.html";
     next();
   } catch {

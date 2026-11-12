@@ -264,7 +264,7 @@ export async function runAgent({
       data: { turn: iteration, maxTurns: maxIterations, turnId: currentTurnId },
     });
 
-    const toolContext = { workspaceDir, workspaceId, userId, sessionId, turnId: currentTurnId, signal, workspaceService, allowedTools };
+    const toolContext = { workspaceDir, workspaceId, workspaceKey: workspaceService?.workspaceKey || null, userId, sessionId, turnId: currentTurnId, signal, workspaceService, allowedTools };
 
     let textContent = "";
     let pendingToolCalls = [];

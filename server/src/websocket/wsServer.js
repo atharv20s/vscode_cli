@@ -8,7 +8,7 @@
 import path from "path";
 import crypto from "crypto";
 import { WebSocketServer } from "ws";
-import { verifyToken } from "../middleware/auth.js";
+import { verifyToken, generatePreviewToken } from "../middleware/auth.js";
 import { runAgent } from "../services/agentService.js";
 import { config } from "../config/env.js";
 import { getWorkspaceService } from "../services/workspaceService.js";
@@ -22,6 +22,7 @@ import {
   disconnectIdle,
 } from "./connectionManager.js";
 import { executionService } from "../services/executionService.js";
+import { connectRemoteTerminal } from "../services/remoteTerminalClient.js";
 import { getPreviewService } from "../services/previewService.js";
 import { permissionEngine } from "../services/permissionEngine.js";
 import { LocalBackend } from "../services/backends/localBackend.js";
@@ -180,6 +181,7 @@ export function initWebSocketServer(httpServer) {
       ws.close(4003, "Invalid workspace");
       return;
     }
+    ws.workspaceKey = requestedWorkspace;
     ws.workspaceId = ws.workspaceService.workspaceId;
     const requestedTerminalId = url.searchParams.get("terminalSessionId") || "";
     ws.terminalSessionId = /^[a-f0-9-]{36}$/i.test(requestedTerminalId) ? requestedTerminalId : crypto.randomUUID();
@@ -212,12 +214,14 @@ export function initWebSocketServer(httpServer) {
 
     ws.on("close", () => {
       executionService.detachInteractive(ws.terminalSessionId, ws);
+      try { ws.remoteTerminal?.close(); } catch {}
       removeConnection(ws);
     });
 
     ws.on("error", (err) => {
       logger.error("WebSocket error", { error: err.message });
       executionService.detachInteractive(ws.terminalSessionId, ws);
+      try { ws.remoteTerminal?.close(); } catch {}
       removeConnection(ws);
     });
 
@@ -294,9 +298,19 @@ async function handleMessage(ws, msg, user) {
 
     // Live Application Preview Controls
     case "preview.start":
-    case "preview_start":
-      await ws.previewService.startPreview({ ...payload, cwd: ws.workspaceService.workspaceRoot });
+    case "preview_start": {
+      const command = payload?.command || "npm run dev";
+      const port = Number(payload?.port) || (/\b(vite|astro)\b/i.test(command) ? (/\bastro\b/i.test(command) ? 4321 : 5173) : /\b(uvicorn|fastapi|http\.server)\b/i.test(command) ? 8000 : 3000);
+      await ws.previewService.startPreview({
+        ...payload,
+        command,
+        port,
+        cwd: ws.workspaceService.workspaceRoot,
+        workspaceDir: ws.workspaceService.workspaceRoot,
+        previewToken: ws.userId && ws.workspaceKey ? generatePreviewToken(ws.userId, ws.workspaceKey, port) : null,
+      });
       break;
+    }
 
     case "preview.stop":
     case "preview_stop":
@@ -326,15 +340,46 @@ async function handleMessage(ws, msg, user) {
     // Terminal Session Lifecycle
     case "terminal_init":
     case "terminal.init":
-      await executionService.spawnInteractiveSession(ws.terminalSessionId, {
-        shellType: payload?.shell || "bash",
-        cols: payload?.cols || 80,
-        rows: payload?.rows || 24,
-        workspaceDir: ws.workspaceService.workspaceRoot,
-        workspaceId: ws.workspaceId,
-        userId: ws.userId,
-        ws,
-      });
+      if (config.executionRuntime === "remote") {
+        try { ws.remoteTerminal?.close(); } catch {}
+        const remote = await connectRemoteTerminal({
+          workspaceId: ws.workspaceId,
+          workspaceDir: ws.workspaceService.workspaceRoot,
+          terminalSessionId: ws.terminalSessionId,
+          cols: payload?.cols || 80,
+          rows: payload?.rows || 24,
+        });
+        ws.remoteTerminal = remote;
+        remote.on("message", raw => {
+          let event;
+          try { event = JSON.parse(raw.toString("utf8")); } catch { return; }
+          if (event?.type && event?.payload) sendMessage(ws, event.type, event.payload);
+        });
+        remote.on("close", (code, reason) => {
+          if (ws.remoteTerminal === remote) ws.remoteTerminal = null;
+          if (ws.readyState === 1) sendMessage(ws, "terminal.state", {
+            sessionId: ws.terminalSessionId,
+            state: "disconnected",
+            code,
+            reason: reason?.toString?.() || "",
+            reconnectable: true,
+          });
+        });
+        remote.on("error", error => {
+          logger.warn("Remote terminal tunnel error", { error: error.message });
+          if (ws.readyState === 1) sendMessage(ws, "error", { message: "Remote terminal connection failed: " + error.message });
+        });
+      } else {
+        await executionService.spawnInteractiveSession(ws.terminalSessionId, {
+          shellType: payload?.shell || "bash",
+          cols: payload?.cols || 80,
+          rows: payload?.rows || 24,
+          workspaceDir: ws.workspaceService.workspaceRoot,
+          workspaceId: ws.workspaceId,
+          userId: ws.userId,
+          ws,
+        });
+      }
       break;
 
     // Raw Keystroke Input
@@ -347,7 +392,11 @@ async function handleMessage(ws, msg, user) {
         source: "ui",
         actor: "user",
       });
-      executionService.writeInteractive(ws.terminalSessionId, payload?.data ?? payload?.command ?? "", ws.userId, ws.workspaceId);
+      if (ws.remoteTerminal?.readyState === 1) {
+        ws.remoteTerminal.send(JSON.stringify({ type: "terminal.input", payload: { data: payload?.data ?? payload?.command ?? "" } }));
+      } else {
+        executionService.writeInteractive(ws.terminalSessionId, payload?.data ?? payload?.command ?? "", ws.userId, ws.workspaceId);
+      }
       break;
 
     // Submitted Command (Enter pressed)
@@ -373,7 +422,11 @@ async function handleMessage(ws, msg, user) {
         source: "ui",
         actor: "user",
       });
-      executionService.writeInteractive(ws.terminalSessionId, payload?.text || "", ws.userId, ws.workspaceId);
+      if (ws.remoteTerminal?.readyState === 1) {
+        ws.remoteTerminal.send(JSON.stringify({ type: "terminal.paste", payload: { text: payload?.text || "" } }));
+      } else {
+        executionService.writeInteractive(ws.terminalSessionId, payload?.text || "", ws.userId, ws.workspaceId);
+      }
       break;
 
     // Terminal Dimensions Resize
@@ -387,7 +440,11 @@ async function handleMessage(ws, msg, user) {
         source: "ui",
         actor: "user",
       });
-      executionService.resizeInteractive(ws.terminalSessionId, payload?.cols, payload?.rows, ws.userId, ws.workspaceId);
+      if (ws.remoteTerminal?.readyState === 1) {
+        ws.remoteTerminal.send(JSON.stringify({ type: "terminal.resize", payload: { cols: payload?.cols, rows: payload?.rows } }));
+      } else {
+        executionService.resizeInteractive(ws.terminalSessionId, payload?.cols, payload?.rows, ws.userId, ws.workspaceId);
+      }
       break;
 
     default:
@@ -441,6 +498,8 @@ async function handleChat(ws, payload, user) {
       systemPrompt: systemPrompt || undefined,
       workspaceDir: ws.workspaceService.workspaceRoot,
       workspaceId: ws.workspaceId,
+      workspaceKey: ws.workspaceKey,
+      workspaceService: ws.workspaceService,
       userId: ws.userId,
       sessionId,
       signal: abortController.signal,

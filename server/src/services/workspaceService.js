@@ -531,10 +531,13 @@ export function getWorkspaceService(userId, workspaceKey = "default") {
   if (!workspaceServices.has(cacheKey)) {
     fs.mkdirSync(root, { recursive: true, mode: 0o700 });
     try { fs.chmodSync(root, 0o700); } catch {}
-    workspaceServices.set(cacheKey, new WorkspaceService(root, cacheKey, {
+    const service = new WorkspaceService(root, cacheKey, {
       quotaRoot: ownerRoot,
       lockRoot: path.join(ownerRoot, ".ath-locks"),
-    }));
+    });
+    service.workspaceKey = workspaceKey;
+    service.ownerKey = ownerKey;
+    workspaceServices.set(cacheKey, service);
   }
   return workspaceServices.get(cacheKey);
 }

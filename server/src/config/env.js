@@ -18,11 +18,13 @@ export const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   isDev: (process.env.NODE_ENV || "development") === "development",
   publicUrl: process.env.PUBLIC_URL || "",
+  previewPublicUrl: (process.env.PREVIEW_PUBLIC_URL || "").replace(/\/$/, ""),
   logLevel: process.env.LOG_LEVEL || "info",
 
   // Database (PostgreSQL / Neon / Supabase or SQLite fallback)
   databaseUrl: process.env.DATABASE_URL || "",
   redisUrl: process.env.REDIS_URL || "",
+  requireDistributedEvents: (process.env.REQUIRE_DISTRIBUTED_EVENTS || "false").toLowerCase() === "true",
 
   // LLM Providers and explicit quality tiers
   defaultLlmProvider: (process.env.DEFAULT_LLM_PROVIDER || (process.env.OPENROUTER_API_KEY ? "openrouter" : process.env.MISTRAL_API_KEY ? "mistral" : "openai")).toLowerCase(),
@@ -74,7 +76,7 @@ export const config = {
   workerSharedSecret: process.env.WORKER_SHARED_SECRET || "",
   dockerBinary: process.env.DOCKER_BIN || "docker",
   dockerImage: process.env.DOCKER_WORKSPACE_IMAGE || "ath-ide-workspace:local",
-  dockerWorkspaceNetwork: process.env.DOCKER_WORKSPACE_NETWORK || "none",
+  dockerWorkspaceNetwork: process.env.DOCKER_WORKSPACE_NETWORK || "ath-ide-internal",
   repoAgentNetwork: process.env.REPO_AGENT_NETWORK || "none",
   repoAgentTokenKey: process.env.REPO_AGENT_TOKEN_KEY || "",
   dockerWorkspaceUid: parseInt(process.env.DOCKER_WORKSPACE_UID || "1000", 10),
@@ -131,6 +133,14 @@ export function validateConfig() {
   const warnings = [];
   const errors = [];
 
+  if (config.executionRuntime === "remote" && !config.previewPublicUrl) {
+    warnings.push("PREVIEW_PUBLIC_URL is not set; remote previews are disabled until a separate preview origin is configured.");
+  }
+
+  if (config.requireDistributedEvents && !config.redisUrl) {
+    errors.push("REDIS_URL is required when REQUIRE_DISTRIBUTED_EVENTS=true.");
+  }
+
   if (!config.openrouterKey && !config.openaiKey && !config.mistralKey) {
     warnings.push(
       "No LLM API key found. Set OPENROUTER_API_KEY, MISTRAL_API_KEY or OPENAI_API_KEY in your .env file."
@@ -179,8 +189,8 @@ export function validateConfig() {
     if (config.workerSharedSecret.length < 32) errors.push("WORKER_SHARED_SECRET must contain at least 32 characters when EXECUTION_RUNTIME=remote.");
   }
 
-  if (!["none", "bridge"].includes(config.dockerWorkspaceNetwork)) {
-    errors.push("DOCKER_WORKSPACE_NETWORK must be none or bridge.");
+  if (!["none", "bridge"].includes(config.dockerWorkspaceNetwork) && !/^[a-z0-9][a-z0-9_.-]{0,62}$/.test(config.dockerWorkspaceNetwork)) {
+    errors.push("DOCKER_WORKSPACE_NETWORK must be none, bridge, or a valid Docker network name.");
   }
   if (!["none", "bridge"].includes(config.repoAgentNetwork)) {
     errors.push("REPO_AGENT_NETWORK must be none or bridge.");
