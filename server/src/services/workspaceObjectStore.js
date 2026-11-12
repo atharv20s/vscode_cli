@@ -14,7 +14,12 @@ function objectStoreConfig() {
   const secretKey = process.env.WORKSPACE_OBJECT_STORE_SECRET_ACCESS_KEY || "";
   const region = process.env.WORKSPACE_OBJECT_STORE_REGION || "us-east-1";
   const endpoint = process.env.WORKSPACE_OBJECT_STORE_ENDPOINT || `https://s3.${region}.amazonaws.com`;
-  if (!bucket || !accessKey || !secretKey) {\n    if ((process.env.WORKSPACE_OBJECT_STORE_REQUIRED || "false").toLowerCase() === "true") {\n      throw new Error("Workspace object storage is required but bucket credentials are incomplete.");\n    }\n    return null;\n  }
+  if (!bucket || !accessKey || !secretKey) {
+    if ((process.env.WORKSPACE_OBJECT_STORE_REQUIRED || "false").toLowerCase() === "true") {
+      throw new Error("Workspace object storage is required but bucket credentials are incomplete.");
+    }
+    return null;
+  }
   const base = new URL(endpoint);
   if (base.protocol !== "https:") throw new Error("Workspace object storage endpoint must use HTTPS.");
   return { bucket, accessKey, secretKey, region, base };
