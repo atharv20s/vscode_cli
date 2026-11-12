@@ -769,7 +769,8 @@ class App {
 
         try {
           // If already logged in, link to existing account
-          const endpoint = this.token ? "/api/auth/connect-github" : "/api/auth/token-login";
+          const registeredUser = Boolean(this.token && this.currentUser && !this.currentUser.isGuest);
+          const endpoint = registeredUser ? "/api/auth/connect-github" : "/api/auth/token-login";
           const headers = {
             "Content-Type": "application/json",
             ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
@@ -778,7 +779,10 @@ class App {
           const res = await fetch(endpoint, {
             method: "POST",
             headers,
-            body: JSON.stringify({ token: tokenVal }),
+            body: JSON.stringify({
+              token: tokenVal,
+              guestId: localStorage.getItem("ath_guest_id") || undefined,
+            }),
           });
 
           const data = await res.json();
