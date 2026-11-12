@@ -32,6 +32,7 @@ router.use(requireAuth);
 router.get("/repos", listRepos);
 router.get("/repos/:owner/:repo/tree", getRepoTree);
 router.get("/agent-tasks", getRepositoryAgentTasks);
+router.get("/worker-pool", getRepositoryAgentWorkerPool);
 router.post("/agent-tasks/:taskId/shares", createTaskShare);
 router.get("/agent-tasks/:taskId/shares", listTaskShares);
 router.delete("/shares/:shareId", revokeTaskShare);
