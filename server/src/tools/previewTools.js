@@ -11,6 +11,19 @@ import { getWorkspaceServiceForContext } from "../services/workspaceService.js";
 import { generatePreviewToken } from "../middleware/auth.js";
 import { config } from "../config/env.js";
 
+function inferPreviewPort(command, explicitPort) {
+  if (Number.isInteger(Number(explicitPort)) && Number(explicitPort) >= 1024 && Number(explicitPort) <= 65535) {
+    return Number(explicitPort);
+  }
+  const text = String(command || "").toLowerCase();
+  const explicit = text.match(/(?:--port(?:=|\\s+)|\\s-p\\s+|port=)(\\d{2,5})/);
+  if (explicit) return Number(explicit[1]);
+  if (/\\b(vite|astro)\\b/.test(text)) return /\\bastro\\b/.test(text) ? 4321 : 5173;
+  if (/\\b(uvicorn|fastapi|http\\.server)\\b/.test(text)) return 8000;
+  if (/\\b(flask)\\b/.test(text)) return 5000;
+  return 3000;
+}
+
 export function registerPreviewTools() {
   // 1. start_preview
   registerTool(
@@ -49,12 +62,14 @@ export function registerPreviewTools() {
       const cwd = target.resolved;
 
       try {
+        const command = args.command || "npm run dev";
+        const port = inferPreviewPort(command, args.port);
         const result = await previewService.startPreview({
-          command: args.command || "npm run dev",
+          command,
           cwd,
-          port: args.port || null,
+          port,
           workspaceDir: baseDir,
-          previewToken: ctx.userId && ctx.workspaceKey ? generatePreviewToken(ctx.userId, ctx.workspaceKey) : null,
+          previewToken: ctx.userId && ctx.workspaceKey ? generatePreviewToken(ctx.userId, ctx.workspaceKey, port) : null,
         });
 
         if (result.success) {
