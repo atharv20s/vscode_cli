@@ -10,6 +10,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { config } from "../config/env.js";
+import { resolveSafeWorkspacePath } from "./workspacePathSafety.js";
 
 const MAX_FILES = 4000;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -84,13 +85,11 @@ export async function applyWorkspaceFiles(root, returnedFiles) {
   const previous = await collectWorkspaceFiles(root);
   for (const file of previous) {
     if (next.has(file.path)) continue;
-    const target = path.resolve(root, ...file.path.split("/"));
-    if (!target.startsWith(root + path.sep)) throw new Error("Refusing to remove a path outside the workspace.");
+    const target = await resolveSafeWorkspacePath(root, file.path);
     await fs.promises.rm(target, { force: true });
   }
   for (const [relative, bytes] of next) {
-    const target = path.resolve(root, ...relative.split("/"));
-    if (!target.startsWith(root + path.sep)) throw new Error("Refusing to write outside the workspace.");
+    const target = await resolveSafeWorkspacePath(root, relative);
     const current = await fs.promises.readFile(target).catch(error => {
       if (error.code === "ENOENT") return null;
       throw error;
