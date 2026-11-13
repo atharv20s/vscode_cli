@@ -212,7 +212,7 @@ def get_system_prompt(persona: str = "default") -> str:
         - terminal: Shell and CLI expert
         - concise: Extremely brief responses
     """
-    return SYSTEM_PROMPTS.get(persona, SYSTEM_PROMPTS["default"]) + "\\n\\n" + SECURITY_BASELINE
+    return SYSTEM_PROMPTS.get(persona, SYSTEM_PROMPTS["default"]) + "\n\n" + SECURITY_BASELINE
 
 
 def list_personas() -> list[str]:
