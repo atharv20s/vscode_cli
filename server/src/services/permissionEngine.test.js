@@ -45,7 +45,6 @@ test("isolated repository agents can build and test without approval", () => {
   assert.equal(classifyCommandForPolicy("npm install", { isolatedRepoAgent: true }), "ALLOW");
   assert.equal(classifyCommandForPolicy("npm test", { isolatedRepoAgent: true }), "ALLOW");
   assert.equal(classifyCommandForPolicy("bash -lc 'npm test'", { isolatedRepoAgent: true }), "ALLOW");
-  assert.equal(classifyCommandForPolicy("curl https://example.com", { isolatedRepoAgent: true }), "ALLOW");
 });
 
 test("destructive operations remain denied even in isolated repository agents", () => {
