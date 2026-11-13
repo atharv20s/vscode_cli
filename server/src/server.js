@@ -38,6 +38,7 @@ import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import authRoutes from "./routes/authRoutes.js";
 import agentRoutes from "./routes/agentRoutes.js";
 import workspaceRoutes from "./routes/workspaceRoutes.js";
+import workspaceCollaborationRoutes from "./routes/workspaceCollaborationRoutes.js";
 import githubRoutes from "./routes/githubRoutes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -186,6 +187,7 @@ app.get("/api/test-llm", requireAuth, agentLimiter, async (req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/agent", agentRoutes);
+app.use("/api/workspace/collaboration", workspaceCollaborationRoutes);
 app.use("/api/workspace", workspaceRoutes);
 app.use("/api/github", githubRoutes);
 
