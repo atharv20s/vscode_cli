@@ -55,7 +55,7 @@ export function registerVerificationTools() {
     const paths = (tree.entries || []).map(item => item.name).filter(Boolean);
     let checks = detectVerificationCommands(manifest, paths);
     if (args.checks?.length) checks = checks.filter(item => args.checks.includes(item.name));
-    if (!checks.length) return {
+    if (!checks.length && !args.browser_url) return {
       success: false,
       output: "No supported verification scripts or standard test manifests were detected. Inspect the project and run documented checks manually; absence of checks is not a pass.",
       checks: [],
@@ -86,7 +86,7 @@ export function registerVerificationTools() {
         allowedTools: null,
       });
     }
-    const verified = results.length === checks.length && results.every(item => item.success) &&
+    const checksPassed = checks.length === 0 ? Boolean(args.browser_url) : results.length === checks.length && results.every(item => item.success);\n    const verified = checksPassed &&
       (!args.browser_url || browserResult?.success === true);
     const output = results.map(item => (item.success ? "PASS " : "FAIL ") + item.name + ": " + item.command + "\n" + item.output).join("\n\n");
     return {
