@@ -70,7 +70,15 @@ export function registerBrowserVerificationTool() {
     let browser;
     try {
       browser = await chromium.launch({ headless:true, args:["--no-sandbox","--disable-dev-shm-usage"] });
-      const page = await browser.newPage({ viewport:{width:1440,height:900} });\n      // Keep redirects and subresources on the approved origin to prevent the\n      // browser from becoming an SSRF bridge to metadata or private services.\n      await page.route("**/*", route => {\n        let target;\n        try { target = new URL(route.request().url()); } catch { return route.abort(); }\n        if (target.origin !== url.origin && !["data:","blob:"].includes(target.protocol)) return route.abort();\n        return route.continue();\n      });
+      const page = await browser.newPage({ viewport:{width:1440,height:900} });
+      // Keep redirects and subresources on the approved origin to prevent the
+      // browser from becoming an SSRF bridge to metadata or private services.
+      await page.route("**/*", route => {
+        let target;
+        try { target = new URL(route.request().url()); } catch { return route.abort(); }
+        if (target.origin !== url.origin && !["data:","blob:"].includes(target.protocol)) return route.abort();
+        return route.continue();
+      });
       const consoleErrors = [];
       const pageErrors = [];
       page.on("console", message => { if (message.type()==="error") consoleErrors.push(message.text().slice(0,1000)); });
