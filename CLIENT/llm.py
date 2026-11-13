@@ -32,7 +32,7 @@ class LLMClient:
         # Resolve model and provider
         self._resolved_model: str = self._settings.model
         self._resolved_base_url: str = self._settings.api_base_url
-        self._resolved_api_key: str = self._settings.api_key or "ollama"
+        self._resolved_api_key: str = self._settings.api_key
         self._supports_tools: bool = True
         
         if model:
