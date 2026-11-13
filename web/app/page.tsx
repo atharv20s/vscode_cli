@@ -33,6 +33,7 @@ export default function Home() {
   const [fileVersion, setFileVersion] = useState<string | null>(null);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [model, setModel] = useState("devstral");
+  const [mode, setMode] = useState<"ask" | "plan" | "edit" | "agent" | "debug" | "review">("agent");
   const [conversations, setConversations] = useState<ConversationOption[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "Welcome to ATH IDE. Chat, file editing, model discovery, workspace sessions and your terminal connect to the backend." }]);
@@ -235,9 +236,16 @@ export default function Home() {
     setBusy(true);
     setMessages(prev => [...prev, { role: "user", content: message }, { role: "assistant", content: "", activity: ["Request sent to the agent API"] }]);
     try {
+      const safeEditorContext = activeFile &&
+        !/(^|\/)(\.env(?:\.|$)|\.npmrc|\.netrc|credentials?|secrets?|[^/]+\.(?:pem|key|p12|pfx|kubeconfig))$/i.test(activeFile)
+        ? { activeFile, language: languageFor(activeFile), content: fileContent.slice(0, 12000) }
+        : undefined;
       const response = await api.fetchWithAuth("/api/agent/chat", {
         method: "POST",
-        body: JSON.stringify({ message, model, conversationId }),
+        body: JSON.stringify({
+          message, model, conversationId, mode,
+          context: safeEditorContext ? { editor: safeEditorContext } : undefined,
+        }),
       });
       if (!response.ok || !response.body) {
         const body = await response.json().catch(() => ({}));
@@ -254,7 +262,9 @@ export default function Home() {
           let event: any;
           try { event = JSON.parse(text); } catch { continue; }
           const data = event.data || {};
-          if (event.type === "conversation_started" && data.conversationId) {
+          if (event.type === "agent_mode") {
+            setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, activity: [...(item.activity || []), "Mode: " + (data.mode || mode)].slice(-16) } : item));
+          } else if (event.type === "conversation_started" && data.conversationId) {
             setConversationId(data.conversationId);
           } else if (event.type === "conversation_updated" && data.conversationId) {
             setConversationId(data.conversationId);
@@ -387,7 +397,21 @@ export default function Home() {
             </div>
             <form onSubmit={sendPrompt} className="p-3 border-t border-slate-800">
               <textarea value={prompt} onChange={event => setPrompt(event.target.value)} placeholder="Ask ATH to inspect, build, debug or modify this workspace…" className="w-full h-24 resize-none bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs outline-none focus:border-indigo-500"/>
-              <div className="flex items-center justify-between mt-2"><span className="text-[10px] text-slate-600">{configuredModels.length} configured models</span><button disabled={busy || !prompt.trim()} className="flex items-center gap-2 px-3 py-2 rounded bg-indigo-600 disabled:opacity-40 text-xs"><Send size={13}/>{busy ? "Working…" : "Send"}</button></div>
+              <div className="flex items-center justify-between gap-2 mt-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <select aria-label="Agent mode" value={mode} onChange={event => setMode(event.target.value as typeof mode)} disabled={busy}
+                    className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-[11px] text-slate-200">
+                    <option value="ask">Ask · read only</option>
+                    <option value="plan">Plan · inspect first</option>
+                    <option value="edit">Edit · focused changes</option>
+                    <option value="agent">Agent · autonomous</option>
+                    <option value="debug">Debug · reproduce and fix</option>
+                    <option value="review">Review · read only</option>
+                  </select>
+                  <span className="text-[10px] text-slate-600 truncate">{configuredModels.length} models</span>
+                </div>
+                <button disabled={busy || !prompt.trim()} className="flex items-center gap-2 px-3 py-2 rounded bg-indigo-600 disabled:opacity-40 text-xs"><Send size={13}/>{busy ? "Working…" : "Send"}</button>
+              </div>
             </form>
           </> : <>
             <div className="p-3 border-b border-slate-800">
