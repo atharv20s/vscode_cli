@@ -38,7 +38,7 @@ function getSslConfig(connectionString) {
     connectionString.includes("supabase.co") ||
     connectionString.includes("ssl=true")
   ) {
-    return { rejectUnauthorized: false };
+    return { rejectUnauthorized: true };
   }
   return false;
 }
@@ -67,13 +67,11 @@ export async function migrateSqliteToPostgres({
   console.log("Timestamp:", new Date().toISOString());
 
   if (!fs.existsSync(sqlitePath)) {
-    console.log(`SQLite database not found at path: ${sqlitePath}. Nothing to migrate.`);
-    return { success: true, migrated: 0 };
+    throw new Error(`SQLite source database not found at path: ${sqlitePath}. Refusing to report a skipped migration as successful.`);
   }
 
   if (!Database) {
-    console.log("better-sqlite3 is not compiled in this environment. Run data migration on the deployment host where SQLite is active.");
-    return { success: true, deferred: true };
+    throw new Error("better-sqlite3 native bindings are unavailable. Run the migration in the source database environment; no migration was performed.");
   }
 
   if (!postgresUrl) {
@@ -97,8 +95,11 @@ export async function migrateSqliteToPostgres({
   await pgClient.connect();
 
   const report = {};
+  let transactionOpen = false;
 
   try {
+    await pgClient.query("BEGIN");
+    transactionOpen = true;
     // 4. Migrate Users
     console.log("\n[Step 4] Migrating 'users' table...");
     const users = sqlite.prepare("SELECT * FROM users").all();
@@ -254,14 +255,15 @@ export async function migrateSqliteToPostgres({
       const evidenceJson = JSON.stringify(safeJson(r.evidence_json || r.evidence, {}));
       if (!dryRun) {
         await pgClient.query(
-          `INSERT INTO repo_agent_context_rounds (task_id, round_number, agent_role, status, input_summary, output_summary, evidence, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, COALESCE($8::timestamptz, CURRENT_TIMESTAMP))
+          `INSERT INTO repo_agent_context_rounds (id, task_id, round_number, agent_role, status, input_summary, output_summary, evidence, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, COALESCE($9::timestamptz, CURRENT_TIMESTAMP))
            ON CONFLICT (task_id, round_number, agent_role) DO UPDATE SET
              status = EXCLUDED.status,
              input_summary = EXCLUDED.input_summary,
              output_summary = EXCLUDED.output_summary,
              evidence = EXCLUDED.evidence;`,
           [
+            r.id,
             r.task_id,
             r.round_number,
             r.agent_role,
@@ -341,16 +343,93 @@ export async function migrateSqliteToPostgres({
       report.llm_daily_usage.migrated++;
     }
 
-    // 11. Reconcile Postgres Counts
-    console.log("\n[Step 11] Running reconciliation verification queries on PostgreSQL...");
+    // 11. Migrate every remaining application table present in the SQLite source.
+    // The explicit migrations above handle tables whose schemas need custom transforms.
+    // This covers the remaining schema-compatible tables and fails closed for unknown tables.
+    const explicitlyMigrated = new Set(Object.keys(report));
+    const sqliteTables = sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    ).all().map(row => row.name);
+
+    for (const table of sqliteTables) {
+      if (table === "schema_migrations" || explicitlyMigrated.has(table)) continue;
+      if (!/^[a-z_][a-z0-9_]*$/.test(table)) {
+        throw new Error(`Unsafe or unsupported SQLite table name: ${table}`);
+      }
+
+      const targetColumnsResult = await pgClient.query(
+        "SELECT column_name, data_type, udt_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position",
+        [table]
+      );
+      if (!targetColumnsResult.rows.length) {
+        throw new Error(`SQLite table '${table}' has no matching PostgreSQL table; refusing to skip source data.`);
+      }
+
+      const sourceColumns = sqlite.prepare(`PRAGMA table_info("${table}")`).all().map(column => column.name);
+      const targetColumns = new Map(targetColumnsResult.rows.map(column => [column.column_name, column]));
+      const aliases = { evidence_json: "evidence" };
+      const mapping = sourceColumns.map(source => ({ source, target: aliases[source] || source }));
+      const unmappedColumns = mapping.filter(item => !targetColumns.has(item.target));
+      if (unmappedColumns.length) {
+        throw new Error("SQLite table '" + table + "' has columns missing from PostgreSQL: " + unmappedColumns.map(item => item.source).join(", ") + ".");
+      }
+      if (!mapping.length) {
+        throw new Error(`No compatible columns found for SQLite table '${table}'.`);
+      }
+
+      const sourceRows = sqlite.prepare(`SELECT * FROM "${table}"`).all();
+      const targetNames = mapping.map(item => item.target);
+      const placeholders = mapping.map((item, index) => {
+        const type = targetColumns.get(item.target).udt_name;
+        return type === "jsonb" || type === "json" ? `${index + 1}::${type}` : `${index + 1}`;
+      });
+      const insertSql = `INSERT INTO "${table}" (${targetNames.map(name => `"${name}"`).join(", ")}) VALUES (${placeholders.join(", ")}) ON CONFLICT DO NOTHING`;
+
+      report[table] = { sqliteCount: sourceRows.length, migrated: 0 };
+      for (const row of sourceRows) {
+        const values = mapping.map(item => {
+          const value = row[item.source];
+          const targetType = targetColumns.get(item.target).udt_name;
+          if (value == null) return null;
+          if ((targetType === "jsonb" || targetType === "json") && typeof value === "string") {
+            try { return JSON.stringify(JSON.parse(value)); }
+            catch { throw new Error(`Invalid JSON in ${table}.${item.source}; refusing lossy migration.`); }
+          }
+          return value;
+        });
+        if (!dryRun) await pgClient.query(insertSql, values);
+        report[table].migrated++;
+      }
+    }
+
+    // Preserve generated-ID continuity after importing explicit SQLite IDs.
+    for (const table of sqliteTables) {
+      if (table === "schema_migrations") continue;
+      if (!/^[a-z_][a-z0-9_]*$/.test(table)) continue;
+      const sequenceResult = await pgClient.query(
+        "SELECT pg_get_serial_sequence($1, 'id') AS sequence_name",
+        [table]
+      );
+      const sequenceName = sequenceResult.rows[0]?.sequence_name;
+      if (sequenceName) {
+        await pgClient.query(
+          `SELECT setval($1::regclass, COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) FROM "${table}"`,
+          [sequenceName]
+        );
+      }
+    }
+
+    // 12. Reconcile each migrated table with exact row counts.
+    console.log("\n[Step 12] Running exact per-table reconciliation queries on PostgreSQL...");
+
     for (const [table, stats] of Object.entries(report)) {
       if (!dryRun) {
         const countRes = await pgClient.query(`SELECT COUNT(*)::int AS count FROM ${table}`);
         stats.postgresCount = countRes.rows[0]?.count || 0;
-        stats.verified = stats.postgresCount >= stats.sqliteCount;
+        stats.verified = stats.postgresCount === stats.sqliteCount;
       } else {
         stats.postgresCount = "dry-run";
-        stats.verified = true;
+        stats.verified = null;
       }
     }
 
@@ -359,14 +438,23 @@ export async function migrateSqliteToPostgres({
     console.log("=================================================================");
     console.table(report);
 
-    const allVerified = Object.values(report).every(r => r.verified);
+    const allVerified = !dryRun && Object.values(report).every(r => r.verified === true);
+    if (dryRun) {
+      await pgClient.query("ROLLBACK");
+      transactionOpen = false;
+      console.log("Dry run complete: no rows were migrated and no reconciliation was performed.");
+      return { success: false, dryRun: true, report };
+    }
     if (!allVerified) {
-      throw new Error("Reconciliation failed: Some tables did not transfer all records.");
+      throw new Error("Exact reconciliation failed: SQLite and PostgreSQL row counts differ for one or more tables.");
     }
 
     console.log("All tables reconciled and verified successfully!");
+    await pgClient.query("COMMIT");
+    transactionOpen = false;
     return { success: true, report };
   } finally {
+    if (transactionOpen) await pgClient.query("ROLLBACK").catch(() => {});
     sqlite.close();
     await pgClient.end().catch(() => {});
   }
