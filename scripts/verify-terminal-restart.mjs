@@ -34,6 +34,15 @@ const sessionId = crypto.randomUUID();
 const marker = "ATH_TERMINAL_RECOVERY_" + crypto.randomUUID().replace(/-/g, "");
 const workspaceRoot = path.join(config.workspaceRoot, "remote-users", workspaceId);
 
+async function getWorkerHealth() {
+  const response = await fetch(new URL("/healthz", workerUrl), { signal: AbortSignal.timeout(10000) });
+  const health = await response.json().catch(() => ({}));
+  if (!response.ok || health.role !== "execution-worker" || typeof health.instanceId !== "string") {
+    throw new Error("Execution worker health check failed or returned an unexpected service identity.");
+  }
+  return health;
+}
+
 function createSocket() {
   const target = new URL(workerUrl);
   target.protocol = workerUrl.protocol === "https:" ? "wss:" : "ws:";
@@ -111,8 +120,10 @@ const prompt = createInterface({ input: stdin, output: stdout });
 let first;
 let second;
 try {
+  const workerBefore = await getWorkerHealth();
   console.log("Disposable workspace:", workspaceId);
   console.log("Terminal session UUID:", sessionId);
+  console.log("Execution worker instance before restart:", workerBefore.instanceId, "(PID", workerBefore.pid + ")");
   first = await connectAndWaitReady();
   first.socket.send(JSON.stringify({
     type: "terminal.input",
@@ -127,6 +138,10 @@ try {
   console.log("Marker written and tmux session detached.");
 
   await prompt.question("Now restart the systemd unit that runs server/src/worker/executionWorker.js (not the repo-agent worker unless it runs this entrypoint). Use its actual unit name, wait for /healthz to return healthy, then press Enter here: ");
+  const workerAfter = await getWorkerHealth();
+  if (workerAfter.instanceId === workerBefore.instanceId) {
+    throw new Error("Execution worker instance ID did not change; the Node execution-worker restart was not observed.");
+  }
 
   second = await connectAndWaitReady();
   const replay = await waitFor(second.messages, second.socket,
@@ -138,6 +153,9 @@ try {
     success: true,
     test: "remote-terminal-node-worker-restart",
     markerReplayed: String(replay.payload.text).includes(marker),
+    workerRestartVerified: workerAfter.instanceId !== workerBefore.instanceId,
+    workerPidBefore: workerBefore.pid,
+    workerPidAfter: workerAfter.pid,
     workspaceId,
     sessionId,
     limitation: "Docker container and Docker daemon must remain running; this does not restore processes after container/VM restart.",
