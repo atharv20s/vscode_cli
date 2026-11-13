@@ -1,18 +1,17 @@
-# Google Kubernetes Engine (GKE) Cluster — Dedicated Distributed Pod Orchestration
+# Optional GKE stack. Disabled by default to prevent an unexpected
+# cluster/node-pool bill for deployments that only use Cloud Run.
 resource "google_container_cluster" "primary" {
+  count                    = var.enable_gke ? 1 : 0
   provider                 = google
   name                     = "${var.app_name}-gke-cluster"
   location                 = var.region
   remove_default_node_pool = true
   initial_node_count       = 1
 
-  # Network configuration
   network    = "default"
   subnetwork = "default"
 
-  ip_allocation_policy {
-    # VPC-native cluster
-  }
+  ip_allocation_policy {}
 
   release_channel {
     channel = "REGULAR"
@@ -25,12 +24,12 @@ resource "google_container_cluster" "primary" {
   depends_on = [google_project_service.enabled_apis]
 }
 
-# Node Pool with Auto-scaling (1 to 5 e2-medium or e2-standard-2 nodes)
 resource "google_container_node_pool" "primary_nodes" {
+  count      = var.enable_gke ? 1 : 0
   provider   = google
   name       = "${var.app_name}-node-pool"
   location   = var.region
-  cluster    = google_container_cluster.primary.name
+  cluster    = google_container_cluster.primary[0].name
   node_count = 2
 
   autoscaling {
@@ -41,9 +40,7 @@ resource "google_container_node_pool" "primary_nodes" {
   node_config {
     machine_type = "e2-medium"
     disk_size_gb = 30
-    oauth_scopes = [
-      "https://www.googleapis.com/auth/cloud-platform"
-    ]
+    oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
 
     labels = {
       app = var.app_name
