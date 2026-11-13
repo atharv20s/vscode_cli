@@ -84,7 +84,8 @@ export function registerBrowserVerificationTool() {
       page.on("pageerror", error => pageErrors.push(String(error.message || error).slice(0,1000)));
       const response = await page.goto(url.toString(), { waitUntil:"domcontentloaded", timeout:args.timeout_ms || 15000 });
       await page.waitForTimeout(500);
-      if (new URL(page.url()).origin !== url.origin) throw new Error("Preview redirected outside the approved origin.");\n      const title = await page.title();
+      if (new URL(page.url()).origin !== url.origin) throw new Error("Preview redirected outside the approved origin.");
+      const title = await page.title();
       const actions = [];
       for (const action of (args.actions || [])) {
         if (ctx.signal?.aborted) throw new Error("Browser verification cancelled.");
