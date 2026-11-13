@@ -125,8 +125,12 @@ version, user/session counts, orphan-session count, and a hash of the ID sets.
 If the original SQLite source file is still available, set
 `SQLITE_SOURCE_PATH=/absolute/path/to/source.sqlite` before running. The script
 opens SQLite read-only and compares exact user/session ID sets without printing
-raw IDs. It exits non-zero if the source and Neon sets differ or if Neon has
-orphan sessions. It does not migrate, repair, or delete any rows.
+raw IDs. It exits non-zero if the source and Neon sets differ, Neon has
+orphan sessions, the API/worker identity evidence is missing, or any identity
+differs. To resolve the historical count discrepancy, the original SQLite
+source file must be supplied; without it the audit reports current Neon counts
+but leaves the historical reconciliation incomplete. It does not migrate,
+repair, or delete any rows.
 
 For an automated three-way identity comparison, also set
 `API_HEALTH_URL=https://<api-host>/api/health` and
