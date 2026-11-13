@@ -6,7 +6,7 @@
  * Set UPDATE_VISUAL_BASELINES=1 only when intentionally accepting a new UI.
  */
 import fs from "node:fs/promises";
-import path from "node:path";
+import path from "node:path";\nimport { createRequire } from "node:module";\nconst require = createRequire(new URL("../server/package.json", import.meta.url));
 
 const appUrl = process.env.APP_URL;
 if (!appUrl) throw new Error("APP_URL is required.");
@@ -23,7 +23,7 @@ const baselineDir = path.resolve(process.env.VISUAL_BASELINE_DIR || "benchmarks/
 const baselinePath = path.join(baselineDir, (process.env.VISUAL_BASELINE_NAME || "default") + ".png");
 const updateBaseline = process.env.UPDATE_VISUAL_BASELINES === "1";
 const threshold = Math.max(0, Math.min(1, Number(process.env.VISUAL_DIFF_THRESHOLD || 0.01)));
-const { chromium } = await import("playwright");
+const { chromium } = require("playwright");
 const browser = await chromium.launch({headless:true,args:["--no-sandbox","--disable-dev-shm-usage"]});
 const page = await browser.newPage({viewport:{width:1440,height:900},deviceScaleFactor:1});
 const errors = [];
@@ -40,7 +40,7 @@ try {
   }
   const screenshot = await page.screenshot({type:"png",fullPage:true});
   await fs.mkdir(baselineDir,{recursive:true});
-  if (updateBaseline || !(await fs.access(baselinePath).then(()=>true).catch(()=>false))) {
+  if (updateBaseline) {
     await fs.writeFile(baselinePath,screenshot);
     console.log(JSON.stringify({type:"baseline",path:baselinePath,updated:updateBaseline}));
   } else {
