@@ -101,7 +101,7 @@ class PermissionEngine {
   _evaluatePolicy(resource, action, payload) {
     if (resource === "command" || action === "run_command" || action === "execute") return classifyCommandForPolicy(payload.command, { isolatedRepoAgent: payload.isolatedRepoAgent === true });
     if (resource === "file") {
-      const filePath = String(payload.path || "").replace(/\\\\/g, "/").toLowerCase();
+      const filePath = String(payload.path || "").replace(/\\/g, "/").toLowerCase();
       const secretPath = /(^|\\/)(\\.env(?:$|\\.)|id_rsa|id_ed25519|credentials(?:\\.json)?|\\.npmrc|\\.pypirc|\\.netrc|kubeconfig)(?:$|\\/)/i.test(filePath) ||
         /\\.(pem|key|p12|pfx|tfstate)$/i.test(filePath);
       if (action === "read" && secretPath) return "DENY";
