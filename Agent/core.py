@@ -178,38 +178,67 @@ class Agent:
         return filtered or None
 
     async def run(self, message: str) -> AsyncGenerator[AgentEvent, None]:
-        """Run the agent with a user message.
-        
-        Args:
-            message: The user's input message
-            
-        Yields:
-            AgentEvent: Events for agent lifecycle, streaming, and tool calls
-        """
+        """Run one validated agent request and emit lifecycle events."""
         self._ensure_initialized()
-        
-        self.current_message = message
-        # Add user message to conversation history
-        self.messages.append({"role": "user", "content": message})
-        
-        yield AgentEvent.agent_start(message)
-        
-        final_response: str | None = None
-        
-        # Run the agentic loop (may include multiple LLM calls for tool use)
-        async for event in self._agentic_loop():
-            yield event
+        validation = self.input_validator.validate(message)
+        if not validation.is_valid:
+            yield AgentEvent.agent_error(validation.message or "Invalid input.")
+            yield AgentEvent.agent_end(None)
+            return
 
-            if event.type == AgentEventType.TEXT_COMPLETE:
-                final_response = event.data.get("content", "")
-                # Add assistant response to conversation history
-                if final_response:
-                    self.messages.append({"role": "assistant", "content": final_response})
-                break
-            
-            elif event.type == AgentEventType.AGENT_ERROR:
-                # Stop on error
-                break
+        filtered_input = self.content_filter.filter_input(validation.sanitized_input)
+        if filtered_input.action == FilterAction.BLOCK:
+            yield AgentEvent.agent_error(filtered_input.reason or "Input blocked by content filter.")
+            yield AgentEvent.agent_end(None)
+            return
+
+        self.current_message = validation.sanitized_input
+        yield AgentEvent.agent_start(self.current_message)
+        final_response: str | None = None
+        try:
+            await self.hooks.trigger(
+                HookType.BEFORE_REQUEST,
+                fail_closed=True,
+                message=self.current_message,
+                mode=self.mode.value,
+            )
+            await self.hooks.trigger(HookType.ON_STREAM_START, mode=self.mode.value)
+            self.messages.append({"role": "user", "content": self.current_message})
+
+            if filtered_input.action == FilterAction.WARN:
+                # Keep the heuristic observable without treating it as permission.
+                await self.hooks.trigger(
+                    HookType.ON_ERROR,
+                    warning=filtered_input.reason,
+                    category="suspicious_input",
+                )
+
+            async for event in self._agentic_loop():
+                yield event
+                if event.type == AgentEventType.TEXT_COMPLETE:
+                    final_response = event.data.get("content", "")
+                    if final_response:
+                        self.messages.append({"role": "assistant", "content": final_response})
+                    break
+                if event.type == AgentEventType.AGENT_ERROR:
+                    await self.hooks.trigger(
+                        HookType.ON_ERROR,
+                        error=event.data.get("error", "Agent error"),
+                        mode=self.mode.value,
+                    )
+                    break
+
+            await self.hooks.trigger(HookType.ON_STREAM_END, mode=self.mode.value)
+            await self.hooks.trigger(
+                HookType.AFTER_REQUEST,
+                mode=self.mode.value,
+                response_present=bool(final_response),
+            )
+        except HookBlockedError as error:
+            yield AgentEvent.agent_error(str(error))
+        except Exception as error:
+            await self.hooks.trigger(HookType.ON_ERROR, error=str(error), mode=self.mode.value)
+            yield AgentEvent.agent_error(str(error))
 
         yield AgentEvent.agent_end(final_response)
 
