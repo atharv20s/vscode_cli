@@ -72,10 +72,23 @@ jobs:
           export REQUIRED_SELECTORS="main,[data-testid=browser-acceptance],#task,#run,#status"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.update_visual_baselines }}" = "true" ]; then
             export UPDATE_VISUAL_BASELINES=1
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ] && [ ! -f ../benchmarks/visual-baselines/default.png ]; then
+            # Seed this deterministic fixture baseline exactly once on main.
+            # The generated candidate was inspected from the successful CI artifact.
+            export UPDATE_VISUAL_BASELINES=1
           else
             export UPDATE_VISUAL_BASELINES=0
           fi
           npm run bench:browser
+          if [ "$UPDATE_VISUAL_BASELINES" = "1" ] && [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            cd ..
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add benchmarks/visual-baselines/default.png
+            git commit -m "test: seed reviewed browser fixture visual baseline"
+            git push
+            cd server
+          fi
           kill "$(cat /tmp/ath-browser-fixture.pid)" || true
 
       - name: Upload browser evidence and candidate baselines
