@@ -67,7 +67,7 @@ jobs:
           done
           cd server
           export APP_URL=http://127.0.0.1:4173
-          export VISUAL_BASELINE_DIR=benchmarks/visual-baselines
+          export VISUAL_BASELINE_DIR=../benchmarks/visual-baselines
           export VISUAL_ACTUAL_PATH=/tmp/ath-browser-actual.png
           export REQUIRED_SELECTORS="main,[data-testid=browser-acceptance],#task,#run,#status"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.update_visual_baselines }}" = "true" ]; then
