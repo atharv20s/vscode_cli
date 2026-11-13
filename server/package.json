@@ -14,7 +14,8 @@
     "bench:redis-lease": "node ../benchmarks/redis-lease-fault.mjs",
     "worker:repo-agent": "node src/worker/repoAgentWorker.js",
     "start:stack": "node src/server.js",
-    "bench:browser": "node ../benchmarks/browser-acceptance.mjs"
+    "bench:browser": "node ../benchmarks/browser-acceptance.mjs",
+    "browser:install": "bash scripts/install-browser-runtime.sh"
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0",
