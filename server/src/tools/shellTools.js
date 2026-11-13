@@ -78,7 +78,7 @@ export function registerShellTools() {
       const perm = await permissionEngine.checkPermission({
         resource: "command",
         action: "execute",
-        payload: { command: args.command, working_dir: args.working_dir, shell: args.shell },
+        payload: { command: args.command, working_dir: args.working_dir, shell: args.shell, isolatedRepoAgent: String(ctx.workspaceId || "").startsWith("repo-agent-") },
         turnId: ctx.turnId,
         sessionId: ctx.sessionId,
         workspaceId: ctx.workspaceId,

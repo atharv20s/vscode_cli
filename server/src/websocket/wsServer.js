@@ -204,7 +204,14 @@ export function initWebSocketServer(httpServer) {
 
   // 4. Permissions Events
   eventBus.subscribe(EVENT_TOPICS.PERMISSION_REQUESTED, (envelope) => {
-    broadcastScoped("permission.requested", envelope);
+    if (!envelope.workspaceId) return;
+    // Approval prompts contain command details and must reach workspace owners only.
+    wss.clients.forEach(client => {
+      if (client.workspaceId === envelope.workspaceId &&
+          client.workspacePermission === "owner" && client.readyState === 1) {
+        sendMessage(client, "permission.requested", envelope.payload);
+      }
+    });
   });
 
   eventBus.subscribe(EVENT_TOPICS.PERMISSION_RESOLVED, (envelope) => {

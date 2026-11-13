@@ -10,6 +10,7 @@ import { getPreviewService } from "../services/previewService.js";
 import { getWorkspaceServiceForContext } from "../services/workspaceService.js";
 import { generatePreviewToken } from "../middleware/auth.js";
 import { config } from "../config/env.js";
+import { permissionEngine } from "../services/permissionEngine.js";
 
 function inferPreviewPort(command, explicitPort) {
   if (Number.isInteger(Number(explicitPort)) && Number(explicitPort) >= 1024 && Number(explicitPort) <= 65535) {
@@ -63,6 +64,18 @@ export function registerPreviewTools() {
 
       try {
         const command = args.command || "npm run dev";
+        if (String(ctx.workspaceId || "").startsWith("repo-agent-")) {
+          return { success: false, error: "Preview servers are disabled in disposable repository-agent sandboxes." };
+        }
+        const perm = await permissionEngine.checkPermission({
+          resource: "command",
+          action: "execute",
+          payload: { command, working_dir: args.working_dir || "." },
+          turnId: ctx.turnId,
+          sessionId: ctx.sessionId,
+          workspaceId: ctx.workspaceId,
+        });
+        if (!perm.granted) return { success: false, error: perm.reason || "Starting a preview requires approval." };
         const port = inferPreviewPort(command, args.port);
         const result = await previewService.startPreview({
           command,

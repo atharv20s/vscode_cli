@@ -28,14 +28,36 @@ const SAFE_READ_ONLY_COMMANDS = [
   /^(node|npm|python|python3)\s+--version$/,
 ];
 
-export function classifyCommandForPolicy(command) {
+export function classifyCommandForPolicy(command, { isolatedRepoAgent = false } = {}) {
   if (typeof command !== "string" || !command.trim()) return "DENY";
   const cmd = command.trim();
   for (const pattern of DENY_COMMAND_PATTERNS) if (pattern.test(cmd)) return "DENY";
+  // Repo-agent jobs run in disposable per-task Docker workspaces with networking
+  // forcibly disabled. Permit build/test commands there; this cannot grant host access.
+  if (isolatedRepoAgent) return "ALLOW";
   // Never auto-approve shell composition, substitutions, redirects or multiline input.
   if (!/[\n\r;&|<>\u0060$]/.test(cmd) &&
       SAFE_READ_ONLY_COMMANDS.some(pattern => pattern.test(cmd))) return "ALLOW";
   return "ASK";
+}
+
+export function classifyFileOperationForPolicy(action, inputPath = "", { isolatedRepoAgent = false } = {}) {
+  const filePath = String(inputPath || "").replace(/\\/g, "/").toLowerCase();
+  const pathSegments = filePath.split("/").filter(Boolean);
+  const secretPath = pathSegments.some(segment =>
+    /^\.env(?:$|\.)/i.test(segment) ||
+    /^(id_rsa|id_ed25519)(?:$|\.)/i.test(segment) ||
+    /^(credentials|secrets?|service-account|firebase-adminsdk[^/]*|\.npmrc|\.pypirc|\.netrc|kubeconfig)(?:$|\.)/i.test(segment) ||
+    /\.(pem|key|p8|p12|pfx|jks|tfstate)$/i.test(segment)
+  );
+  if (action === "read" && secretPath) return "DENY";
+  if (isolatedRepoAgent) return secretPath ? "DENY" : "ALLOW";
+  if (action === "delete" || action === "delete_file") return "ASK";
+  const sensitiveProjectFile = /(^|\/)\.github\/workflows\//i.test(filePath) ||
+    /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|dockerfile|docker-compose[^/]*|\.env(?:$|\.)|\.npmrc)$/i.test(filePath) ||
+    /(^|\/)server\/src\/config\/env\.js$/i.test(filePath);
+  if ((action === "write" || action === "edit") && (secretPath || sensitiveProjectFile)) return "ASK";
+  return "ALLOW";
 }
 
 class PermissionEngine {
@@ -46,9 +68,13 @@ class PermissionEngine {
   }
 
   async checkPermission({ resource, action, payload = {}, sessionId = null, turnId = null, workspaceId = "default", timeout = 60000 }) {
-    const decision = this._evaluatePolicy(resource, action, payload);
+    const policyPayload = {
+      ...payload,
+      isolatedRepoAgent: payload.isolatedRepoAgent === true || String(workspaceId || "").startsWith("repo-agent-"),
+    };
+    const decision = this._evaluatePolicy(resource, action, policyPayload);
     if (decision === "DENY") {
-      logger.warn(`PermissionEngine: DENIED ${resource}.${action}`, { workspaceId, command: payload.command });
+      logger.warn(`PermissionEngine: DENIED ${resource}.${action}`, { workspaceId, command: policyPayload.command });
       return { granted: false, decision: "DENY", reason: `Operation blocked by security policy: ${resource}.${action}` };
     }
     if (decision === "ALLOW") {
@@ -59,7 +85,7 @@ class PermissionEngine {
     const permissionId = `perm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     logger.info(`PermissionEngine: Requesting approval [${permissionId}] for ${resource}.${action}`);
     eventBus.publish(EVENT_TOPICS.PERMISSION_REQUESTED, {
-      permissionId, resource, action, payload, expiresAt: Date.now() + timeout,
+      permissionId, resource, action, payload: policyPayload, expiresAt: Date.now() + timeout,
     }, { workspaceId, sessionId, turnId, source: "permission", actor: "system" });
 
     return new Promise(resolve => {
@@ -86,6 +112,7 @@ class PermissionEngine {
   }
 
   resolvePermission(permissionId, granted, reason = "", workspaceId = null) {
+    if (typeof granted !== "boolean" || typeof permissionId !== "string" || !permissionId) return false;
     const pending = this.pendingRequests.get(permissionId);
     if (pending && pending.workspaceId === workspaceId) {
       pending.resolve(granted, reason);
@@ -96,11 +123,17 @@ class PermissionEngine {
   }
 
   _evaluatePolicy(resource, action, payload) {
-    if (resource === "command" || action === "run_command" || action === "execute") return classifyCommandForPolicy(payload.command);
-    if (resource === "file") return action === "delete" || action === "delete_file" ? "ASK" : "ALLOW";
-    if (resource === "git" || resource === "github") {
+    if (resource === "command" || action === "run_command" || action === "execute") return classifyCommandForPolicy(payload.command, { isolatedRepoAgent: payload.isolatedRepoAgent === true });
+    if (resource === "file") return classifyFileOperationForPolicy(action, payload.path, { isolatedRepoAgent: payload.isolatedRepoAgent === true });
+    if (resource === "git") {
       if (action === "force-push") return "DENY";
-      if (action === "push") return "ASK";
+      if (payload.isolatedRepoAgent) return ["push", "pull", "clone"].includes(action) ? "DENY" : "ALLOW";
+      if (["push", "commit", "pull", "clone", "branch-create", "branch-delete", "branch-switch"].includes(action)) return "ASK";
+      return "ALLOW";
+    }
+    if (resource === "github") {
+      if (action === "force-push" || payload.isolatedRepoAgent) return "DENY";
+      if (["push", "create_pr", "create_repo", "create_issue"].includes(action)) return "ASK";
       return "ALLOW";
     }
     return this.defaultPolicy;

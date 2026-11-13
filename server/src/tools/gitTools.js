@@ -338,6 +338,11 @@ export function registerGitTools() {
       },
     },
     async (args, ctx = {}) => {
+      const perm = await permissionEngine.checkPermission({
+        resource: "git", action: "pull", payload: args,
+        turnId: ctx.turnId, sessionId: ctx.sessionId, workspaceId: ctx.workspaceId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason };
       const { executionService } = await import("../services/executionService.js");
       const remote = args.remote || "origin";
       const branch = args.branch ? ` ${args.branch}` : "";
@@ -369,6 +374,13 @@ export function registerGitTools() {
       },
     },
     async (args, ctx = {}) => {
+      if (["create", "switch", "delete"].includes(args.action)) {
+        const perm = await permissionEngine.checkPermission({
+          resource: "git", action: args.action === "delete" ? "branch-delete" : args.action === "switch" ? "branch-switch" : "branch-create",
+          payload: args, turnId: ctx.turnId, sessionId: ctx.sessionId, workspaceId: ctx.workspaceId,
+        });
+        if (!perm.granted) return { success: false, error: perm.reason };
+      }
       const { executionService } = await import("../services/executionService.js");
       let cmd = "git branch -a";
       if (args.action === "create") {
@@ -410,6 +422,11 @@ export function registerGitTools() {
       },
     },
     async (args, ctx = {}) => {
+      const perm = await permissionEngine.checkPermission({
+        resource: "git", action: "clone", payload: args,
+        turnId: ctx.turnId, sessionId: ctx.sessionId, workspaceId: ctx.workspaceId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason };
       const { executionService } = await import("../services/executionService.js");
       const targetDir = args.directory ? ` "${args.directory}"` : "";
       const res = await executionService.executeCommand(`git clone "${args.url}"${targetDir}`, {
@@ -445,6 +462,11 @@ export function registerGitTools() {
       const token = ctx.user?.githubAccessToken || process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
       if (!token) return { success: false, error: "GitHub token not found." };
 
+      const perm = await permissionEngine.checkPermission({
+        resource: "github", action: "create_repo", payload: args,
+        turnId: ctx.turnId, sessionId: ctx.sessionId, workspaceId: ctx.workspaceId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason };
       try {
         const { getOctokit } = await import("../services/githubService.js");
         const octokit = getOctokit(token);
@@ -490,6 +512,11 @@ export function registerGitTools() {
       const token = ctx.user?.githubAccessToken || process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
       if (!token) return { success: false, error: "GitHub token not found." };
 
+      const perm = await permissionEngine.checkPermission({
+        resource: "github", action: "create_issue", payload: args,
+        turnId: ctx.turnId, sessionId: ctx.sessionId, workspaceId: ctx.workspaceId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason };
       try {
         const { getOctokit } = await import("../services/githubService.js");
         const octokit = getOctokit(token);

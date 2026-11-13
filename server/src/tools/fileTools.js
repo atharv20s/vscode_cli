@@ -270,6 +270,20 @@ export function registerFileTools() {
         return { success: false, error: `Unsupported file extension for compilation: .${ext}` };
       }
 
+      const perm = await permissionEngine.checkPermission({
+        resource: "command",
+        action: "execute",
+        payload: {
+          command: compileCmd,
+          working_dir: filePath,
+          isolatedRepoAgent: String(ctx.workspaceId || "").startsWith("repo-agent-"),
+        },
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+        workspaceId: ctx.workspaceId,
+      });
+      if (!perm.granted) return { success: false, error: perm.reason || "Compilation requires approval." };
+
       const { executionService } = await import("../services/executionService.js");
       const res = await executionService.execute({
         command: compileCmd,

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyCommandForPolicy } from "./permissionEngine.js";
+import { classifyCommandForPolicy, classifyFileOperationForPolicy } from "./permissionEngine.js";
 
 test("only narrow read-only inspection commands are auto-allowed", () => {
   for (const command of [
@@ -41,8 +41,33 @@ test("high-impact destructive commands are denied", () => {
   ]) assert.equal(classifyCommandForPolicy(command), "DENY", command);
 });
 
+test("isolated repository agents can build and test without approval", () => {
+  assert.equal(classifyCommandForPolicy("npm install", { isolatedRepoAgent: true }), "ALLOW");
+  assert.equal(classifyCommandForPolicy("npm test", { isolatedRepoAgent: true }), "ALLOW");
+  assert.equal(classifyCommandForPolicy("bash -lc 'npm test'", { isolatedRepoAgent: true }), "ALLOW");
+});
+
+test("destructive operations remain denied even in isolated repository agents", () => {
+  assert.equal(classifyCommandForPolicy("rm -rf /workspace", { isolatedRepoAgent: true }), "DENY");
+  assert.equal(classifyCommandForPolicy("git reset --hard", { isolatedRepoAgent: true }), "DENY");
+});
+
 test("empty and malformed commands fail closed", () => {
   assert.equal(classifyCommandForPolicy(""), "DENY");
   assert.equal(classifyCommandForPolicy(null), "DENY");
   assert.equal(classifyCommandForPolicy("pwd\npwd"), "ASK");
+});
+
+test("secret files cannot be read through file tools", () => {
+  for (const path of [".env", ".env.production", "keys/id_rsa", "certs/private.pem", ".aws/credentials", "infra/terraform.tfstate"]) {
+    assert.equal(classifyFileOperationForPolicy("read", path), "DENY", path);
+  }
+});
+
+test("sensitive project configuration changes require approval", () => {
+  for (const path of ["package.json", "package-lock.json", ".github/workflows/deploy.yml", "Dockerfile", "server/src/config/env.js"]) {
+    assert.equal(classifyFileOperationForPolicy("write", path), "ASK", path);
+  }
+  assert.equal(classifyFileOperationForPolicy("edit", "src/App.jsx"), "ALLOW");
+  assert.equal(classifyFileOperationForPolicy("delete", "src/App.jsx"), "ASK");
 });
