@@ -108,3 +108,28 @@ The host must have compatible `pg_dump` and `pg_restore` binaries installed. Sto
 - Terminal recovery: **tmux-backed terminal sessions are implemented inside persistent workspace containers. Recovery after an execution-worker process restart depends on the Docker container remaining alive; container/VM restart recovery of arbitrary running processes is not guaranteed.**
 - Backup/restore: **Encrypted AES-256-GCM backup/restore utility is now included. No production backup or restore has yet been claimed.**
 - Production sign-off: **Pending real acceptance runs, verified recovery, and confirmation of consistent API/worker configuration.**
+
+
+## Read-only migration count reconciliation
+
+To investigate the previously reported 7-user/7-session versus 2-user/2-session
+counts, run this on a trusted operator host with the same production database
+environment used by the API:
+
+```bash
+npm run db:audit-migration-counts
+```
+
+This reports the current Neon endpoint/database/role fingerprint, schema
+version, user/session counts, orphan-session count, and a hash of the ID sets.
+If the original SQLite source file is still available, set
+`SQLITE_SOURCE_PATH=/absolute/path/to/source.sqlite` before running. The script
+opens SQLite read-only and compares exact user/session ID sets without printing
+raw IDs. It exits non-zero if the source and Neon sets differ or if Neon has
+orphan sessions. It does not migrate, repair, or delete any rows.
+
+Compare the printed `databaseIdentity` with the API health response and the
+repo-agent worker's `databaseIdentity` startup log. Pooled and direct Neon
+URLs should produce the same identity when they point to the same branch,
+database and role. The audit cannot establish whether historical reports came
+from the same branch unless those original connection identities were recorded.
