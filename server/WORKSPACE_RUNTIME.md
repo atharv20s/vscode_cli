@@ -232,7 +232,7 @@ untrusted workloads at scale.
 Workspace owners can create time-limited collaboration links from the IDE Share
 control. Links are random 256-bit bearer capabilities; only a SHA-256 token hash
 is stored. Owners can list and revoke links. The default expiry is seven days
-and the maximum is 30 days. Treat the raw invite URL like a password.
+and the maximum is 30 days (links cannot be created without an expiry). Treat the raw invite URL like a password.
 
 - **View** links permit workspace file and directory reads only.
 - **Edit** links permit version-checked file creation and updates only. Moving,
