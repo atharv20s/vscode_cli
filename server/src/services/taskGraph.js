@@ -42,8 +42,16 @@ export async function executeTaskGraph(input, executor, options = {}) {
     if (options.signal?.aborted) throw new Error("Task graph cancelled.");
     for (let offset = 0; offset < batch.length; offset += maxConcurrency) {
       const group = batch.slice(offset, offset + maxConcurrency);
-      const settled = await Promise.all(group.map(async task => ({task,result:await executor(task,Object.fromEntries(results))})));
-      for (const item of settled) results.set(item.task.id,item.result);
+      // Wait for every isolated task in this batch to settle before advancing
+      // or surfacing a failure. This prevents late writers from racing with a
+      // retry/merge phase after Promise.all has already rejected.
+      const settled = await Promise.allSettled(group.map(async task => ({
+        task,
+        result: await executor(task, Object.fromEntries(results)),
+      })));
+      const failure = settled.find(item => item.status === "rejected");
+      if (failure) throw failure.reason;
+      for (const item of settled) results.set(item.value.task.id, item.value.result);
     }
   }
   return { batches:batches.map(batch=>batch.map(task=>task.id)), results:Object.fromEntries(results) };
