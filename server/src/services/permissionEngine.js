@@ -100,10 +100,26 @@ class PermissionEngine {
 
   _evaluatePolicy(resource, action, payload) {
     if (resource === "command" || action === "run_command" || action === "execute") return classifyCommandForPolicy(payload.command, { isolatedRepoAgent: payload.isolatedRepoAgent === true });
-    if (resource === "file") return action === "delete" || action === "delete_file" ? "ASK" : "ALLOW";
-    if (resource === "git" || resource === "github") {
+    if (resource === "file") {
+      const filePath = String(payload.path || "").replace(/\\\\/g, "/").toLowerCase();
+      const secretPath = /(^|\\/)(\\.env(?:$|\\.)|id_rsa|id_ed25519|credentials(?:\\.json)?|\\.npmrc|\\.pypirc|\\.netrc|kubeconfig)(?:$|\\/)/i.test(filePath) ||
+        /\\.(pem|key|p12|pfx|tfstate)$/i.test(filePath);
+      if (action === "read" && secretPath) return "DENY";
+      if (action === "delete" || action === "delete_file") return "ASK";
+      const sensitiveProjectFile = /(^|\\/)\\.github\\/workflows\\//i.test(filePath) ||
+        /(^|\\/)(package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|pnpm-lock\\.yaml|yarn\\.lock|dockerfile|docker-compose[^/]*|\\.env(?:$|\\.)|\\.npmrc)$/i.test(filePath) ||
+        /(^|\\/)server\\/src\\/config\\/env\\.js$/i.test(filePath);
+      if ((action === "write" || action === "edit") && (secretPath || sensitiveProjectFile)) return "ASK";
+      return "ALLOW";
+    }
+    if (resource === "git") {
       if (action === "force-push") return "DENY";
-      if (action === "push") return "ASK";
+      if (["push", "commit", "pull", "branch-delete", "branch-switch"].includes(action)) return "ASK";
+      return "ALLOW";
+    }
+    if (resource === "github") {
+      if (action === "force-push") return "DENY";
+      if (["push", "create_pr", "create_repo", "create_issue"].includes(action)) return "ASK";
       return "ALLOW";
     }
     return this.defaultPolicy;
