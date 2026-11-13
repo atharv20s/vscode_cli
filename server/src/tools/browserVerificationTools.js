@@ -13,7 +13,11 @@ function normalizeUrl(value) {
   return url;
 }
 
-export function isPreviewVerificationUrl(value) {\n  try { normalizeUrl(value); return { ok:true }; } catch (error) { return { ok:false, error:error.message }; }\n}\n\nexport function registerBrowserVerificationTool() {
+export function isPreviewVerificationUrl(value) {
+  try { normalizeUrl(value); return { ok:true }; } catch (error) { return { ok:false, error:error.message }; }
+}
+
+export function registerBrowserVerificationTool() {
   registerTool({
     type: "function",
     function: {
