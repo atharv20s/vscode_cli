@@ -112,11 +112,12 @@ try {
   first = await connectAndWaitReady();
   first.socket.send(JSON.stringify({
     type: "terminal.input",
-    payload: { data: "printf '\\n" + marker + "\\n'\n" },
+    payload: { data: "echo '" + marker + "'\n" },
   }));
   await waitFor(first.messages, first.socket,
     message => message.type === "terminal.output" && String(message.payload?.text || "").includes(marker),
     "initial terminal marker");
+  await new Promise(resolve => setTimeout(resolve, 1000));
   const detached = new Promise(resolve => first.socket.once("close", resolve));
   first.socket.close();
   await detached;
