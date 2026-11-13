@@ -293,3 +293,22 @@ existing user's workspace.
 
 A passing result proves this restore path for the tested worker and bucket
 configuration. It does not prove recovery after a full VM or Docker daemon loss.
+
+
+### Run the full production acceptance sequence
+
+After loading the appropriate service environment variables, run from
+`server/`:
+
+```bash
+npm run production:acceptance
+```
+
+The runner executes the S3 upload/read-back, S3 delete-and-restore, terminal
+worker-restart, concurrent synthetic-user isolation, encrypted Neon backup /
+restore, and read-only database identity/count audit in order. It continues
+after a failed or unconfigured step and prints a final pass/fail summary. The
+terminal step is interactive; restart only the Node worker when prompted. The
+Neon restore step requires a separate empty target branch and explicit
+`RESTORE_CONFIRM_EMPTY_TARGET=YES`. Missing environment variables cause that
+individual drill to fail, but do not stop later checks.
