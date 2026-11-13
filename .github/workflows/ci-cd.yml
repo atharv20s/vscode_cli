@@ -32,6 +32,9 @@ jobs:
       - name: Checkout Codebase
         uses: actions/checkout@v4
 
+      - name: Validate operational shell scripts
+        run: bash -n scripts/deploy-lightsail.sh
+
       - name: Set up Node.js 22 LTS
         uses: actions/setup-node@v4
         with:
