@@ -67,6 +67,21 @@ class DangerousPattern:
     suggested_alternative: str = ""
 
 
+# Exact, side-effect-free commands that can run without an approval round trip.
+# Deliberately excludes file reads, interpreters, package managers and network tools.
+SAFE_READ_ONLY_COMMANDS = [
+    r"pwd",
+    r"whoami",
+    r"id",
+    r"hostname",
+    r"uname(?: -a)?",
+    r"git status(?: --short)?",
+    r"git diff(?: --stat)?",
+    r"git log(?: --oneline(?: -\d+)?)?",
+    r"git branch --show-current",
+    r"(?:node|python|python3|npm|pnpm|yarn|cargo|go) (?:--version|-v|version)",
+]
+
 # Dangerous command patterns for different categories
 DANGEROUS_PATTERNS: list[DangerousPattern] = [
     # File system - destructive operations
@@ -100,10 +115,11 @@ DANGEROUS_PATTERNS: list[DangerousPattern] = [
         is_regex=True,
     ),
     DangerousPattern(
-        pattern="format",
+        pattern=r"(^|\\s)(format|mkfs(?:\\.\\w+)?)(\\s|$)",
         risk_level=RiskLevel.CRITICAL,
         description="Disk format command",
         category="filesystem",
+        is_regex=True,
     ),
     DangerousPattern(
         pattern=r">\s*/dev/sda",
@@ -265,17 +281,19 @@ PROTECTED_PATHS = [
 
 # File patterns that are sensitive
 SENSITIVE_FILE_PATTERNS = [
-    r".*\.pem$",
-    r".*\.key$",
-    r".*\.crt$",
-    r".*\.env$",
-    r".*\.secrets?$",
+    r"(^|/)\\.env(?:\\..*)?$",
+    r"(^|/)\\.npmrc$",
+    r"(^|/)\\.pypirc$",
+    r"(^|/)\\.netrc$",
+    r"(^|/)(?:credentials?|secrets?|service-account)(?:/|$|\\.)",
+    r".*\\.(?:pem|key|crt|p8|p12|pfx|jks)$",
     r".*password.*",
     r".*credential.*",
-    r".*\.ssh/.*",
-    r".*\.aws/.*",
-    r".*\.azure/.*",
-    r".*\.kube/.*",
+    r".*/\\.ssh/.*",
+    r".*/\\.aws/.*",
+    r".*/\\.azure/.*",
+    r".*/\\.kube/.*",
+    r".*/terraform\\.tfstate(?:\\.backup)?$",
 ]
 
 
@@ -311,78 +329,94 @@ class CommandSafetyChecker:
         self._approval_callback = callback
     
     def check_command(self, command: str) -> SafetyCheckResult:
+        """Classify a command using a fail-closed read-only allowlist.
+
+        Only exact, simple inspection commands are auto-allowed. Unknown
+        commands and shell composition require explicit user approval.
+        Critical destructive commands are denied even under YOLO policy.
         """
-        Check a command for dangerous patterns.
-        
-        Args:
-            command: The command to check
-            
-        Returns:
-            SafetyCheckResult with risk assessment
-        """
+        if not isinstance(command, str) or not command.strip():
+            return SafetyCheckResult(
+                allowed=False,
+                risk_level=RiskLevel.HIGH,
+                message="Empty or invalid shell command.",
+                blocked_reason="A non-empty command string is required.",
+            )
+
+        command = command.strip()
         command_lower = command.lower()
-        highest_risk = RiskLevel.SAFE
         matched_patterns: list[DangerousPattern] = []
-        
+        highest_risk = RiskLevel.SAFE
+
         for pattern in self.patterns:
-            if pattern.is_regex:
-                if re.search(pattern.pattern, command_lower, re.IGNORECASE):
-                    matched_patterns.append(pattern)
-                    if pattern.risk_level.severity > highest_risk.severity:
-                        highest_risk = pattern.risk_level
-            else:
-                if pattern.pattern.lower() in command_lower:
-                    matched_patterns.append(pattern)
-                    if pattern.risk_level.severity > highest_risk.severity:
-                        highest_risk = pattern.risk_level
-        
-        # Determine if allowed based on policy
-        if not matched_patterns:
-            return SafetyCheckResult(
-                allowed=True,
-                risk_level=RiskLevel.SAFE,
-                message="Command appears safe",
-            )
-        
-        # Build message from matched patterns
-        messages = [p.description for p in matched_patterns]
-        alternatives = [p.suggested_alternative for p in matched_patterns if p.suggested_alternative]
-        
-        # Apply approval policy
-        if self.approval_policy == ApprovalPolicy.YOLO:
-            return SafetyCheckResult(
-                allowed=True,
-                risk_level=highest_risk,
-                message=f"YOLO mode: Allowing risky command ({', '.join(messages)})",
-            )
-        
-        if self.approval_policy == ApprovalPolicy.NEVER:
+            try:
+                matched = (
+                    bool(re.search(pattern.pattern, command, re.IGNORECASE))
+                    if pattern.is_regex
+                    else pattern.pattern.lower() in command_lower
+                )
+            except re.error:
+                # A malformed custom rule must never make the command safer.
+                matched = True
+            if matched:
+                matched_patterns.append(pattern)
+                if pattern.risk_level.severity > highest_risk.severity:
+                    highest_risk = pattern.risk_level
+
+        messages = [item.description for item in matched_patterns]
+        alternatives = [item.suggested_alternative for item in matched_patterns if item.suggested_alternative]
+
+        if highest_risk == RiskLevel.CRITICAL:
             return SafetyCheckResult(
                 allowed=False,
                 risk_level=highest_risk,
-                message=f"Blocked: {', '.join(messages)}",
-                blocked_reason="Policy set to never allow dangerous commands",
+                message="Blocked critical command: " + ", ".join(messages),
+                blocked_reason="Critical destructive or remote-execution pattern is never auto-approved.",
                 suggested_alternative=alternatives[0] if alternatives else "",
             )
-        
-        if self.approval_policy == ApprovalPolicy.AUTO:
-            # Auto-approve low and medium risk
-            if highest_risk in (RiskLevel.SAFE, RiskLevel.LOW, RiskLevel.MEDIUM):
-                return SafetyCheckResult(
-                    allowed=True,
-                    risk_level=highest_risk,
-                    message=f"Auto-approved: {', '.join(messages)}",
-                )
-        
-        # ON_REQUEST or high/critical risk - require approval
+
+        # Shell composition is intentionally never part of the automatic allowlist.
+        has_shell_operators = bool(re.search(r"[;&|<>\x60$\n\r]", command))
+        safe_inspection = any(re.fullmatch(pattern, command, re.IGNORECASE) for pattern in SAFE_READ_ONLY_COMMANDS)
+        if not matched_patterns and safe_inspection and not has_shell_operators:
+            return SafetyCheckResult(
+                allowed=True,
+                risk_level=RiskLevel.SAFE,
+                message="Allowed read-only inspection command.",
+            )
+
+        if self.approval_policy == ApprovalPolicy.YOLO:
+            return SafetyCheckResult(
+                allowed=True,
+                risk_level=highest_risk if matched_patterns else RiskLevel.HIGH,
+                message="YOLO policy explicitly allowed a non-critical command.",
+            )
+
+        if self.approval_policy == ApprovalPolicy.NEVER:
+            return SafetyCheckResult(
+                allowed=False,
+                risk_level=highest_risk if matched_patterns else RiskLevel.HIGH,
+                message="Blocked by the NEVER approval policy.",
+                blocked_reason="This policy does not allow commands outside the read-only allowlist.",
+                suggested_alternative=alternatives[0] if alternatives else "",
+            )
+
+        if self.approval_policy == ApprovalPolicy.AUTO and matched_patterns and highest_risk in (RiskLevel.LOW, RiskLevel.MEDIUM) and not has_shell_operators:
+            return SafetyCheckResult(
+                allowed=True,
+                risk_level=highest_risk,
+                message="Auto-approved by the configured low-risk policy.",
+            )
+
+        reason = ", ".join(messages) if messages else "Command is not on the read-only allowlist"
         return SafetyCheckResult(
             allowed=False,
-            risk_level=highest_risk,
-            message=f"Approval required: {', '.join(messages)}",
+            risk_level=highest_risk if matched_patterns else RiskLevel.HIGH,
+            message="Approval required: " + reason,
             requires_approval=True,
             suggested_alternative=alternatives[0] if alternatives else "",
         )
-    
+
     async def check_and_approve(self, command: str) -> SafetyCheckResult:
         """
         Check command and request approval if needed.
@@ -466,29 +500,38 @@ class PathSafetyChecker:
                         message=f"Path is outside working directory: {self.working_dir}",
                     )
             
-            # Check protected paths
-            resolved_str = str(resolved)
+            # Compare path components, not string prefixes (e.g. /etcetera is
+            # not a child of /etc). The filesystem root itself is protected,
+            # but ordinary workspace paths below it remain usable.
             for protected in self.protected_paths:
-                if resolved_str.startswith(protected):
+                protected_path = Path(protected)
+                if not protected_path.is_absolute():
+                    continue
+                try:
+                    protected_resolved = protected_path.resolve()
+                    if protected_resolved == Path(protected_resolved.anchor):
+                        if resolved == protected_resolved:
+                            raise ValueError("workspace root path is protected")
+                    elif resolved == protected_resolved or protected_resolved in resolved.parents:
+                        raise ValueError(f"path is inside protected location: {protected}")
+                except ValueError as error:
                     return SafetyCheckResult(
                         allowed=False,
                         risk_level=RiskLevel.HIGH,
-                        message=f"Path is in protected location: {protected}",
+                        message=f"Path is protected: {error}",
                         blocked_reason="System path protection",
                     )
-            
-            # Check sensitive file patterns
-            risk_level = RiskLevel.SAFE
+
+            # Sensitive files are denied by default for both reads and writes.
+            resolved_str = resolved.as_posix()
             for pattern in self.sensitive_patterns:
-                if re.match(pattern, resolved_str, re.IGNORECASE):
-                    risk_level = RiskLevel.HIGH
-                    if operation in ("write", "delete"):
-                        return SafetyCheckResult(
-                            allowed=False,
-                            risk_level=RiskLevel.CRITICAL,
-                            message=f"Modifying sensitive file is not allowed: {resolved_str}",
-                            requires_approval=True,
-                        )
+                if re.search(pattern, resolved_str, re.IGNORECASE):
+                    return SafetyCheckResult(
+                        allowed=False,
+                        risk_level=RiskLevel.CRITICAL,
+                        message="Access to a sensitive credential/configuration path is blocked.",
+                        blocked_reason="Sensitive file access is denied by default.",
+                    )
             
             return SafetyCheckResult(
                 allowed=True,
@@ -583,9 +626,11 @@ class SafetyManager:
     async def check_and_approve_command(self, command: str) -> SafetyCheckResult:
         """Check command and request approval if needed."""
         base_result = self.check_command(command)
-        if not base_result.allowed:
+        if base_result.blocked_reason or base_result.risk_level == RiskLevel.CRITICAL:
             return base_result
-        
+        # Let CommandSafetyChecker invoke the configured callback for ASK
+        # decisions. The previous early return made every approval callback
+        # unreachable for commands classified as requiring approval.
         return await self.command_checker.check_and_approve(command)
     
     def set_approval_callback(
