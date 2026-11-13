@@ -44,8 +44,8 @@ Before restarting production, verify that a tested rollback/backup exists. Do no
 - [x] Make the API fail startup in production if `DATABASE_URL` is missing or PostgreSQL initialization fails; never silently fall back to per-host SQLite in production.
 - [x] Ensure the API and repository-agent worker initialize the same schema and use the same database.
 - [x] Introduce numbered, idempotent migrations and a schema-version table. Keep migration execution separate from normal pooled application startup; run migrations using the direct URL.
-- [x] Add migration tooling for existing SQLite users, sessions, conversations, task metadata and usage data. Preserve IDs, timestamps, ownership and foreign-key relationships. Reconcile counts and checksums before cutover.
-- [ ] Add integration tests against a disposable PostgreSQL database for signup/login, session ownership, conversations, repo-agent task leases, share permissions, usage reservations and restart recovery.
+- [x] Add migration tooling that enumerates every non-internal SQLite table, fails on missing PostgreSQL tables or unmapped columns, preserves imported IDs, and runs atomically. It currently verifies exact per-table row counts; row-by-row content checksums are still outstanding.
+- [ ] Run integration tests against a disposable PostgreSQL database for signup/login, session ownership, conversations, repo-agent task leases, share permissions and usage reservations. A pool-reconnect persistence check is implemented in `scripts/test-neon-end-to-end.mjs`, but has not yet been rerun after the latest changes; it does not replace API/worker restart tests.
 - [x] Add database health/readiness reporting that distinguishes PostgreSQL connectivity from process liveness. Do not expose connection strings or credentials in health output.
 
 ## Persistence acceptance test
@@ -71,10 +71,13 @@ After the adapter and migrations are implemented:
 
 ## Current deployment status
 
-- Neon project/database: **Pending credentials / provision by operator in Neon Console**.
-- Production connection strings: **To be set in systemd environment file (`/etc/ath-ide/api.env` & `worker.env`)**.
+- Neon project/database: **Provisioned in `ap-southeast-1`; operator-provided live Neon E2E output previously verified user/session/conversation persistence. Re-run after the current migration changes.**
+- Production connection strings: **Lightsail API/worker service configuration and production-mode startup still require independent verification; do not infer production cutover from a local `.env` or Neon connectivity test.**
 - PostgreSQL schema initializer: **Completed — numbered versioned migrations (`server/src/db/migrations/001_initial_schema.sql` and `server/src/db/migrator.js`)**.
 - Repository-agent PostgreSQL persistence: **Implemented — uses shared pool and task leasing**.
 - Primary application records (auth/users/sessions/conversations): **PostgreSQL repository layer implemented with async boundaries and fail-closed production mode (`server/src/db/database.js`)**.
-- Migration & reconciliation tooling: **Implemented (`scripts/migrate-sqlite-to-postgres.mjs`)**.
-- Full production cutover: **Awaiting Neon connection string configuration on AWS Lightsail**.
+- Migration & reconciliation tooling: **Expanded to all source tables with atomic import and exact per-table row-count checks; full row-content checksums and live migration execution remain pending (`scripts/migrate-sqlite-to-postgres.mjs`).**
+- Migration target safety: **Run against a fresh/empty target branch. Exact total-table row-count reconciliation intentionally fails if target tables already contain unrelated rows; it never truncates production data to force a match.**
+- API/worker restart and worker lease-recovery drills: **Pending on the production Lightsail services.**
+- Backup/restore: **Pending; no successful restore drill is claimed.**
+- Full production cutover: **Not signed off; requires the remaining acceptance checks and verified Lightsail service configuration.**

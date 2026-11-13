@@ -140,6 +140,21 @@ async function run() {
   assert.ok(list.some(c => c.id === testConvId), "Conversation should appear in user conversation list");
   console.log("Conversation created, updated, and listed successfully.");
 
+  // Step 7: Simulate an application connection-pool restart and verify durable rows.
+  console.log("\n[Test 7] Reconnecting to Neon and verifying restart persistence...");
+  await closePostgres();
+  const restartedPool = await initPostgres(process.env.DATABASE_URL);
+  const [persistedUser, persistedSession, persistedConversation] = await Promise.all([
+    restartedPool.query("SELECT id, username FROM users WHERE id = $1", [testUserId]),
+    restartedPool.query("SELECT id, user_id FROM sessions WHERE id = $1", [testSessionId]),
+    restartedPool.query("SELECT id, session_id, messages FROM conversations WHERE id = $1", [testConvId]),
+  ]);
+  assert.equal(persistedUser.rows[0]?.username, testUsername, "User should survive connection-pool restart");
+  assert.equal(persistedSession.rows[0]?.user_id, testUserId, "Session ownership should survive connection-pool restart");
+  assert.equal(persistedConversation.rows[0]?.session_id, testSessionId, "Conversation should survive connection-pool restart");
+  assert.deepEqual(persistedConversation.rows[0]?.messages, testMessages, "Conversation messages should survive connection-pool restart");
+  console.log("User, session, and conversation survived a fresh PostgreSQL pool connection.");
+
   // Cleanup test conversation
   await deleteConversation(testConvId, testUserId);
   const deletedConv = await getConversation(testConvId);
