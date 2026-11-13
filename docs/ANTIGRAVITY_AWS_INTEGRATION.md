@@ -18,7 +18,7 @@ Required for remote execution:
 ```dotenv
 NODE_ENV=production
 EXECUTION_RUNTIME=remote
-EXECUTION_WORKER_URL=https://YOUR_TLS_HOST/worker
+EXECUTION_WORKER_URL=https://worker.YOUR_DOMAIN
 WORKER_SHARED_SECRET=REPLACE_WITH_ONE_RANDOM_64_HEX_CHARACTER_SECRET
 PUBLIC_URL=https://YOUR_TLS_HOST
 PREVIEW_PUBLIC_URL=https://YOUR_TLS_HOST
@@ -58,8 +58,8 @@ The IAM principal should be restricted to the snapshot bucket and only the requi
 
 - Expose only the HTTPS Studio entry point publicly.
 - Keep API port 3001 and worker port 8081 private/loopback or restrict them to trusted sources.
-- Terminate TLS at Nginx and proxy the authenticated `/worker/` path to `http://127.0.0.1:8081/`, preserving the worker request path and WebSocket upgrades.
-- Configure `EXECUTION_WORKER_URL` to the HTTPS Nginx origin plus the matching worker path prefix.
+- Terminate TLS at Nginx on a dedicated worker hostname (for example `worker.YOUR_DOMAIN`) and proxy its root path to `http://127.0.0.1:8081/`, preserving request paths and WebSocket upgrades.
+- Configure `EXECUTION_WORKER_URL` to that dedicated HTTPS worker origin. The API client sends absolute `/v1/...` paths, so a path prefix such as `/worker` is not supported by the current client.
 - Do not expose the worker's unauthenticated `/healthz` endpoint to the public internet.
 
 ## 6. Deployment verification
