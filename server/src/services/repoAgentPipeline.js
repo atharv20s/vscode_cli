@@ -358,16 +358,16 @@ export async function runRepoAgentPipeline(options) {
     const summary = await runRole({
       task, role: "coder", roundNumber: roundOffset + 2 + Object.keys(priorResults).length,
       workspaceDir, workspaceId, workspaceService, tools: CODER_TOOLS, model: "coding", signal, onEvent,
-      message: baseFor(30000) + "\\n\\nIMPLEMENTATION PLAN:\\n" + plan +
-        "\\n\\nASSIGNED GRAPH TASK (" + plannedTask.id + "):\\n" + plannedTask.description +
-        "\\n\\nCOMPLETED PREREQUISITES:\\n" + JSON.stringify(priorResults) +
-        "\\n\\nImplement only this task, preserve project conventions, and avoid unrelated refactors. This pipeline currently serializes writers in the shared workspace; do not assume other tasks are editing concurrently. Run quick checks available within the workspace.",
+      message: baseFor(30000) + "\n\nIMPLEMENTATION PLAN:\n" + plan +
+        "\n\nASSIGNED GRAPH TASK (" + plannedTask.id + "):\n" + plannedTask.description +
+        "\n\nCOMPLETED PREREQUISITES:\n" + JSON.stringify(priorResults) +
+        "\n\nImplement only this task, preserve project conventions, and avoid unrelated refactors. This pipeline currently serializes writers in the shared workspace; do not assume other tasks are editing concurrently. Run quick checks available within the workspace.",
       maxIterations: 22,
     });
     return summary;
   }, { maxConcurrency: 1, signal });
   let implementationSummary = Object.entries(taskGraphResult.results)
-    .map(([id, summary]) => "TASK " + id + "\\n" + summary).join("\\n\\n");
+    .map(([id, summary]) => "TASK " + id + "\n" + summary).join("\n\n");
 
   let verification = [];
   let review = "";
