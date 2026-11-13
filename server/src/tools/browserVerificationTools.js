@@ -70,14 +70,14 @@ export function registerBrowserVerificationTool() {
     let browser;
     try {
       browser = await chromium.launch({ headless:true, args:["--no-sandbox","--disable-dev-shm-usage"] });
-      const page = await browser.newPage({ viewport:{width:1440,height:900} });
+      const page = await browser.newPage({ viewport:{width:1440,height:900} });\n      // Keep redirects and subresources on the approved origin to prevent the\n      // browser from becoming an SSRF bridge to metadata or private services.\n      await page.route("**/*", route => {\n        let target;\n        try { target = new URL(route.request().url()); } catch { return route.abort(); }\n        if (target.origin !== url.origin && !["data:","blob:"].includes(target.protocol)) return route.abort();\n        return route.continue();\n      });
       const consoleErrors = [];
       const pageErrors = [];
       page.on("console", message => { if (message.type()==="error") consoleErrors.push(message.text().slice(0,1000)); });
       page.on("pageerror", error => pageErrors.push(String(error.message || error).slice(0,1000)));
       const response = await page.goto(url.toString(), { waitUntil:"domcontentloaded", timeout:args.timeout_ms || 15000 });
       await page.waitForTimeout(500);
-      const title = await page.title();
+      if (new URL(page.url()).origin !== url.origin) throw new Error("Preview redirected outside the approved origin.");\n      const title = await page.title();
       const actions = [];
       for (const action of (args.actions || [])) {
         if (ctx.signal?.aborted) throw new Error("Browser verification cancelled.");
