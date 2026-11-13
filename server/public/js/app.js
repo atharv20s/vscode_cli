@@ -537,6 +537,7 @@ class App {
             headers: {
               "Content-Type": "application/json",
               Authorization: `Bearer ${this.token}`,
+              "If-None-Match": "*",
             },
             body: JSON.stringify({ path: fileName, content: "" }),
           });
