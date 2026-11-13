@@ -26,6 +26,8 @@ const baselineName = process.env.VISUAL_BASELINE_NAME || "default";
 if (!/^[a-zA-Z0-9_-]{1,64}$/.test(baselineName)) throw new Error("VISUAL_BASELINE_NAME must be a simple filename.");
 const baselinePath = path.join(baselineDir, baselineName + ".png");
 const updateBaseline = process.env.UPDATE_VISUAL_BASELINES === "1";
+const requireBaseline = process.env.VISUAL_BASELINE_REQUIRED === "1";
+const actualPath = process.env.VISUAL_ACTUAL_PATH ? path.resolve(process.env.VISUAL_ACTUAL_PATH) : null;
 const threshold = Math.max(0, Math.min(1, Number(process.env.VISUAL_DIFF_THRESHOLD || 0.01)));
 const { chromium } = require("playwright");
 const browser = await chromium.launch({headless:true,args:["--no-sandbox","--disable-dev-shm-usage","--no-proxy-server"]});
@@ -52,11 +54,23 @@ try {
   }
   const screenshot = await page.screenshot({type:"png",fullPage:true});
   await fs.mkdir(baselineDir,{recursive:true});
+  if (actualPath) {
+    await fs.mkdir(path.dirname(actualPath),{recursive:true});
+    await fs.writeFile(actualPath,screenshot);
+  }
   if (updateBaseline) {
     await fs.writeFile(baselinePath,screenshot);
     console.log(JSON.stringify({type:"baseline",path:baselinePath,updated:updateBaseline}));
   } else {
-    const baseline = await fs.readFile(baselinePath);
+    let baseline;
+    try { baseline = await fs.readFile(baselinePath); }
+    catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      if (requireBaseline) throw new Error("Controlled visual baseline is missing: " + baselinePath + ". Generate it with an explicit baseline-update workflow run, review it, then commit it.");
+      console.warn(JSON.stringify({type:"visual-diff",skipped:true,reason:"No reviewed baseline is committed yet.",expectedBaseline:baselinePath}));
+      baseline = null;
+    }
+    if (baseline) {
     const diff = await page.evaluate(async ({current,baseline}) => {
       const decode = async value => {
         const image = new Image();
@@ -79,6 +93,7 @@ try {
     },{current:screenshot.toString("base64"),baseline:baseline.toString("base64")});
     console.log(JSON.stringify({type:"visual-diff",...diff,threshold}));
     if(diff.ratio>threshold) failed=true;
+    }
   }
   if(errors.length) { failed=true; console.error(JSON.stringify({type:"browser-errors",errors:errors.slice(0,30)})); }
   console.log(JSON.stringify({type:"acceptance",url:parsed.origin,title,consoleOrPageErrors:errors.length,success:!failed}));
