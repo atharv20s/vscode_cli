@@ -108,3 +108,62 @@ The host must have compatible `pg_dump` and `pg_restore` binaries installed. Sto
 - Terminal recovery: **tmux-backed terminal sessions are implemented inside persistent workspace containers. Recovery after an execution-worker process restart depends on the Docker container remaining alive; container/VM restart recovery of arbitrary running processes is not guaranteed.**
 - Backup/restore: **Encrypted AES-256-GCM backup/restore utility is now included. No production backup or restore has yet been claimed.**
 - Production sign-off: **Pending real acceptance runs, verified recovery, and confirmation of consistent API/worker configuration.**
+
+
+## Read-only migration count reconciliation
+
+To investigate the previously reported 7-user/7-session versus 2-user/2-session
+counts, run this on a trusted operator host with the same production database
+environment used by the API:
+
+```bash
+npm run db:audit-migration-counts
+```
+
+This reports the current Neon endpoint/database/role fingerprint, schema
+version, user/session counts, orphan-session count, and a hash of the ID sets.
+If the original SQLite source file is still available, set
+`SQLITE_SOURCE_PATH=/absolute/path/to/source.sqlite` before running. The script
+opens SQLite read-only and compares exact user/session ID sets without printing
+raw IDs. It exits non-zero if the source and Neon sets differ, Neon has
+orphan sessions, the API/worker identity evidence is missing, or any identity
+differs. To resolve the historical count discrepancy, the original SQLite
+source file must be supplied; without it the audit reports current Neon counts
+but leaves the historical reconciliation incomplete. It does not migrate,
+repair, or delete any rows.
+
+For an automated three-way identity comparison, also set
+`API_HEALTH_URL=https://<api-host>/api/health` and
+`REPO_AGENT_WORKER_DATABASE_IDENTITY=<fingerprint-copied-from-worker-startup-log>`
+before running the audit. The script compares the direct/pooler URL fingerprint,
+the live API health `database.identity`, and the repo-agent worker's logged
+`databaseIdentity`. It reports whether all three were supplied and match.
+Pooled and direct Neon URLs should produce the same identity when they point to
+the same branch, database and role. The audit cannot establish whether
+historical reports came from the same branch unless those original connection
+identities were recorded.
+
+
+## Full encrypted backup/restore acceptance drill
+
+For a real end-to-end restore test, create a separate empty Neon branch/database
+and run during a write-quiescent maintenance window:
+
+```bash
+RESTORE_CONFIRM_EMPTY_TARGET=YES npm run db:verify-backup-restore
+```
+
+The command requires `DIRECT_DATABASE_URL`, `RESTORE_DATABASE_URL` and
+`NEON_BACKUP_KEY` in the server environment. It refuses to continue if source
+and target fingerprints match or if the target contains user relations. It
+creates an AES-256-GCM encrypted logical backup, restores it through the
+existing authenticated restore utility, then compares every user table name
+and exact row count between source and target. It also checks the source table
+counts stayed stable during the drill. The encrypted archive is retained at the
+reported path for audit. The target branch is populated by this test; do not
+point it at production or a database containing data.
+
+The script does not create or delete Neon branches. Create the empty target
+branch in Neon first, and remove it manually after retaining the evidence if it
+is no longer needed. A passing logical restore drill does not replace Neon
+provider-managed point-in-time backups.

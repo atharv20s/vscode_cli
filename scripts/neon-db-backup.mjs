@@ -15,6 +15,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import "../server/src/config/env.js";
 
 const MAGIC = Buffer.from("ATHPGBAK1");
 const IV_BYTES = 12;

@@ -17,6 +17,7 @@ import { resolveSafeWorkspacePath, safeRelativeWorkspacePath } from "../services
 
 const app = express();
 const PORT = Number(process.env.WORKER_PORT || 8081);
+const WORKER_INSTANCE_ID = crypto.randomUUID();
 const MAX_FILES = 4000;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
@@ -242,7 +243,7 @@ async function syncWorkspace(workspaceId, files) {
   }));
 }
 
-app.get("/healthz", (_req, res) => res.json({ status: "ok", role: "execution-worker" }));
+app.get("/healthz", (_req, res) => res.json({ status: "ok", role: "execution-worker", pid: process.pid, instanceId: WORKER_INSTANCE_ID }));
 
 app.post("/v1/workspace/pull", express.raw({ type: "application/json", limit: "1mb" }), verifyRequest, async (req, res) => {
   try {
