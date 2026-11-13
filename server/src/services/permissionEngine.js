@@ -43,8 +43,13 @@ export function classifyCommandForPolicy(command, { isolatedRepoAgent = false } 
 
 export function classifyFileOperationForPolicy(action, inputPath = "", { isolatedRepoAgent = false } = {}) {
   const filePath = String(inputPath || "").replace(/\\/g, "/").toLowerCase();
-  const secretPath = /(^|\/)(\.env(?:$|\.)|id_rsa(?:$|\.)|id_ed25519(?:$|\.)|credentials(?:\.json)?|secrets?(?:\.[^/]*)?|service-account(?:\.json)?|firebase-adminsdk[^/]*|\.npmrc|\.pypirc|\.netrc|kubeconfig)(?:$|\/)/i.test(filePath) ||
-    /\.(pem|key|p8|p12|pfx|jks|tfstate)$/i.test(filePath);
+  const pathSegments = filePath.split("/").filter(Boolean);
+  const secretPath = pathSegments.some(segment =>
+    /^\.env(?:$|\.)/i.test(segment) ||
+    /^(id_rsa|id_ed25519)(?:$|\.)/i.test(segment) ||
+    /^(credentials|secrets?|service-account|firebase-adminsdk[^/]*|\.npmrc|\.pypirc|\.netrc|kubeconfig)(?:$|\.)/i.test(segment) ||
+    /\.(pem|key|p8|p12|pfx|jks|tfstate)$/i.test(segment)
+  );
   if (action === "read" && secretPath) return "DENY";
   if (isolatedRepoAgent) return secretPath ? "DENY" : "ALLOW";
   if (action === "delete" || action === "delete_file") return "ASK";
