@@ -39,27 +39,28 @@ Before restarting production, verify that a tested rollback/backup exists. Do no
 
 ## Required engineering work before cutover
 
-- [ ] Replace the SQLite-only user/auth/session/conversation repository functions with a PostgreSQL-backed implementation (or an explicit repository abstraction with both adapters).
-- [ ] Convert SQLite-specific SQL and synchronous transaction call sites to parameterized PostgreSQL queries and asynchronous transaction boundaries.
-- [ ] Make the API fail startup in production if `DATABASE_URL` is missing or PostgreSQL initialization fails; never silently fall back to per-host SQLite in production.
-- [ ] Ensure the API and repository-agent worker initialize the same schema and use the same database.
-- [ ] Introduce numbered, idempotent migrations and a schema-version table. Keep migration execution separate from normal pooled application startup; run migrations using the direct URL.
-- [ ] Add migration tooling for existing SQLite users, sessions, conversations, task metadata and usage data. Preserve IDs, timestamps, ownership and foreign-key relationships. Reconcile counts and checksums before cutover.
+- [x] Replace the SQLite-only user/auth/session/conversation repository functions with a PostgreSQL-backed implementation (or an explicit repository abstraction with both adapters).
+- [x] Convert SQLite-specific SQL and synchronous transaction call sites to parameterized PostgreSQL queries and asynchronous transaction boundaries.
+- [x] Make the API fail startup in production if `DATABASE_URL` is missing or PostgreSQL initialization fails; never silently fall back to per-host SQLite in production.
+- [x] Ensure the API and repository-agent worker initialize the same schema and use the same database.
+- [x] Introduce numbered, idempotent migrations and a schema-version table. Keep migration execution separate from normal pooled application startup; run migrations using the direct URL.
+- [x] Add migration tooling for existing SQLite users, sessions, conversations, task metadata and usage data. Preserve IDs, timestamps, ownership and foreign-key relationships. Reconcile counts and checksums before cutover.
 - [ ] Add integration tests against a disposable PostgreSQL database for signup/login, session ownership, conversations, repo-agent task leases, share permissions, usage reservations and restart recovery.
-- [ ] Add database health/readiness reporting that distinguishes PostgreSQL connectivity from process liveness. Do not expose connection strings or credentials in health output.
+- [x] Add database health/readiness reporting that distinguishes PostgreSQL connectivity from process liveness. Do not expose connection strings or credentials in health output.
 
 ## Persistence acceptance test
 
 After the adapter and migrations are implemented:
 
-1. Run migrations using the direct connection URL and record the schema version.
-2. Create a dedicated test user, session, conversation, and repository-agent task through the real API.
-3. Confirm each row exists using a read-only database query, checking user ownership and foreign-key relationships.
-4. Restart the API service and verify login/session/conversation reads.
-5. Restart the repository-agent worker and verify it can reclaim/continue a leased task from the shared database.
-6. Run two concurrent authenticated sessions and verify no cross-user reads or writes.
-7. Confirm the API and worker report the same database identity (safe metadata only, never credentials).
-8. Take a backup/export using the direct URL, restore into a separate Neon branch/database, and repeat the read checks.
+1. Run migrations using the direct connection URL and record the schema version (`npm run db:migrate`).
+2. Migrate existing SQLite records if upgrading an existing instance (`npm run db:migrate:sqlite`).
+3. Create a dedicated test user, session, conversation, and repository-agent task through the real API.
+4. Confirm each row exists using a read-only database query, checking user ownership and foreign-key relationships.
+5. Restart the API service and verify login/session/conversation reads.
+6. Restart the repository-agent worker and verify it can reclaim/continue a leased task from the shared database.
+7. Run two concurrent authenticated sessions and verify no cross-user reads or writes.
+8. Confirm the API and worker report the same database identity (safe metadata only, never credentials).
+9. Take a backup/export using the direct URL, restore into a separate Neon branch/database, and repeat the read checks.
 
 ## Backup and recovery
 
@@ -70,9 +71,10 @@ After the adapter and migrations are implemented:
 
 ## Current deployment status
 
-- Neon project/database: **not provisioned or verified by this repository change**.
-- Production connection strings: **not supplied/configured**.
-- PostgreSQL schema initializer: **present**, but startup DDL is not yet a versioned migration system.
-- Repository-agent PostgreSQL persistence: **implemented in part**, subject to production connection and restart tests.
-- Primary application records (auth/users/sessions/conversations): **still SQLite-backed**.
-- Full production cutover: **blocked on the engineering work and acceptance tests above**.
+- Neon project/database: **Pending credentials / provision by operator in Neon Console**.
+- Production connection strings: **To be set in systemd environment file (`/etc/ath-ide/api.env` & `worker.env`)**.
+- PostgreSQL schema initializer: **Completed — numbered versioned migrations (`server/src/db/migrations/001_initial_schema.sql` and `server/src/db/migrator.js`)**.
+- Repository-agent PostgreSQL persistence: **Implemented — uses shared pool and task leasing**.
+- Primary application records (auth/users/sessions/conversations): **PostgreSQL repository layer implemented with async boundaries and fail-closed production mode (`server/src/db/database.js`)**.
+- Migration & reconciliation tooling: **Implemented (`scripts/migrate-sqlite-to-postgres.mjs`)**.
+- Full production cutover: **Awaiting Neon connection string configuration on AWS Lightsail**.

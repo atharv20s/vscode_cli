@@ -23,6 +23,8 @@ export const config = {
 
   // Database (PostgreSQL / Neon / Supabase or SQLite fallback)
   databaseUrl: process.env.DATABASE_URL || "",
+  directDatabaseUrl: process.env.DIRECT_DATABASE_URL || process.env.DATABASE_URL_UNPOOLED || "",
+  requirePostgres: (process.env.REQUIRE_POSTGRES || "false").toLowerCase() === "true" || !((process.env.NODE_ENV || "development") === "development"),
   redisUrl: process.env.REDIS_URL || "",
   requireDistributedEvents: (process.env.REQUIRE_DISTRIBUTED_EVENTS || "false").toLowerCase() === "true",
 
@@ -165,6 +167,10 @@ export function validateConfig() {
     errors.push(
       "JWT_SECRET must be set in production! Generate a random 32+ character string."
     );
+  }
+
+  if (!config.isDev && !config.databaseUrl) {
+    errors.push("DATABASE_URL is required in production! Set a PostgreSQL connection string (e.g. Neon pooled URL). Never silently fall back to per-host SQLite in production.");
   }
 
   if (config.llmDailyBudgetUsd > 0 && !config.isDev && !config.databaseUrl) {

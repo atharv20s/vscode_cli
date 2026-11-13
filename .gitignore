@@ -1,7 +1,14 @@
 # Environment secrets (NEVER commit these)
 .env
+.env.*
+*.env
+scripts/*.env
 .env.local
 .env.*.local
+*.pem
+*.key
+*.creds.json
+.worker_s3_creds.json
 
 # Ignore everything by default
 /*
@@ -23,6 +30,9 @@ server/node_modules/
 server/workspace/
 server/data/
 server/.env
+!scripts/
+!neon.ts
+!package.json
 !cli.py
 !setup.py
 !hooks/
@@ -50,7 +60,10 @@ web/out/
 pyvenv.cfg
 Include/
 Lib/
-Scripts/
+/Scripts/
+!scripts/
+!scripts/**
+scripts/*.env
 
 # Python cache
 __pycache__/

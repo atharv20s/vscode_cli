@@ -136,9 +136,9 @@ import { v4 as uuidv4 } from "uuid";
 /**
  * GET /api/agent/conversations — List saved conversations.
  */
-export function getConversations(req, res) {
+export async function getConversations(req, res) {
   try {
-    const list = listConversations(req.user.id);
+    const list = await listConversations(req.user.id);
     res.json({ success: true, conversations: list });
   } catch (err) {
     res.status(500).json({ error: "DbError", message: err.message });
@@ -148,7 +148,7 @@ export function getConversations(req, res) {
 /**
  * POST /api/agent/conversations — Create a new conversation.
  */
-export function createNewConversation(req, res) {
+export async function createNewConversation(req, res) {
   const { title, model } = req.body || {};
   const convId = `conv_${uuidv4().replace(/-/g, "").slice(0, 16)}`;
   const convTitle = title || "New Conversation";
@@ -156,7 +156,7 @@ export function createNewConversation(req, res) {
   const uid = req.user.id;
 
   try {
-    createConversation({
+    await createConversation({
       id: convId,
       sessionId: sid,
       userId: uid,
@@ -172,7 +172,7 @@ export function createNewConversation(req, res) {
 /**
  * PATCH /api/agent/conversations/:id — Rename a conversation title.
  */
-export function renameConversation(req, res) {
+export async function renameConversation(req, res) {
   const { id } = req.params;
   const { title } = req.body || {};
 
@@ -181,7 +181,7 @@ export function renameConversation(req, res) {
   }
 
   try {
-    const updated = updateConversationTitle(id, title.trim(), req.user.id);
+    const updated = await updateConversationTitle(id, title.trim(), req.user.id);
     if (!updated.changes) return res.status(404).json({ error: "NotFound", message: "Conversation not found." });
     res.json({ success: true, message: "Conversation title updated." });
   } catch (err) {
@@ -192,11 +192,11 @@ export function renameConversation(req, res) {
 /**
  * DELETE /api/agent/conversations/:id — Delete a conversation.
  */
-export function removeConversation(req, res) {
+export async function removeConversation(req, res) {
   const { id } = req.params;
 
   try {
-    const deleted = deleteConversation(id, req.user.id);
+    const deleted = await deleteConversation(id, req.user.id);
     if (!deleted.changes) return res.status(404).json({ error: "NotFound", message: "Conversation not found." });
     res.json({ success: true, message: "Conversation deleted." });
   } catch (err) {

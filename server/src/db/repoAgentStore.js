@@ -9,7 +9,7 @@ function pool() { return getPostgresPool(); }
  */
 export async function ensureRepoAgentUser(userId) {
   if (!pool()) return true;
-  const user = findUserById(userId);
+  const user = await findUserById(userId);
   if (!user) throw new Error("Authenticated user profile was not found in the API user store.");
   await pool().query(
     `INSERT INTO users (id,github_id,username,email,avatar_url)

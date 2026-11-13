@@ -18,8 +18,24 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve,ms));
 let currentTaskId = null;
 
 async function bootDatabase() {
-  if (config.databaseUrl) await initPostgres(config.databaseUrl);
-  initDatabase();
+  if (config.databaseUrl) {
+    try {
+      await initPostgres(config.databaseUrl, { directUrl: config.directDatabaseUrl });
+      logger.info("Worker connected to shared PostgreSQL database");
+    } catch (pgErr) {
+      if (!config.isDev || config.requirePostgres) {
+        logger.error("Worker failed to connect to shared PostgreSQL database in production", { error: pgErr.message });
+        throw pgErr;
+      }
+      logger.warn(`Worker postgres connect failed: ${pgErr.message}. Falling back to SQLite in development.`);
+      initDatabase();
+    }
+  } else {
+    if (!config.isDev || config.requirePostgres) {
+      throw new Error("DATABASE_URL is required for repoAgentWorker in production.");
+    }
+    initDatabase();
+  }
 }
 
 async function consumeMessage(message) {

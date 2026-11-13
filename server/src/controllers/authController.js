@@ -38,20 +38,20 @@ export async function guestAuth(req, res) {
     const username = `guest_${guestId.slice(-4)}`;
     const email = `${guestId}@local.studio`;
 
-    let user = findUserById(userId);
+    let user = await findUserById(userId);
     if (!user) {
-      createUser({
+      await createUser({
         id: userId,
         username,
         email,
         avatarUrl: `https://api.dicebear.com/7.x/identicon/svg?seed=${guestId}`,
       });
-      user = findUserById(userId);
+      user = await findUserById(userId);
     }
 
-    // Ensure session exists in SQLite
+    // Ensure session exists in database
     try {
-      createSession({
+      await createSession({
         id: sessionId,
         userId: user.id,
         workspacePath: config.workspaceRoot,
@@ -121,18 +121,18 @@ export async function register(req, res) {
   const cleanUsername = cleanEmail.includes("@") ? cleanEmail.split("@")[0] : cleanEmail;
 
   // Check if email or username already taken
-  const existingEmail = findUserByEmail(cleanEmail);
+  const existingEmail = await findUserByEmail(cleanEmail);
   if (existingEmail) {
     return res.status(409).json({ error: "UserExists", message: "An account with this email already exists. Please Sign In." });
   }
 
-  const existingUser = findUserByUsername(cleanUsername);
+  const existingUser = await findUserByUsername(cleanUsername);
   const finalUsername = existingUser ? `${cleanUsername}_${Date.now().toString().slice(-4)}` : cleanUsername;
 
   const userId = `usr_${uuidv4().replace(/-/g, "").slice(0, 16)}`;
   const passwordHash = hashPassword(password);
 
-  createUser({
+  await createUser({
     id: userId,
     username: finalUsername,
     email: cleanEmail,
@@ -140,7 +140,7 @@ export async function register(req, res) {
     avatarUrl: `https://api.dicebear.com/7.x/identicon/svg?seed=${cleanUsername}`,
   });
 
-  const newUser = findUserById(userId);
+  const newUser = await findUserById(userId);
   const userPayload = {
     id: newUser.id,
     username: newUser.username,
@@ -179,7 +179,7 @@ export async function login(req, res) {
     return res.status(400).json({ error: "BadRequest", message: "Email and password are required." });
   }
 
-  const user = findUserByEmail(identifier.toLowerCase()) || findUserByUsername(identifier);
+  const user = (await findUserByEmail(identifier.toLowerCase())) || (await findUserByUsername(identifier));
 
   if (!user || !user.password_hash || !verifyPassword(password, user.password_hash)) {
     return res.status(401).json({ error: "AuthFailed", message: "Invalid email or password." });
@@ -226,7 +226,7 @@ export async function refreshAccessToken(req, res) {
     return res.status(401).json({ error: "InvalidToken", message: "Invalid or expired refresh token. Please sign in again." });
   }
 
-  const user = findUserById(decoded.id);
+  const user = await findUserById(decoded.id);
   if (!user) {
     return res.status(401).json({ error: "UserNotFound", message: "User account no longer exists." });
   }
@@ -301,11 +301,11 @@ export async function connectGithubToken(req, res) {
 
     let user = null;
     if (userId) {
-      updateUserProfile(userId, {
+      await updateUserProfile(userId, {
         avatarUrl: githubUser.avatar_url,
         githubId: githubUser.id,
-        });
-      user = findUserById(userId);
+      });
+      user = await findUserById(userId);
     }
 
     const updatedToken = generateToken({
@@ -362,19 +362,19 @@ export async function tokenLogin(req, res) {
 
     const githubUser = await userResponse.json();
 
-    let user = findUserByGithubId(githubUser.id);
+    let user = await findUserByGithubId(githubUser.id);
     if (!user) {
       const userId = uuidv4();
-      createUser({
+      await createUser({
         id: userId,
         githubId: githubUser.id,
         username: githubUser.login,
         email: githubUser.email || `${githubUser.login}@github.user`,
         avatarUrl: githubUser.avatar_url,
       });
-      user = findUserById(userId);
+      user = await findUserById(userId);
     } else {
-      updateUserToken(user.id, token.trim());
+      await updateUserToken(user.id, token.trim());
       user.github_access_token = token.trim();
     }
 
@@ -449,10 +449,10 @@ export async function githubCallback(req, res) {
     const githubUser = await userResponse.json();
 
     // 3. Upsert user in database
-    let user = findUserByGithubId(githubUser.id);
+    let user = await findUserByGithubId(githubUser.id);
     if (!user) {
       const userId = uuidv4();
-      createUser({
+      await createUser({
         id: userId,
         githubId: githubUser.id,
         username: githubUser.login,
@@ -460,9 +460,9 @@ export async function githubCallback(req, res) {
         avatarUrl: githubUser.avatar_url,
         githubAccessToken,
       });
-      user = findUserById(userId);
+      user = await findUserById(userId);
     } else {
-      updateUserToken(user.id, githubAccessToken);
+      await updateUserToken(user.id, githubAccessToken);
       user.github_access_token = githubAccessToken;
     }
 
@@ -485,12 +485,12 @@ export async function githubCallback(req, res) {
 /**
  * GET /api/auth/me — Return current logged-in user profile.
  */
-export function getMe(req, res) {
+export async function getMe(req, res) {
   if (!req.user) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const user = findUserById(req.user.id);
+  const user = await findUserById(req.user.id);
   res.json({
     user: {
       id: req.user.id,

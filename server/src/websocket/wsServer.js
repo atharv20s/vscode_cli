@@ -511,14 +511,14 @@ async function handleChat(ws, payload, user) {
       },
     });
 
-    // Persist conversation and messages to SQLite scoped by user identity
+    // Persist conversation and messages scoped by user identity
     try {
       let convId = conversationId || `conv_${Date.now()}`;
-      const existing = getConversation(convId);
+      const existing = await getConversation(convId);
       const convTitle = (message || "").slice(0, 60) + ((message || "").length > 60 ? "..." : "");
 
       if (!existing) {
-        createConversation({
+        await createConversation({
           id: convId,
           sessionId,
           userId,           // store user identity directly
@@ -528,7 +528,7 @@ async function handleChat(ws, payload, user) {
       }
 
       if (result?.messages?.length) {
-        updateConversationMessages(convId, result.messages, result.totalTokens || 0);
+        await updateConversationMessages(convId, result.messages, result.totalTokens || 0);
       }
 
       sendMessage(ws, "conversation_updated", {
