@@ -10,6 +10,15 @@ import path from "path";
 import crypto from "crypto";
 import { config } from "../config/env.js";
 
+export function workspaceNetworkName(workspaceId, override) {
+  if (override === "none" || config.dockerWorkspaceNetwork === "none") return "none";
+  if (override && override !== "bridge") return override;
+  // Never place separate users on Docker's shared default bridge. Each workspace
+  // gets its own internal network, even when the legacy config says "bridge".
+  const digest = crypto.createHash("sha256").update(String(workspaceId)).digest("hex").slice(0, 16);
+  return `athide-net-${digest}`;
+}
+
 function containerName(workspaceId) {
   const digest = crypto.createHash("sha256").update(String(workspaceId)).digest("hex").slice(0, 24);
   return `athide-${digest}`;
@@ -20,8 +29,8 @@ class DockerWorkspaceRuntime {
     this.containers = new Map();
   }
 
-  async ensureNetwork() {
-    const network = config.dockerWorkspaceNetwork;
+  async ensureNetwork(workspaceId, override) {
+    const network = workspaceNetworkName(workspaceId, override);
     if (!network || network === "none" || network === "bridge") return;
     try {
       execFileSync(config.dockerBinary, ["network", "inspect", network], { stdio: "ignore", timeout: 10000 });
@@ -36,10 +45,11 @@ class DockerWorkspaceRuntime {
   }
 
   async getContainerAddress(workspaceId) {
-    if (config.dockerWorkspaceNetwork === "none") {
-      throw new Error("Preview routing requires a named internal Docker network; configure DOCKER_WORKSPACE_NETWORK=ath-ide-internal.");
+    const network = workspaceNetworkName(workspaceId);
+    if (network === "none") {
+      throw new Error("Preview routing requires a workspace network; configure a named DOCKER_WORKSPACE_NETWORK.");
     }
-    await this.ensureNetwork();
+    await this.ensureNetwork(workspaceId);
     const name = containerName(workspaceId);
     const raw = execFileSync(config.dockerBinary, ["inspect", name], {
       encoding: "utf8",
@@ -48,14 +58,15 @@ class DockerWorkspaceRuntime {
     });
     const inspected = JSON.parse(raw)[0];
     const networks = inspected?.NetworkSettings?.Networks || {};
-    const preferred = networks[config.dockerWorkspaceNetwork];
-    const address = preferred?.IPAddress || Object.values(networks).map(item => item?.IPAddress).find(Boolean);
+    const preferred = networks[network];
+    const address = preferred?.IPAddress;
     if (!address) throw new Error("Workspace container has no reachable IP on the configured runtime network.");
     return address;
   }
 
   async ensureContainer(workspaceId, workspaceDir, options = {}) {
-    await this.ensureNetwork();
+    const network = workspaceNetworkName(workspaceId, options.network);
+    await this.ensureNetwork(workspaceId, options.network);
     if (config.executionRuntime !== "docker") {
       throw new Error("Docker workspace runtime is disabled. Set EXECUTION_RUNTIME=docker on a worker with Docker Engine access.");
     }
@@ -81,7 +92,8 @@ class DockerWorkspaceRuntime {
       });
       const inspected = JSON.parse(raw)[0];
       const mount = inspected?.Mounts?.find(item => item.Destination === "/workspace");
-      if (mount && path.resolve(mount.Source) === path.resolve(workspaceDir)) {
+      if (mount && path.resolve(mount.Source) === path.resolve(workspaceDir) &&
+          inspected?.NetworkSettings?.Networks?.[network]) {
         if (!inspected.State?.Running) {
           execFileSync(docker, ["start", name], { stdio: "ignore", timeout: 15000 });
         }
@@ -118,7 +130,7 @@ class DockerWorkspaceRuntime {
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
         "--user", `${uid}:${gid}`,
         "-e", "HOME=/tmp",
-        "--network", options.network || config.dockerWorkspaceNetwork,
+        "--network", network,
         "-v", `${workspaceDir}:/workspace:rw`,
         "-w", "/workspace",
         config.dockerImage,
