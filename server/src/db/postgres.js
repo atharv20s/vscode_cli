@@ -6,12 +6,14 @@
  */
 
 import pg from "pg";
+import crypto from "crypto";
 import { logger } from "../config/logger.js";
 import { runMigrations } from "./migrator.js";
 
 const { Pool } = pg;
 
 let pool = null;
+let poolIdentity = null;
 
 function getSslConfig(connectionString) {
   if (
@@ -61,8 +63,17 @@ export async function initPostgres(connectionString, options = {}) {
   // Test pool connection
   const client = await pool.connect();
   try {
-    const res = await client.query("SELECT CURRENT_TIMESTAMP AS now;");
-    logger.info("Connected to PostgreSQL Database Pool (Neon/AWS RDS)", { timestamp: res.rows[0]?.now });
+    const res = await client.query("SELECT CURRENT_TIMESTAMP AS now, current_database() AS database_name, current_user AS database_role;");
+    let normalizedHost = "";
+    try {
+      normalizedHost = new URL(connectionString).hostname.toLowerCase().replace(/-pooler(?=\\.)/, "");
+    } catch {}
+    const identityMaterial = [normalizedHost, res.rows[0]?.database_name || "", res.rows[0]?.database_role || ""].join("/");
+    poolIdentity = crypto.createHash("sha256").update(identityMaterial).digest("hex").slice(0, 24);
+    logger.info("Connected to PostgreSQL Database Pool (Neon/AWS RDS)", {
+      timestamp: res.rows[0]?.now,
+      databaseIdentity: poolIdentity,
+    });
   } finally {
     client.release();
   }
@@ -79,11 +90,20 @@ export function getPostgresPool() {
 }
 
 /**
+ * Non-secret fingerprint for comparing API and worker database configuration.
+ * Pooled and direct Neon hostnames normalize to the same endpoint identity.
+ */
+export function getPostgresIdentity() {
+  return poolIdentity;
+}
+
+/**
  * Set the PostgreSQL pool instance (used for testing or dependency injection).
  * @param {pg.Pool | null} customPool
  */
 export function setPostgresPool(customPool) {
   pool = customPool;
+  poolIdentity = null;
 }
 
 /**
@@ -93,6 +113,7 @@ export async function closePostgres() {
   if (pool) {
     const p = pool;
     pool = null;
+    poolIdentity = null;
     await p.end().catch(() => {});
   }
 }
@@ -118,6 +139,7 @@ export async function getPostgresHealth() {
         dialect: "postgres",
         latencyMs,
         schemaVersion: Number(verRes.rows[0]?.max_ver || 0),
+        databaseIdentity: poolIdentity,
         poolStats: {
           totalCount: pool.totalCount,
           idleCount: pool.idleCount,
