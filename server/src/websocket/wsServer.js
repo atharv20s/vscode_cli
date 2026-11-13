@@ -141,16 +141,16 @@ export function initWebSocketServer(httpServer) {
 
   // 1. Filesystem Events
   eventBus.subscribe(EVENT_TOPICS.FILE_CHANGED, (envelope) => {
-    broadcastScoped("file.changed", envelope);
+    broadcastScoped("file.changed", envelope, { ...envelope.payload, actor: envelope.actor, source: envelope.source, eventId: envelope.eventId });
   });
   eventBus.subscribe(EVENT_TOPICS.FILE_CREATED, (envelope) => {
-    broadcastScoped("file.created", envelope);
+    broadcastScoped("file.created", envelope, { ...envelope.payload, actor: envelope.actor, source: envelope.source, eventId: envelope.eventId });
   });
   eventBus.subscribe(EVENT_TOPICS.FILE_DELETED, (envelope) => {
-    broadcastScoped("file.deleted", envelope);
+    broadcastScoped("file.deleted", envelope, { ...envelope.payload, actor: envelope.actor, source: envelope.source, eventId: envelope.eventId });
   });
   eventBus.subscribe(EVENT_TOPICS.FILE_RENAMED, (envelope) => {
-    broadcastScoped("file.renamed", envelope);
+    broadcastScoped("file.renamed", envelope, { ...envelope.payload, actor: envelope.actor, source: envelope.source, eventId: envelope.eventId });
   });
 
   // 2. Agent Background Command Lifecycle
