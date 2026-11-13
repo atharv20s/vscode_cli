@@ -12,7 +12,7 @@ import { createScopedWorkspaceService } from "./workspaceService.js";
 const PLANNER_TOOLS = ["read_file","list_files"];
 const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command"];
 const WORKTREE_CODER_TOOLS = ["read_file","write_file","edit_file","list_files"];
-const TESTER_TOOLS = ["read_file","list_files","run_command","browser_verify"];
+const TESTER_TOOLS = ["read_file","list_files","run_command","start_preview","get_preview_status","stop_preview","browser_verify"];
 const REVIEWER_TOOLS = ["read_file","list_files"];
 
 function extractAssistantText(result) {
@@ -424,7 +424,7 @@ export async function runRepoAgentPipeline(options) {
         task, role: "tester", roundNumber: roundOffset + 2 + plannedTasks.length + attempt * 2, workspaceDir, workspaceId,
         workspaceService, tools: TESTER_TOOLS, model: "fast", signal, onEvent,
         message: baseFor(14000) + "\n\nIMPLEMENTATION SUMMARY:\n" + implementationSummary +
-          "\n\nRun the repository's most relevant tests/build checks that can run without downloading dependencies. If the changes affect user-facing UI or a web preview, call browser_verify on the preview URL to inspect errors and visual layout. Report exact commands, browser evidence, and outputs. Do not edit source code in this phase.",
+          "\n\nRun the repository's most relevant tests/build checks that can run without downloading dependencies. If the changes affect user-facing UI, automatically provision a preview: inspect package scripts, start the appropriate dev server with start_preview, wait for get_preview_status to report running, then call browser_verify with the returned URL. Exercise one or more meaningful accessible interactions when feasible. Always call stop_preview after browser verification, including when verification fails. If preview startup or Playwright is unavailable, report the exact blocker; never claim browser verification passed. Report the URL, HTTP status, console/page errors, screenshot evidence and interaction results. Do not edit source code in this phase.",
         maxIterations: 10,
       }),
       runDeterministicChecks({ task, root: workspaceDir, workspaceId, context, signal, onEvent }),
