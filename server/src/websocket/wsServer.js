@@ -27,6 +27,7 @@ import { getPreviewService } from "../services/previewService.js";
 import { permissionEngine } from "../services/permissionEngine.js";
 import { LocalBackend } from "../services/backends/localBackend.js";
 import { eventBus, EVENT_TOPICS } from "./eventBus.js";
+import { resolveWorkspaceShare } from "../services/workspaceCollaborationService.js";
 import { createConversation, updateConversationMessages, getConversation, listConversations, findOrCreateUserSession } from "../db/database.js";
 
 /** Heartbeat interval in ms */
@@ -42,6 +43,8 @@ export function initWebSocketServer(httpServer) {
     server: httpServer,
     path: "/ws",
   });
+  const presenceNodeId = crypto.randomUUID();
+  const presenceByWorkspace = new Map();
 
   // Heartbeat check
   const heartbeatInterval = setInterval(() => {
@@ -66,6 +69,7 @@ export function initWebSocketServer(httpServer) {
   wss.on("close", () => {
     clearInterval(heartbeatInterval);
     clearInterval(idleCleanupInterval);
+    clearInterval(presenceInterval);
   });
 
   const broadcastScoped = (type, envelope, payload = envelope.payload) => {
@@ -75,18 +79,78 @@ export function initWebSocketServer(httpServer) {
     });
   };
 
+  const sendPresenceToLocal = workspaceId => {
+    const nodes = presenceByWorkspace.get(workspaceId) || new Map();
+    const now = Date.now();
+    const peers = [...nodes.values()]
+      .filter(snapshot => now - snapshot.seenAt < 45000)
+      .flatMap(snapshot => snapshot.peers);
+    wss.clients.forEach(client => {
+      if (client.workspaceId === workspaceId && client.readyState === 1) {
+        sendMessage(client, "collab.presence", { users: peers, count: peers.length });
+      }
+    });
+  };
+
+  eventBus.subscribe("collab.presence.snapshot", envelope => {
+    if (!envelope.workspaceId || !envelope.payload?.nodeId) return;
+    let nodes = presenceByWorkspace.get(envelope.workspaceId);
+    if (!nodes) {
+      nodes = new Map();
+      presenceByWorkspace.set(envelope.workspaceId, nodes);
+    }
+    nodes.set(envelope.payload.nodeId, {
+      peers: Array.isArray(envelope.payload.peers) ? envelope.payload.peers : [],
+      seenAt: Date.now(),
+    });
+    sendPresenceToLocal(envelope.workspaceId);
+  });
+
+  const broadcastPresence = workspaceId => {
+    if (!workspaceId) return;
+    const peers = [...wss.clients]
+      .filter(client => client.workspaceId === workspaceId && client.readyState === 1)
+      .map(client => ({
+        connectionId: client.sessionId,
+        userId: client.actorUserId || client.userId,
+        username: client.collaboratorName || "Collaborator",
+        role: client.workspacePermission || "owner",
+      }));
+    eventBus.publish("collab.presence.snapshot", { nodeId: presenceNodeId, peers }, {
+      workspaceId,
+      source: "websocket",
+      actor: "system",
+    });
+  };
+
+  const presenceInterval = setInterval(() => {
+    const activeWorkspaces = new Set([...wss.clients]
+      .filter(client => client.workspaceId && client.readyState === 1)
+      .map(client => client.workspaceId));
+    for (const workspaceId of activeWorkspaces) broadcastPresence(workspaceId);
+    const now = Date.now();
+    for (const [workspaceId, nodes] of presenceByWorkspace) {
+      for (const [nodeId, snapshot] of nodes) {
+        if (now - snapshot.seenAt >= 45000) nodes.delete(nodeId);
+      }
+      if (!nodes.size) presenceByWorkspace.delete(workspaceId);
+      else sendPresenceToLocal(workspaceId);
+    }
+  }, 15000);
+  presenceInterval.unref?.();
+
   // 1. Filesystem Events
   eventBus.subscribe(EVENT_TOPICS.FILE_CHANGED, (envelope) => {
-    broadcastScoped("file.changed", envelope);
+    broadcastScoped("file.changed", envelope, { ...envelope.payload, actor: envelope.actor, source: envelope.source, eventId: envelope.eventId });
   });
   eventBus.subscribe(EVENT_TOPICS.FILE_CREATED, (envelope) => {
-    broadcastScoped("file.created", envelope);
+    broadcastScoped("file.created", envelope, { ...envelope.payload, actor: envelope.actor, source: envelope.source, eventId: envelope.eventId });
   });
   eventBus.subscribe(EVENT_TOPICS.FILE_DELETED, (envelope) => {
-    broadcastScoped("file.deleted", envelope);
+    broadcastScoped("file.deleted", envelope, { ...envelope.payload, actor: envelope.actor, source: envelope.source, eventId: envelope.eventId });
   });
   eventBus.subscribe(EVENT_TOPICS.FILE_RENAMED, (envelope) => {
-    broadcastScoped("file.renamed", envelope);
+    broadcastScoped("file.renamed", envelope, { ...envelope.payload, actor: envelope.actor, source: envelope.source, eventId: envelope.eventId });
   });
 
   // 2. Agent Background Command Lifecycle
@@ -158,6 +222,13 @@ export function initWebSocketServer(httpServer) {
     const offeredProtocols = String(req.headers["sec-websocket-protocol"] || "")
       .split(",").map(value => value.trim()).filter(Boolean);
     const token = offeredProtocols[0] === "ath-auth" ? offeredProtocols[1] : null;
+    const shareProtocol = offeredProtocols.find(value => value.startsWith("ath-share."));
+    const shareToken = shareProtocol ? shareProtocol.slice("ath-share.".length) : null;
+    const share = shareToken ? await resolveWorkspaceShare(shareToken).catch(() => null) : null;
+    if (shareProtocol && !share) {
+      ws.close(4003, "Invalid or expired workspace collaboration link");
+      return;
+    }
     let user = null;
 
     if (token) {
@@ -167,13 +238,16 @@ export function initWebSocketServer(httpServer) {
       }
     }
 
-    if (!user && !config.isDev) {
+    if (!user && !share && !config.isDev) {
       ws.close(4001, "Authentication required");
       return;
     }
 
-    ws.userId = user?.id || ws.sessionId;
-    const requestedWorkspace = url.searchParams.get("workspace") || "default";
+    ws.actorUserId = user?.id || ws.sessionId;
+    ws.collaboratorName = user?.username || "Collaborator";
+    ws.workspacePermission = share?.permission || "owner";
+    ws.userId = share?.ownerUserId || user?.id || ws.sessionId;
+    const requestedWorkspace = share?.workspaceId || url.searchParams.get("workspace") || "default";
     try {
       await ensureWorkspaceSession(ws.userId, requestedWorkspace);
       ws.workspaceService = getWorkspaceService(ws.userId, requestedWorkspace);
@@ -183,6 +257,7 @@ export function initWebSocketServer(httpServer) {
     }
     ws.workspaceKey = requestedWorkspace;
     ws.workspaceId = ws.workspaceService.workspaceId;
+    broadcastPresence(ws.workspaceId);
     const requestedTerminalId = url.searchParams.get("terminalSessionId") || "";
     ws.terminalSessionId = /^[a-f0-9-]{36}$/i.test(requestedTerminalId) ? requestedTerminalId : crypto.randomUUID();
     ws.previewService = getPreviewService(ws.workspaceId);
@@ -216,6 +291,7 @@ export function initWebSocketServer(httpServer) {
       executionService.detachInteractive(ws.terminalSessionId, ws);
       try { ws.remoteTerminal?.close(); } catch {}
       removeConnection(ws);
+      broadcastPresence(ws.workspaceId);
     });
 
     ws.on("error", (err) => {
@@ -223,6 +299,7 @@ export function initWebSocketServer(httpServer) {
       executionService.detachInteractive(ws.terminalSessionId, ws);
       try { ws.remoteTerminal?.close(); } catch {}
       removeConnection(ws);
+      broadcastPresence(ws.workspaceId);
     });
 
     // Send welcome and metadata
@@ -243,6 +320,17 @@ export function initWebSocketServer(httpServer) {
  */
 async function handleMessage(ws, msg, user) {
   const { type, payload } = msg;
+  const ownerOnly = new Set([
+    "abort", "agent.command.stop", "permission.resolve", "permission_resolve",
+    "bridge.register", "bridge.output", "bridge.completed",
+    "preview.start", "preview_start", "preview.stop", "preview_stop",
+    "preview.restart", "preview_restart", "terminal.paste", "terminal_resize",
+    "terminal.resize", "terminal.command.submitted",
+  ]);
+  if (ws.workspacePermission !== "owner" && ownerOnly.has(type)) {
+    sendMessage(ws, "error", { message: "This action is available only to the workspace owner." });
+    return;
+  }
 
   switch (type) {
     case "ping":
@@ -250,6 +338,10 @@ async function handleMessage(ws, msg, user) {
       break;
 
     case "chat":
+      if (ws.workspacePermission !== "owner") {
+        sendMessage(ws, "error", { message: "AI agent execution is disabled for shared collaborators. Edit access is limited to workspace files." });
+        break;
+      }
       await handleChat(ws, payload, user);
       break;
 
@@ -334,12 +426,20 @@ async function handleMessage(ws, msg, user) {
 
     case "file_save":
     case "file.write":
+      if (ws.workspacePermission !== "owner") {
+        sendMessage(ws, "error", { message: "Shared collaborators must use version-checked workspace file saves." });
+        break;
+      }
       await handleFileSave(ws, payload);
       break;
 
     // Terminal Session Lifecycle
     case "terminal_init":
     case "terminal.init":
+      if (ws.workspacePermission !== "owner") {
+        sendMessage(ws, "error", { message: "Shared collaborators cannot open workspace terminals." });
+        break;
+      }
       if (config.executionRuntime === "remote") {
         try { ws.remoteTerminal?.close(); } catch {}
         const remote = await connectRemoteTerminal({
@@ -386,6 +486,10 @@ async function handleMessage(ws, msg, user) {
     case "terminal_input":
     case "terminal.input":
     case "terminal.keystroke":
+      if (ws.workspacePermission !== "owner") {
+        sendMessage(ws, "error", { message: "Shared collaborators cannot use workspace terminals." });
+        break;
+      }
       eventBus.publish(EVENT_TOPICS.TERMINAL_INPUT, {}, {
         sessionId: ws.terminalSessionId,
         workspaceId: ws.workspaceId,
@@ -560,7 +664,7 @@ async function handleFileRead(ws, payload) {
 
   try {
     const result = await ws.workspaceService.readFile(filePath);
-    sendMessage(ws, "file_content", { path: result.path, content: result.content });
+    sendMessage(ws, "file_content", { path: result.path, content: result.content, version: result.version });
   } catch (err) {
     sendMessage(ws, "error", { message: `File read failed: ${err.message}` });
   }
@@ -578,10 +682,11 @@ async function handleFileSave(ws, payload) {
 
   try {
     const result = await ws.workspaceService.writeFile(filePath, content, {
+      expectedVersion: payload?.expectedVersion,
       source: "ui",
-      actor: ws.userId,
+      actor: ws.actorUserId || ws.userId,
     });
-    sendMessage(ws, "file_saved", { path: result.path, size: result.size });
+    sendMessage(ws, "file_saved", { path: result.path, size: result.size, version: result.version });
   } catch (err) {
     sendMessage(ws, "error", { message: `File save failed: ${err.message}` });
   }

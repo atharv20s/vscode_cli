@@ -50,7 +50,7 @@ class EditorManager {
     try {
       const tabsArray = [];
       for (const [path, data] of this.openTabs.entries()) {
-        tabsArray.push({ path, content: data.content, isDirty: data.isDirty });
+        tabsArray.push({ path, content: data.content, isDirty: data.isDirty, version: data.version || null });
       }
       localStorage.setItem("ath_cached_editor_tabs", JSON.stringify(tabsArray));
       localStorage.setItem("ath_cached_active_tab", this.activeTab || "");
@@ -71,6 +71,7 @@ class EditorManager {
         tabs.forEach((tab) => {
           this.openTabs.set(tab.path, {
             content: tab.content,
+            version: tab.version || null,
             isDirty: tab.isDirty || false,
             language: this.detectLanguage(tab.path),
           });
@@ -110,6 +111,7 @@ class EditorManager {
 
       this.openTabs.set(filePath, {
         content: data.content,
+        version: data.version || null,
         isDirty: false,
         language,
       });
@@ -301,19 +303,27 @@ class EditorManager {
       tabEl.classList.remove("tab-streaming");
     }
 
-    // Auto save to workspace on backend
+    // Auto save to workspace on backend with optimistic concurrency.
     try {
-      await fetch("/api/workspace/file", {
+      const tab = this.openTabs.get(filePath);
+      const saveResponse = await fetch("/api/workspace/file", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
+          ...(tab?.version ? { "If-Match": `"${tab.version}"` } : { "If-None-Match": "*" }),
         },
         body: JSON.stringify({
           path: filePath,
-          content: finalContent || this.openTabs.get(filePath)?.content || "",
+          content: finalContent || tab?.content || "",
         }),
       });
+      if (saveResponse.ok) {
+        const saved = await saveResponse.json().catch(() => ({}));
+        if (tab && saved.version) tab.version = saved.version;
+      } else if (saveResponse.status === 409 && window.app?.logTerminal) {
+        window.app.logTerminal(`Could not save ${filePath}: another collaborator changed it. Reload before retrying.`, "warning");
+      }
     } catch {}
 
     this.saveStateToCache();
@@ -352,6 +362,7 @@ class EditorManager {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
+          ...(tab.version ? { "If-Match": `"${tab.version}"` } : { "If-None-Match": "*" }),
         },
         body: JSON.stringify({
           path: filePath,
@@ -359,7 +370,13 @@ class EditorManager {
         }),
       });
 
+      if (response.status === 409) {
+        const conflict = await response.json().catch(() => ({}));
+        throw new Error(conflict.message || "This file changed in another session. Reload it before saving.");
+      }
       if (!response.ok) throw new Error("Save failed");
+      const saved = await response.json().catch(() => ({}));
+      tab.version = saved.version || tab.version;
 
       tab.isDirty = false;
       this.updateTabUI(filePath);
@@ -367,6 +384,35 @@ class EditorManager {
       app.logTerminal(`Saved ${filePath}`, "success");
     } catch (err) {
       app.logTerminal(`Failed to save ${filePath}: ${err.message}`, "error");
+    }
+  }
+
+  async handleRemoteFileChange(event) {
+    if (event?.actor && event.actor === window.app?.currentUser?.id) return;
+    const filePath = event?.path;
+    if (!filePath || !this.openTabs.has(filePath)) return;
+    const tab = this.openTabs.get(filePath);
+    if (tab.isDirty) {
+      tab.hasRemoteConflict = true;
+      this.updateTabUI(filePath);
+      if (window.app?.logTerminal) window.app.logTerminal(`Another collaborator changed ${filePath}. Your local draft was kept; reload before saving.`, "warning");
+      return;
+    }
+    try {
+      const response = await fetch(`/api/workspace/file?path=${encodeURIComponent(filePath)}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token") || ""}` },
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      tab.content = data.content;
+      tab.version = data.version || null;
+      tab.isDirty = false;
+      tab.hasRemoteConflict = false;
+      if (this.activeTab === filePath && this.editorView) this.editorView.innerText = data.content;
+      this.updateTabUI(filePath);
+      this.saveStateToCache();
+    } catch (error) {
+      console.warn("Collaborative file refresh failed:", error);
     }
   }
 

@@ -226,3 +226,41 @@ uses an inter-process lock file for workspace mutations, and applies a
 best-effort disk quota after command execution. Enforce hard disk limits at the
 worker host/filesystem layer (for example, XFS project quotas) before accepting
 untrusted workloads at scale.
+
+## Real-time workspace collaboration
+
+Workspace owners can create time-limited collaboration links from the IDE Share
+control. Links are random 256-bit bearer capabilities; only a SHA-256 token hash
+is stored. Owners can list and revoke links. The default expiry is seven days
+and the maximum is 30 days (links cannot be created without an expiry). Treat the raw invite URL like a password.
+
+- **View** links permit workspace file and directory reads only.
+- **Edit** links permit version-checked file creation and updates only. Moving,
+  deleting, creating folders, terminal access, command execution, agent tool
+  execution, preview control and permission management remain owner-only.
+- Collaborators resolve to the owner's workspace root, not a same-named
+  workspace under the collaborator's own account.
+- WebSocket authentication sends the collaboration capability as a subprotocol,
+  not a URL query parameter. Browser HTTP workspace requests attach the token
+  only to same-origin `/api/workspace` requests.
+- File saves use the workspace SHA-256 version as an ETag / `If-Match` guard.
+  A stale write returns HTTP 409. Clean open tabs refresh on remote change;
+  dirty tabs retain the local draft and report a conflict rather than silently
+  replacing it.
+- Presence snapshots are exchanged through the existing Redis event bus every
+  15 seconds and expire after 45 seconds. Cross-replica presence therefore
+  requires the same private Redis deployment and distributed-events setting
+  used by the rest of the workspace event system. File notifications remain
+  ephemeral; clients should reload authoritative file contents after reconnect.
+
+The invite API is mounted at `/api/workspace/collaboration/shares`. Run the
+normal database migration (`npm run db:migrate` from `server/`) before enabling
+this feature on an existing production database. The SQLite development schema
+is initialized automatically.
+
+This implementation provides file-level collaborative editing with presence
+and optimistic conflict detection. It is not an operational-transform or CRDT
+editor: simultaneous edits to the same file are serialized by version checks,
+and the later stale save must reload/merge rather than being automatically
+merged character-by-character. Validate with two real authenticated browsers,
+a disposable shared workspace, and Redis before production sign-off.

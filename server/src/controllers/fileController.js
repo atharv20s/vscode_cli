@@ -6,6 +6,10 @@ import { getWorkspaceService } from "../services/workspaceService.js";
 import { config } from "../config/env.js";
 import { pullWorkspaceFromRemote, syncWorkspaceOnRemote } from "../services/remoteExecutionWorker.js";
 
+function workspaceForRequest(req) {
+  return getWorkspaceService(req.workspaceAccess?.ownerUserId || req.user.id, req.workspaceAccess?.workspaceId || req.get("X-Workspace-Id") || "default");
+}
+
 async function pullRuntimeChanges(workspaceService) {
   if (config.executionRuntime !== "remote") return;
   await pullWorkspaceFromRemote({ workspaceId: workspaceService.workspaceId, workspaceDir: workspaceService.workspaceRoot });
@@ -25,7 +29,7 @@ async function pushRuntimeChanges(workspaceService) {
  * GET /api/workspace/files?path=.
  */
 export async function listFiles(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const dirPath = req.query.path || ".";
   try {
     await pullRuntimeChanges(workspaceService);
@@ -46,7 +50,7 @@ export async function listFiles(req, res) {
  * GET /api/workspace/file?path=src/main.js
  */
 export async function readFile(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const filePath = req.query.path;
   if (!filePath) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'path' query parameter" });
@@ -72,7 +76,7 @@ export async function readFile(req, res) {
  * POST /api/workspace/file { path, content }
  */
 export async function writeFile(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const { path: filePath, content } = req.body;
   if (!filePath || content === undefined) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'path' or 'content'" });
@@ -82,7 +86,12 @@ export async function writeFile(req, res) {
     const ifMatch = req.get("If-Match");
     const ifNoneMatch = req.get("If-None-Match");
     const expectedVersion = ifMatch ? ifMatch.replace(/^W\//, "").replace(/^"|"$/g, "") : undefined;
-    const result = await workspaceService.writeFile(filePath, content, { expectedVersion, mustNotExist: ifNoneMatch === "*" });
+    const result = await workspaceService.writeFile(filePath, content, {
+      expectedVersion,
+      mustNotExist: ifNoneMatch === "*",
+      source: "ui",
+      actor: req.user.id,
+    });
     const runtimeSynced = await pushRuntimeChanges(workspaceService);
     res.setHeader("ETag", '"' + result.version + '"');
     res.json({ success: true, path: result.path, size: Buffer.byteLength(content), version: result.version, isNew: result.isNew, runtimeSynced });
@@ -99,7 +108,7 @@ export async function writeFile(req, res) {
  * DELETE /api/workspace/file?path=old-file.txt
  */
 export async function deleteFile(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const filePath = req.query.path;
   if (!filePath) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'path' query parameter" });
@@ -124,7 +133,7 @@ export async function deleteFile(req, res) {
  * POST /api/workspace/move { from, to }
  */
 export async function moveFile(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const { from, to } = req.body;
   if (!from || !to) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'from' or 'to' path" });
@@ -144,7 +153,7 @@ export async function moveFile(req, res) {
  * POST /api/workspace/folder { path }
  */
 export async function createFolder(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const { path: folderPath } = req.body;
   if (!folderPath) {
     return res.status(400).json({ error: "BadRequest", message: "Missing folder path" });
@@ -164,7 +173,7 @@ export async function createFolder(req, res) {
  * POST /api/workspace/exec — Execute shell command via ExecutionService in workspace.
  */
 export async function execCommand(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const { command, shell = "powershell" } = req.body;
   if (!command || typeof command !== "string") {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'command' in request body" });

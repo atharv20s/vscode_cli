@@ -41,14 +41,15 @@ class WebSocketClient {
    */
   connect(token) {
     if (token) this.lastToken = token;
-    const wsUrl = this.lastToken ? `${this.url}?token=${encodeURIComponent(this.lastToken)}` : this.url;
+    const protocols = [];
+    if (this.lastToken) protocols.push("ath-auth", this.lastToken);
 
     if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
       return;
     }
 
     try {
-      this.ws = new WebSocket(wsUrl);
+      this.ws = new WebSocket(this.url, protocols.length ? protocols : undefined);
 
       this.ws.onopen = () => {
         this.isConnected = true;

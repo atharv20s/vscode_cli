@@ -187,6 +187,7 @@ class App {
     });
 
     window.wsClient.on("connected", (data) => {
+      if (data?.user) this.currentUser = data.user;
       if (data && data.workspace) {
         const workspacePathEl = document.getElementById("status-workspace-path");
         if (workspacePathEl) workspacePathEl.textContent = `WS: ${data.workspace}`;
@@ -268,16 +269,91 @@ class App {
       this.activeBgOperationId = null;
     });
 
-    // File System Sync Listener
-    window.wsClient.on("file.changed", () => {
-      this.loadWorkspaceFiles();
+    // Real-time collaboration presence and file synchronization.
+    window.wsClient.on("collab.presence", data => {
+      const target = document.getElementById("collab-presence");
+      if (!target) return;
+      const users = Array.isArray(data?.users) ? data.users : [];
+      target.textContent = users.length ? users.map(user => user.username + (user.role === "owner" ? " (owner)" : "")).join(", ") : "Only you";
+      target.title = users.length + " active workspace connection(s)";
     });
+
+    window.wsClient.on("file.changed", data => {
+      this.loadWorkspaceFiles();
+      window.editorManager?.handleRemoteFileChange(data);
+    });
+    window.wsClient.on("file.created", () => this.loadWorkspaceFiles());
+    window.wsClient.on("file.deleted", () => this.loadWorkspaceFiles());
+    window.wsClient.on("file.renamed", () => this.loadWorkspaceFiles());
   }
 
   /**
    * Setup UI Event Listeners
    */
   setupEventListeners() {
+    // Shared-link guests can collaborate, but only workspace owners manage invites.
+    if (window.ATH_IS_WORKSPACE_COLLABORATOR) {
+      document.getElementById("btn-share-workspace")?.setAttribute("hidden", "");
+      document.getElementById("btn-manage-workspace-shares")?.setAttribute("hidden", "");
+    }
+    // Workspace collaboration invites.
+    const shareWorkspaceBtn = document.getElementById("btn-share-workspace");
+    if (shareWorkspaceBtn) {
+      shareWorkspaceBtn.addEventListener("click", async () => {
+        const permission = (prompt("Collaborator access: type 'edit' or 'view'.", "edit") || "").trim().toLowerCase();
+        if (!["edit", "view"].includes(permission)) return;
+        shareWorkspaceBtn.disabled = true;
+        try {
+          const response = await fetch("/api/workspace/collaboration/shares", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.token}` },
+            body: JSON.stringify({ workspaceId: "default", permission, expiresInHours: 168 }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.message || "Unable to create workspace invite.");
+          try { await navigator.clipboard.writeText(data.url); } catch {}
+          prompt("Workspace invite link (valid for 7 days):", data.url);
+          this.logTerminal("Created a " + permission + "-access workspace invite.", "success");
+        } catch (error) {
+          this.logTerminal("Workspace invite failed: " + error.message, "error");
+        } finally {
+          shareWorkspaceBtn.disabled = false;
+        }
+      });
+    }
+
+    const manageSharesBtn = document.getElementById("btn-manage-workspace-shares");
+    if (manageSharesBtn) {
+      manageSharesBtn.addEventListener("click", async () => {
+        manageSharesBtn.disabled = true;
+        try {
+          const response = await fetch("/api/workspace/collaboration/shares", {
+            headers: { Authorization: `Bearer ${this.token}` },
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.message || "Unable to load collaboration links.");
+          const active = (data.shares || []).filter(share => !share.revokedAt);
+          if (!active.length) {
+            alert("There are no active collaboration links for this workspace.");
+            return;
+          }
+          const summary = active.map(share => share.id + " · " + share.permission + " · expires " + (share.expiresAt || "never")).join("\n");
+          const selected = prompt("Active invites (copy an ID to revoke it):\n" + summary + "\n\nEnter the invite ID to revoke:");
+          if (!selected) return;
+          const revoke = await fetch("/api/workspace/collaboration/shares/" + encodeURIComponent(selected.trim()), {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${this.token}` },
+          });
+          if (!revoke.ok) throw new Error("Invite not found or already revoked.");
+          this.logTerminal("Revoked workspace collaboration invite.", "success");
+        } catch (error) {
+          this.logTerminal("Invite management failed: " + error.message, "error");
+        } finally {
+          manageSharesBtn.disabled = false;
+        }
+      });
+    }
+
     // Before Unload Session Guard & Cloud Sync Warning
     window.addEventListener("beforeunload", (e) => {
       const isGuest = !this.currentUser || this.currentUser.isGuest;
@@ -461,6 +537,7 @@ class App {
             headers: {
               "Content-Type": "application/json",
               Authorization: `Bearer ${this.token}`,
+              "If-None-Match": "*",
             },
             body: JSON.stringify({ path: fileName, content: "" }),
           });
@@ -1101,6 +1178,7 @@ class App {
               headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${this.token || ""}`,
+                "If-None-Match": "*",
               },
               body: JSON.stringify({ path: val, content: "" }),
             });
