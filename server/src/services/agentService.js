@@ -21,6 +21,7 @@ import { worldStateService } from "./worldStateService.js";
 import { ContextSelector } from "./contextSelector.js";
 import { getWorkspaceService } from "./workspaceService.js";
 import { selectSkills, formatSkills } from "./skillRegistry.js";
+import { buildRepositoryContext, formatRepositoryContext } from "./repoContextEngine.js";
 
 /** Default system prompt */
 const DEFAULT_SYSTEM_PROMPT = `You are ATH Agent, an autonomous software engineering agent operating inside ATH IDE.
@@ -202,6 +203,31 @@ export async function runAgent({
     onEvent?.({ type: "skills_selected", data: { skills: selectedSkills.map(skill => skill.id) } });
   }
 
+  // Build bounded codebase context for actual engineering tasks. This lets the
+  // model understand the existing stack, project instructions, symbols and
+  // import relationships before it proposes edits.
+  let repositoryContext = "";
+  const codeTask = /\b(build|create|implement|modify|refactor|debug|fix|test|extend|integrate|migrate|deploy)\b/i.test(message || "");
+  if (persistWorkspaceMeta && codeTask && workspaceDir) {
+    try {
+      const snapshot = await buildRepositoryContext(workspaceDir, message, {
+        maxPrimaryFiles: 12,
+        maxFileChars: 10000,
+      });
+      repositoryContext = formatRepositoryContext(snapshot, { maxTokens: 7000 });
+      onEvent?.({
+        type: "repository_context",
+        data: {
+          fileCount: snapshot.fileCount,
+          selectedFiles: (snapshot.samples || []).map(item => item.path),
+          symbolIndexAvailable: Boolean(snapshot.symbolIndex?.available),
+        },
+      });
+    } catch (error) {
+      logger.warn("Repository context retrieval failed; continuing with live IDE context", { message: error.message });
+    }
+  }
+
   // Build live environment & targeted context block via ContextSelector
   const contextBlock = ContextSelector.selectContext({
     userPrompt: message,
@@ -212,7 +238,7 @@ export async function runAgent({
   // System prompt
   messages.push({
     role: "system",
-    content: (systemPrompt || DEFAULT_SYSTEM_PROMPT) + skillContext + contextBlock,
+    content: (systemPrompt || DEFAULT_SYSTEM_PROMPT) + skillContext + (repositoryContext ? "\\n\\n## Relevant existing codebase context\\n" + repositoryContext : "") + contextBlock,
   });
 
   // Conversation history
