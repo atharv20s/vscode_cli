@@ -37,6 +37,7 @@ export function registerVerificationTools() {
       parameters: {
         type: "object",
         properties: {
+          browser_url: { type: "string", description: "Optional running localhost or configured preview URL for browser acceptance." },
           checks: {
             type: "array",
             items: { type: "string", enum: ["typecheck","lint","test","build"] },
@@ -78,12 +79,22 @@ export function registerVerificationTools() {
       ctx.onEvent?.({ type: "verification_result", data: item });
       if (!item.success) break;
     }
-    const verified = results.length === checks.length && results.every(item => item.success);
+    let browserResult = null;
+    if (args.browser_url && results.every(item => item.success)) {
+      browserResult = await executeTool("browser_verify", { url: args.browser_url }, {
+        ...ctx,
+        allowedTools: null,
+      });
+    }
+    const verified = results.length === checks.length && results.every(item => item.success) &&
+      (!args.browser_url || browserResult?.success === true);
+    const output = results.map(item => (item.success ? "PASS " : "FAIL ") + item.name + ": " + item.command + "\n" + item.output).join("\n\n");
     return {
       success: verified,
       verified,
       checks: results,
-      output: results.map(item => (item.success ? "PASS " : "FAIL ") + item.name + ": " + item.command + "\n" + item.output).join("\n\n"),
+      browser: browserResult,
+      output: output + (browserResult ? "\n\nBROWSER ACCEPTANCE:\n" + JSON.stringify(browserResult).slice(0,12000) : ""),
     };
   });
 }
