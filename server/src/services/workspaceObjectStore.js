@@ -10,8 +10,8 @@ function hmac(key, value, encoding) {
 
 function objectStoreConfig() {
   const bucket = process.env.WORKSPACE_OBJECT_STORE_BUCKET || "";
-  const accessKey = process.env.WORKSPACE_OBJECT_STORE_ACCESS_KEY_ID || "";
-  const secretKey = process.env.WORKSPACE_OBJECT_STORE_SECRET_ACCESS_KEY || "";
+  const accessKey = process.env.WORKSPACE_OBJECT_STORE_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || "";
+  const secretKey = process.env.WORKSPACE_OBJECT_STORE_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || "";
   const region = process.env.WORKSPACE_OBJECT_STORE_REGION || "us-east-1";
   const endpoint = process.env.WORKSPACE_OBJECT_STORE_ENDPOINT || `https://s3.${region}.amazonaws.com`;
   if (!bucket || !accessKey || !secretKey) {
