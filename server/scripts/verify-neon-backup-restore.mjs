@@ -55,7 +55,7 @@ async function inspectIdentity(client, url) {
   );
   const row = result.rows[0];
   const host = new URL(url).hostname.toLowerCase();
-  const normalizedHost = host.replace(/-pooler(?=\\.)/, "");
+  const normalizedHost = host.replace(/-pooler(?=\.)/, "");
   return {
     host,
     normalizedHost,
