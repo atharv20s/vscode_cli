@@ -9,11 +9,11 @@ export async function createWorkspaceShare({ ownerUserId, workspaceId = "default
   if (!ownerUserId || typeof workspaceId !== "string" || !workspaceId || workspaceId.length > 128) throw new Error("Invalid workspace share target.");
   if (!["view", "edit"].includes(permission)) throw new Error("Permission must be view or edit.");
   const hours = Number(expiresInHours);
-  if (!Number.isFinite(hours) || hours < 0 || hours > 720) throw new Error("Share expiry must be between 0 and 720 hours.");
+  if (!Number.isFinite(hours) || hours < 1 || hours > 720) throw new Error("Share expiry must be between 1 and 720 hours.");
   const id = crypto.randomUUID();
   const token = crypto.randomBytes(32).toString("base64url");
   const tokenHash = hashToken(token);
-  const expiresAt = hours === 0 ? null : new Date(Date.now() + hours * 3600000).toISOString();
+  const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
   if (pool()) {
     await pool().query(
       "INSERT INTO workspace_shares (id,owner_user_id,workspace_id,token_hash,permission,expires_at) VALUES ($1,$2,$3,$4,$5,$6)",
