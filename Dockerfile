@@ -15,7 +15,7 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-RUN apk add --no-cache git bash
+RUN apk add --no-cache git bash chromium nss freetype harfbuzz ca-certificates ttf-freefont
 
 ENV NODE_ENV=production
 ENV PORT=3001
