@@ -86,7 +86,12 @@ export async function writeFile(req, res) {
     const ifMatch = req.get("If-Match");
     const ifNoneMatch = req.get("If-None-Match");
     const expectedVersion = ifMatch ? ifMatch.replace(/^W\//, "").replace(/^"|"$/g, "") : undefined;
-    const result = await workspaceService.writeFile(filePath, content, { expectedVersion, mustNotExist: ifNoneMatch === "*" });
+    const result = await workspaceService.writeFile(filePath, content, {
+      expectedVersion,
+      mustNotExist: ifNoneMatch === "*",
+      source: "ui",
+      actor: req.user.id,
+    });
     const runtimeSynced = await pushRuntimeChanges(workspaceService);
     res.setHeader("ETag", '"' + result.version + '"');
     res.json({ success: true, path: result.path, size: Buffer.byteLength(content), version: result.version, isNew: result.isNew, runtimeSynced });
