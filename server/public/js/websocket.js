@@ -43,7 +43,6 @@ class WebSocketClient {
     if (token) this.lastToken = token;
     const protocols = [];
     if (this.lastToken) protocols.push("ath-auth", this.lastToken);
-    if (window.ATH_WORKSPACE_SHARE_TOKEN) protocols.push("ath-share." + window.ATH_WORKSPACE_SHARE_TOKEN);
 
     if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
       return;
