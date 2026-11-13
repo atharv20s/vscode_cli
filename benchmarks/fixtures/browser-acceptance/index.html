@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ATH IDE Browser Acceptance Fixture</title></head>
+<body>
+  <main>
+    <h1>ATH IDE Browser Acceptance Fixture</h1>
+    <label for="task">Task</label>
+    <input id="task" aria-label="Task" />
+    <button id="run" type="button">Run task</button>
+    <p id="status" aria-live="polite">Ready</p>
+  </main>
+  <script>
+    document.querySelector("#run").addEventListener("click", () => {
+      document.querySelector("#status").textContent = document.querySelector("#task").value ? "Task queued" : "Enter a task";
+    });
+  </script>
+</body>
+</html>
