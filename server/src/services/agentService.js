@@ -37,7 +37,9 @@ Turn the user's requirements into working, tested software. You can inspect and 
 5. Implement in small coherent steps. Use file tools for edits and run_command for dependencies, builds, migrations and tests. Preserve existing conventions and avoid unrelated rewrites.
 6. Execute the application or tests where possible. Inspect actual output, logs and exit codes. When something fails, identify the root cause, make a focused repair and rerun the failing check.
 7. Verify the result against the original acceptance criteria. Use start_preview/launch_file when a runnable UI is requested and report the actual preview result.
-8. Deliver a concise summary of changes, tests actually run, preview status and remaining limitations. Never claim success without tool evidence.
+8. Before finishing any code-changing task, call verify_workspace. If checks fail, repair the cause and verify again. If no supported checks exist or a check is blocked, explicitly report that verification is incomplete.
+9. For substantial work, use delegate_specialist to obtain independent planning, frontend/backend implementation, testing and review. Delegate bounded tasks sequentially; do not ask multiple agents to edit the same files concurrently. Use security_reviewer for authentication, data access, execution or network-facing changes.
+10. Treat reviewer feedback as actionable evidence. Resolve blockers, rerun verification after each repair, and do not describe a reviewer recommendation as a passed test.
 
 ## Tool use
 Use read_file/list_files to understand code; write_file/edit_file/delete_file for workspace changes; run_command/compile_file for execution; start_preview/launch_file for previews; planning tools for plans; diagnostic tools for inspection; Git tools for version control. Use web_search only when current external documentation or information is needed.
@@ -279,7 +281,7 @@ export async function runAgent({
       data: { turn: iteration, maxTurns: maxIterations, turnId: currentTurnId },
     });
 
-    const toolContext = { workspaceDir, workspaceId, workspaceKey: workspaceService?.workspaceKey || null, userId, sessionId, turnId: currentTurnId, signal, workspaceService, allowedTools };
+    const toolContext = { workspaceDir, workspaceId, workspaceKey: workspaceService?.workspaceKey || null, userId, sessionId, turnId: currentTurnId, signal, workspaceService, allowedTools, onEvent };
 
     let textContent = "";
     let pendingToolCalls = [];
@@ -343,6 +345,29 @@ export async function runAgent({
     // explicit workspace tools, never guessed from arbitrary Markdown fences.
     if (textContent && pendingToolCalls.length === 0) {
       messages.push({ role: "assistant", content: textContent });
+
+      // Enforce a verification pass after successful file mutations. The
+      // verifier runs declared project scripts in the same scoped workspace;
+      // its evidence is fed back to the LLM before it writes the final answer.
+      if (persistWorkspaceMeta && codeTask && mutationCount > verifiedMutationCount && tools.some(tool => tool.function.name === "verify_workspace")) {
+        const verification = await executeTool("verify_workspace", {}, {
+          ...toolContext,
+          allowedTools: null,
+          turnId: currentTurnId + "_verification",
+        });
+        verifiedMutationCount = mutationCount;
+        const report = verification.success
+          ? "Automatic workspace verification passed. Evidence:\\n" + (verification.output || "All detected checks passed.")
+          : "Automatic workspace verification is incomplete or failed. Do not claim the implementation is verified. Inspect this evidence, repair concrete failures where possible, and call verify_workspace again after changes.\\n" +
+            (verification.output || verification.error || "No supported checks were detected.");
+        onEvent({
+          type: "verification_result",
+          data: { success: verification.success === true, verified: verification.verified === true, output: verification.output || verification.error || "" },
+        });
+        messages.push({ role: "user", content: report });
+        continue;
+      }
+
       onEvent({ type: "text_complete", data: { content: textContent } });
       break;
     }
@@ -382,6 +407,12 @@ export async function runAgent({
         });
 
         const result = await executeTool(tc.name, args, toolContext);
+        if (result.success && ["write_file","edit_file","delete_file"].includes(tc.name)) {
+          mutationCount++;
+        }
+        if (tc.name === "verify_workspace") {
+          verifiedMutationCount = mutationCount;
+        }
 
         onEvent({
           type: "tool_result",
