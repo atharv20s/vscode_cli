@@ -10,7 +10,7 @@ import { worktreeManager } from "./worktreeManager.js";
 import { createScopedWorkspaceService } from "./workspaceService.js";
 
 const PLANNER_TOOLS = ["read_file","list_files"];
-const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command"];
+const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command"];\nconst WORKTREE_CODER_TOOLS = ["read_file","write_file","edit_file","list_files"];
 const TESTER_TOOLS = ["read_file","list_files","run_command"];
 const REVIEWER_TOOLS = ["read_file","list_files"];
 
@@ -372,11 +372,11 @@ export async function runRepoAgentPipeline(options) {
       const summary = await runRole({
         task, role: "coder", roundNumber: roundOffset + 2 + taskOrdinals.get(plannedTask.id),
         workspaceDir, executionWorkspaceDir:workspaceDir, workspaceId:agentWorkspaceId,
-        workspaceService:scopedWorkspace, tools:CODER_TOOLS, model:"coding", signal, onEvent,
+        workspaceService:scopedWorkspace, tools:WORKTREE_CODER_TOOLS, model:"coding", signal, onEvent,
         message: baseFor(30000) + "\n\nIMPLEMENTATION PLAN:\n" + plan +
           "\n\nASSIGNED GRAPH TASK (" + plannedTask.id + "):\n" + plannedTask.description +
           "\n\nCOMPLETED PREREQUISITES:\n" + JSON.stringify(priorResults) +
-          "\n\nYou are working in an isolated Git worktree. Only modify files within your assigned worktree. Do not access sibling worktrees or the parent checkout. Run relevant focused checks before finishing.",
+          "\n\nYou are working in an isolated Git worktree with file-only tools. Only modify files within your assigned worktree. Do not attempt shell execution, access sibling worktrees, or modify the parent checkout. Verification runs after safe integration.",
         maxIterations:22,
       });
       const committed = await worktreeManager.commitWorktree(worktree, "agent task: " + plannedTask.id, signal);
