@@ -4,62 +4,69 @@
 
 Prompt injection is not reliably solved by a system prompt. Repository files, webpages,
 terminal output, issue text, dependency messages and tool results are untrusted data.
-The model must not treat those sources as authority to change policy or disclose secrets.
-The runtime must independently constrain what the model can execute.
+The model must not treat those sources as authority to change its role, policy or the user's
+request. Runtime controls must independently constrain actions.
 
-## Controls implemented
+## Controls implemented in this change
 
-- The command permission engine auto-allows only a small read-only inspection allowlist.
-- Unknown commands, shell composition, redirects, substitutions, installs, tests, network
-  clients and other commands require a platform permission approval. Approval timeout fails closed.
-- A small set of destructive/high-impact command patterns is denied.
-- Agent instructions explicitly classify repository and external content as untrusted data,
-  prohibit secret disclosure and prohibit using shell to bypass tool permissions.
-- Each workspace container receives its own Docker internal network by default. Containers
-  are not placed together on a shared user network and do not receive general internet egress.
+- For normal user workspaces, only a narrow read-only command allowlist runs automatically.
+  Unknown commands, shell composition, redirects, substitutions, installs, tests, network
+  clients and other commands require explicit workspace-owner approval. Approval timeout denies.
+- A small set of high-impact destructive command patterns is denied even if approval is requested.
+- Disposable repository-agent jobs are forced onto Docker's \`none\` network. Build/test commands
+  may run inside their disposable task workspace without interactive approval; preview servers
+  are disabled for these jobs. This exception does not apply to normal user workspaces.
+- Agent instructions classify repository and external content as untrusted data and prohibit
+  secret disclosure, policy changes based on untrusted content and shell-based approval bypass.
+- Agent shell commands, compile operations, preview-server startup, Git mutations and GitHub
+  write operations are routed through the permission engine.
+- Secret-bearing file reads are denied. Writes to secret/configuration files and sensitive project
+  manifests require approval. Ordinary source-file edits remain available to the coding agent.
+- Approval prompts are delivered only to workspace-owner WebSocket sessions. The browser shows
+  the requested action, command or file path and sends an explicit approve/reject decision.
+- Normal user workspace containers receive separate Docker internal networks; they do not share
+  a user network and do not receive general outbound internet access.
 - Containers retain resource limits, dropped Linux capabilities, no-new-privileges,
   read-only container root, non-root UID/GID and a single writable workspace mount.
+- The interactive PTY is a direct user terminal, not an LLM command channel. It is separately
+  protected by the authenticated API-to-worker HMAC tunnel and workspace-scoped API session.
 
 ## Operational notes
 
-- DOCKER_WORKSPACE_NETWORK=none disables workspace networking completely. Preview routing
-  will not work in this mode.
-- With a named DOCKER_WORKSPACE_NETWORK (the default), the value acts as an enablement/config
-  setting; actual workspace networks are generated per workspace as athide-net-<digest>.
-- Existing containers on the former shared network are replaced when the worker provisions
-  them after this version is deployed. Plan for active terminals/previews to restart on rollout.
+- DOCKER_WORKSPACE_NETWORK=none disables networking for normal workspace containers; preview
+  routing will not work in this mode.
+- With a named DOCKER_WORKSPACE_NETWORK (the default), the value enables internal workspace
+  networking; actual network names are generated per workspace as athide-net-<digest>.
+  Named network overrides are ignored to prevent accidental shared networks.
+- Repository-agent workspace IDs are always forced to Docker network none, regardless of config.
+- Existing containers on the former shared network are replaced when the worker provisions them
+  after this version is deployed. Plan for active terminals/previews to restart on rollout.
 - The host-side preview proxy still needs to reach the container's internal IP. Keep the worker
   host and Docker daemon private; do not expose Docker's API socket or TCP endpoint.
 
 ## What this does not guarantee
 
-- No prompt-injection defense can guarantee that the model will never be manipulated.
-- A user-approved command can still do harmful things inside that user's workspace.
-- Docker isolation is not a substitute for a dedicated VM/microVM boundary against a hostile
-  kernel/container escape. Keep Docker and the host OS patched and run the worker on a
-  dedicated, least-privilege host.
-- Agent shell commands, compile operations, preview-server startup, Git mutations and GitHub
-  write operations are routed through the permission engine. Unknown commands require approval.
-- Secret-bearing file reads are denied; writes to secret/configuration files and sensitive project
-  manifests require approval. Ordinary source-file edits remain available to the coding agent.
-- Approval prompts are delivered only to workspace-owner WebSocket sessions. The browser shows
-  the requested action, command or file path and sends an explicit approve/reject decision.
-- The interactive PTY remains a direct user terminal, not an LLM command channel, and is protected
-  separately by authenticated session ownership.
-- Repository-agent jobs are disposable task workspaces with Docker networking forced to none.
-  Build/test commands can run inside those sandboxes; preview servers are disabled there.
-- Tool/file permissions and approval UI must still be tested end-to-end in the deployed environment.
-- Network isolation does not prevent all covert channels through explicitly exposed preview
-  endpoints or other host services; do not put credentials in the workspace.
+- No prompt-injection defense can guarantee that a model will never be manipulated.
+- A user-approved command can still do harmful things inside that user's workspace. Review the
+  exact command; build/install/test commands can execute repository and dependency scripts.
+- Docker is not a dedicated VM/microVM boundary against a hostile kernel or container escape.
+  Keep Docker and the host OS patched and run the worker on a dedicated least-privilege host.
+- Docker internal networking is not a complete host firewall. Do not expose host services or
+  credentials to workspace containers; restrict worker-host services independently.
+- Tool/file permissions, approval UI, authenticated PTY ownership and Docker settings still need
+  end-to-end verification in the deployed environment.
 
 ## Required release verification
 
-1. Run node --test src/services/permissionEngine.test.js from server/.
+1. From server/, run \`node --test src/services/permissionEngine.test.js src/services/permissionEngine.security.test.js src/services/dockerWorkspaceRuntime.test.js\`.
 2. Run the full server test suite and build.
-3. Verify two workspace IDs produce different Docker network names and that the networks
-   are internal; inspect actual container mounts/capabilities/network settings on the worker.
-4. Verify a normal command causes an approval event, approval timeout denies execution, and
-   explicit approval is scoped to the requesting workspace.
-5. Run adversarial tests with malicious README/AGENTS.md/webpage content requesting secret
-   disclosure, curl exfiltration, destructive commands and container escape.
-6. Confirm authenticated terminal routes enforce user/workspace ownership before production.
+3. Verify two normal workspace IDs produce different internal Docker network names; verify repo-agent
+   workspaces use network none. Inspect actual container mounts/capabilities/network settings.
+4. Verify an unknown command produces an approval prompt, owner approval runs it, rejection/timeout
+   denies it, and collaborators cannot approve it.
+5. Verify compile_file, start_preview, git clone/pull/branch mutations, Git commits and GitHub writes
+   all require approval.
+6. Verify secret-file reads are denied and sensitive configuration writes require approval.
+7. Run adversarial tests with malicious README/AGENTS.md/webpage content requesting secret
+   disclosure, network exfiltration, destructive commands and container escape.
+8. Confirm authenticated terminal routes enforce user/workspace ownership before production.
