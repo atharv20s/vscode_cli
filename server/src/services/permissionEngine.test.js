@@ -41,6 +41,18 @@ test("high-impact destructive commands are denied", () => {
   ]) assert.equal(classifyCommandForPolicy(command), "DENY", command);
 });
 
+test("isolated repository agents can build and test without approval", () => {
+  assert.equal(classifyCommandForPolicy("npm install", { isolatedRepoAgent: true }), "ALLOW");
+  assert.equal(classifyCommandForPolicy("npm test", { isolatedRepoAgent: true }), "ALLOW");
+  assert.equal(classifyCommandForPolicy("bash -lc 'npm test'", { isolatedRepoAgent: true }), "ALLOW");
+  assert.equal(classifyCommandForPolicy("curl https://example.com", { isolatedRepoAgent: true }), "ALLOW");
+});
+
+test("destructive operations remain denied even in isolated repository agents", () => {
+  assert.equal(classifyCommandForPolicy("rm -rf /workspace", { isolatedRepoAgent: true }), "DENY");
+  assert.equal(classifyCommandForPolicy("git reset --hard", { isolatedRepoAgent: true }), "DENY");
+});
+
 test("empty and malformed commands fail closed", () => {
   assert.equal(classifyCommandForPolicy(""), "DENY");
   assert.equal(classifyCommandForPolicy(null), "DENY");
