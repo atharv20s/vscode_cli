@@ -120,7 +120,7 @@ function workspaceRootFor(id) {
 async function readManagedManifest(root) {
   try {
     const parsed = JSON.parse(await fs.promises.readFile(path.join(root, ".ath-managed-files.json"), "utf8"));
-    return Array.isArray(parsed) ? parsed.filter(safeRelativePath) : [];
+    return Array.isArray(parsed) ? parsed.filter(safeRelativeWorkspacePath) : [];
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
     return [];
