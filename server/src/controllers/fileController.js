@@ -76,7 +76,7 @@ export async function readFile(req, res) {
  * POST /api/workspace/file { path, content }
  */
 export async function writeFile(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const { path: filePath, content } = req.body;
   if (!filePath || content === undefined) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'path' or 'content'" });
@@ -108,7 +108,7 @@ export async function writeFile(req, res) {
  * DELETE /api/workspace/file?path=old-file.txt
  */
 export async function deleteFile(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const filePath = req.query.path;
   if (!filePath) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'path' query parameter" });
@@ -133,7 +133,7 @@ export async function deleteFile(req, res) {
  * POST /api/workspace/move { from, to }
  */
 export async function moveFile(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const { from, to } = req.body;
   if (!from || !to) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'from' or 'to' path" });
@@ -153,7 +153,7 @@ export async function moveFile(req, res) {
  * POST /api/workspace/folder { path }
  */
 export async function createFolder(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const { path: folderPath } = req.body;
   if (!folderPath) {
     return res.status(400).json({ error: "BadRequest", message: "Missing folder path" });
@@ -173,7 +173,7 @@ export async function createFolder(req, res) {
  * POST /api/workspace/exec — Execute shell command via ExecutionService in workspace.
  */
 export async function execCommand(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const { command, shell = "powershell" } = req.body;
   if (!command || typeof command !== "string") {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'command' in request body" });
