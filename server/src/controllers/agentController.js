@@ -50,7 +50,7 @@ export async function chatStream(req, res) {
   const workspaceService = getWorkspaceService(ownerId, req.get("X-Workspace-Id") || "default");
   const rawEditor = body.context?.editor && typeof body.context.editor === "object" ? body.context.editor : null;
   const editorPath = typeof rawEditor?.activeFile === "string" ? rawEditor.activeFile.slice(0, 400) : "";
-  const isSensitiveEditorPath = /(^|\\/)(?:\\.env(?:\\.|$)|\\.npmrc|\\.netrc|credentials?|secrets?|[^/]+\\.(?:pem|key|p12|pfx|kubeconfig))$/i.test(editorPath);
+  const isSensitiveEditorPath = /(^|\/)(?:\.env(?:\.|$)|\.npmrc|\.netrc|credentials?|secrets?|[^/]+\.(?:pem|key|p12|pfx|kubeconfig))$/i.test(editorPath);
   const editorContext = rawEditor ? {
     activeFile: editorPath,
     language: typeof rawEditor.language === "string" ? rawEditor.language.slice(0, 40) : "",
