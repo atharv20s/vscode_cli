@@ -11,7 +11,7 @@ The current main branch has a PostgreSQL-backed application repository layer:
 - `server/src/db/database.js` routes user, authentication, session and conversation operations through the PostgreSQL pool when initialized. SQLite remains a local-development fallback.
 - Production startup is fail-closed: the API and repository-agent worker require `DATABASE_URL` and do not silently fall back to per-host SQLite.
 - `server/src/db/postgres.js` initializes the pool; `server/src/db/migrator.js` applies numbered, repeatable migrations using the direct URL.
-- The API and repository-agent worker must use the same Neon database/branch. The API health response reporting `dialect: postgres` and `connected: true` is useful connectivity evidence, but does not prove worker recovery, multi-user isolation or backup restoration.
+- The API and repository-agent worker must use the same Neon database/branch. The API health response reports a non-secret `database.identity` fingerprint; the repository-agent worker logs the same `databaseIdentity` at startup. The direct and pooled Neon hostnames normalize to the same fingerprint. Compare these values during deployment acceptance. This confirms configured endpoint/database/role identity, not worker recovery, multi-user isolation or backup restoration.
 - `scripts/migrate-sqlite-to-postgres.mjs` migrates non-internal SQLite tables transactionally and checks exact per-table row counts. It does not yet calculate row-by-row content checksums.
 
 The operator has reported successful production health and a successful SQLite migration. A prior report showed 7 users/7 sessions while a later inspection showed 2/2; confirm both reports were taken against the same endpoint, database and branch before declaring data reconciliation complete.
@@ -59,7 +59,7 @@ After the adapter and migrations are implemented:
 5. Restart the API service and verify login/session/conversation reads.
 6. Restart the repository-agent worker and verify it can reclaim/continue a leased task from the shared database.
 7. Run two concurrent authenticated sessions and verify no cross-user reads or writes.
-8. Confirm the API and worker report the same database identity (safe metadata only, never credentials).
+8. Confirm the API `/api/health` `database.identity` and repository-agent worker startup `databaseIdentity` values match (safe fingerprint only, never credentials).
 9. Take a backup/export using the direct URL, restore into a separate Neon branch/database, and repeat the read checks.
 
 ## Encrypted logical backup and restore
