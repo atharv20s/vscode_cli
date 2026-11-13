@@ -28,7 +28,7 @@ const baselinePath = path.join(baselineDir, baselineName + ".png");
 const updateBaseline = process.env.UPDATE_VISUAL_BASELINES === "1";
 const threshold = Math.max(0, Math.min(1, Number(process.env.VISUAL_DIFF_THRESHOLD || 0.01)));
 const { chromium } = require("playwright");
-const browser = await chromium.launch({headless:true,args:["--no-sandbox","--disable-dev-shm-usage"]});
+const browser = await chromium.launch({headless:true,args:["--no-sandbox","--disable-dev-shm-usage","--no-proxy-server"]});
 const page = await browser.newPage({viewport:{width:1440,height:900},deviceScaleFactor:1});
 const errors = [];
 await page.route("**/*", route => {
