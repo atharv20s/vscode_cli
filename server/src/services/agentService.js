@@ -238,7 +238,7 @@ export async function runAgent({
   // System prompt
   messages.push({
     role: "system",
-    content: (systemPrompt || DEFAULT_SYSTEM_PROMPT) + skillContext + (repositoryContext ? "\\n\\n## Relevant existing codebase context\\n" + repositoryContext : "") + contextBlock,
+    content: (systemPrompt || DEFAULT_SYSTEM_PROMPT) + skillContext + (repositoryContext ? "\n\n## Relevant existing codebase context\n" + repositoryContext : "") + contextBlock,
   });
 
   // Conversation history
