@@ -1,5 +1,8 @@
 name: ATH IDE — CI (AWS Lightsail production)
 
+permissions:
+  contents: write
+
 on:
   push:
     branches:
