@@ -46,7 +46,7 @@ export class WorktreeManager {
     }
     const root = await fs.realpath(workspaceDir);
     const worktreeRoot = path.join(root, this.directoryName);
-    const worktreePath = path.join(worktreeRoot, safeTaskId + "-" + crypto.randomUUID().slice(0, 8));
+    const worktreeName = safeTaskId + "-" + crypto.randomUUID().slice(0, 8);\n    const worktreePath = path.join(worktreeRoot, worktreeName);\n    const containerWorktreePath = path.posix.join("/workspace", this.directoryName, worktreeName);
     const branch = "ath-agent/" + safeTaskId + "-" + crypto.randomUUID().slice(0, 8);
     await fs.mkdir(worktreeRoot, { recursive: true, mode: 0o700 });
 
@@ -56,13 +56,13 @@ export class WorktreeManager {
     });
     await this.execute({
       workspaceDir: root, workspaceId, signal,
-      command: "git worktree add -b " + shellQuote(branch) + " " + shellQuote(worktreePath) + " " + shellQuote(baseRef),
+      command: "git worktree add -b " + shellQuote(branch) + " " + shellQuote(containerWorktreePath) + " " + shellQuote(baseRef),
     });
-    return { workspaceDir: root, workspaceId, worktreePath, branch, taskId: safeTaskId };
+    return { workspaceDir: root, workspaceId, worktreePath, containerWorktreePath, branch, taskId: safeTaskId };
   }
 
   async commitWorktree(worktree, message, signal) {
-    const { workspaceDir, workspaceId, worktreePath, branch } = worktree || {};
+    const { workspaceDir, workspaceId, worktreePath, containerWorktreePath, branch } = worktree || {};
     if (!workspaceDir || !workspaceId || !worktreePath || !branch) {
       throw new Error("A complete worktree descriptor is required.");
     }
@@ -71,10 +71,10 @@ export class WorktreeManager {
       throw new Error("Worktree path must be inside its parent workspace.");
     }
     const command = [
-      "git -C " + shellQuote(worktreePath) + " diff --check",
-      "git -C " + shellQuote(worktreePath) + " add -A",
-      "git -C " + shellQuote(worktreePath) + " -c user.name='ATH IDE Agent' -c user.email='ath-ide-agent@localhost' commit --allow-empty -m " + shellQuote(String(message || "Implement isolated agent task").slice(0, 200)),
-      "git -C " + shellQuote(worktreePath) + " rev-parse HEAD",
+      "git -C " + shellQuote(containerWorktreePath) + " diff --check",
+      "git -C " + shellQuote(containerWorktreePath) + " add -A",
+      "git -C " + shellQuote(containerWorktreePath) + " -c user.name='ATH IDE Agent' -c user.email='ath-ide-agent@localhost' commit --allow-empty -m " + shellQuote(String(message || "Implement isolated agent task").slice(0, 200)),
+      "git -C " + shellQuote(containerWorktreePath) + " rev-parse HEAD",
     ].join(" && ");
     const output = await this.execute({ workspaceDir, workspaceId, command, signal });
     const commit = output.trim().split(/\s+/).at(-1);
@@ -85,7 +85,7 @@ export class WorktreeManager {
   }
 
   async mergeWorktree(worktree, signal) {
-    const { workspaceDir, workspaceId, branch } = worktree || {};
+    const { workspaceDir, workspaceId, branch, containerWorktreePath } = worktree || {};
     assertSafeId(String(branch || "").replace(/^ath-agent\//, ""), "Worktree branch suffix");
     if (!String(branch).startsWith("ath-agent/")) throw new Error("Only ATH IDE agent branches may be merged.");
     const output = await this.execute({
@@ -97,7 +97,7 @@ export class WorktreeManager {
   }
 
   async removeWorktree(worktree, options = {}) {
-    const { workspaceDir, workspaceId, worktreePath, branch } = worktree || {};
+    const { workspaceDir, workspaceId, worktreePath, containerWorktreePath, branch } = worktree || {};
     if (!workspaceDir || !workspaceId || !worktreePath) return false;
     const relative = path.relative(workspaceDir, worktreePath);
     if (!relative || relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
@@ -108,7 +108,7 @@ export class WorktreeManager {
       : "";
     await this.execute({
       workspaceDir, workspaceId,
-      command: "git worktree remove --force " + shellQuote(worktreePath) + branchDelete + " && git worktree prune",
+      command: "git worktree remove --force " + shellQuote(containerWorktreePath) + branchDelete + " && git worktree prune",
     });
     return true;
   }
