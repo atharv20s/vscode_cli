@@ -1,11 +1,13 @@
 /**
  * Universal Permission Engine.
- * Commands emitted by an LLM are untrusted: unknown commands require approval.
+ *
+ * LLM-generated shell commands are untrusted. Only a tiny read-only allowlist
+ * runs without approval; unknown commands require explicit user approval.
+ * DENY always takes precedence over ASK.
  */
 import { logger } from "../config/logger.js";
 import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 
-/** @typedef {'ALLOW' | 'ASK' | 'DENY'} PermissionDecision */
 const DENY_COMMAND_PATTERNS = [
   /\brm\b[^\n]*\s-rf\b/i,
   /\b(format|mkfs|fdisk|parted)\b/i,
@@ -17,7 +19,9 @@ const DENY_COMMAND_PATTERNS = [
   /\b(npm|pnpm|yarn)\s+publish\b/i,
   /\b(drop\s+(database|schema|table)|truncate\s+table)\b/i,
   /\/var\/run\/docker\.sock/i,
+  /\b(chmod|chown)\s+(-R\s+)?(777|\+s)\b/i,
 ];
+
 const SAFE_READ_ONLY_COMMANDS = [
   /^pwd$/,
   /^git\s+status(?:\s+--short)?$/,
@@ -28,53 +32,26 @@ const SAFE_READ_ONLY_COMMANDS = [
   /^(node|npm|python|python3)\s+--version$/,
 ];
 
-export function classifyCommandForPolicy(command, { isolatedRepoAgent = false } = {}) {
+export function classifyCommandForPolicy(command) {
   if (typeof command !== "string" || !command.trim()) return "DENY";
   const cmd = command.trim();
-  for (const pattern of DENY_COMMAND_PATTERNS) if (pattern.test(cmd)) return "DENY";
-  // Repo-agent jobs run in disposable per-task Docker workspaces with networking
-  // forcibly disabled. Permit build/test commands there; this cannot grant host access.
-  if (isolatedRepoAgent) return "ALLOW";
-  // Never auto-approve shell composition, substitutions, redirects or multiline input.
-  if (!/[\n\r;&|<>\u0060$]/.test(cmd) &&
-      SAFE_READ_ONLY_COMMANDS.some(pattern => pattern.test(cmd))) return "ALLOW";
-  return "ASK";
-}
+  if (DENY_COMMAND_PATTERNS.some(pattern => pattern.test(cmd))) return "DENY";
 
-export function classifyFileOperationForPolicy(action, inputPath = "", { isolatedRepoAgent = false } = {}) {
-  const filePath = String(inputPath || "").replace(/\\/g, "/").toLowerCase();
-  const pathSegments = filePath.split("/").filter(Boolean);
-  const secretPath = pathSegments.some(segment =>
-    /^\.env(?:$|\.)/i.test(segment) ||
-    /^(id_rsa|id_ed25519)(?:$|\.)/i.test(segment) ||
-    /^(credentials|secrets?|service-account|firebase-adminsdk[^/]*|\.npmrc|\.pypirc|\.netrc|kubeconfig)(?:$|\.)/i.test(segment) ||
-    /\.(pem|key|p8|p12|pfx|jks|tfstate)$/i.test(segment)
-  );
-  if (action === "read" && secretPath) return "DENY";
-  if (isolatedRepoAgent) return secretPath ? "DENY" : "ALLOW";
-  if (action === "delete" || action === "delete_file") return "ASK";
-  const sensitiveProjectFile = /(^|\/)\.github\/workflows\//i.test(filePath) ||
-    /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|dockerfile|docker-compose[^/]*|\.env(?:$|\.)|\.npmrc)$/i.test(filePath) ||
-    /(^|\/)server\/src\/config\/env\.js$/i.test(filePath);
-  if ((action === "write" || action === "edit") && (secretPath || sensitiveProjectFile)) return "ASK";
-  return "ALLOW";
+  // Never auto-allow shell composition, substitutions, redirects or multiline input.
+  if (/[\n\r;&|<>\x60$]/.test(cmd)) return "ASK";
+  return SAFE_READ_ONLY_COMMANDS.some(pattern => pattern.test(cmd)) ? "ALLOW" : "ASK";
 }
 
 class PermissionEngine {
   constructor() {
-    /** @type {Map<string, { resolve: Function, reject: Function, timer: any, descriptor: object }>} */
     this.pendingRequests = new Map();
     this.defaultPolicy = "ASK";
   }
 
   async checkPermission({ resource, action, payload = {}, sessionId = null, turnId = null, workspaceId = "default", timeout = 60000 }) {
-    const policyPayload = {
-      ...payload,
-      isolatedRepoAgent: payload.isolatedRepoAgent === true || String(workspaceId || "").startsWith("repo-agent-"),
-    };
-    const decision = this._evaluatePolicy(resource, action, policyPayload);
+    const decision = this._evaluatePolicy(resource, action, payload);
     if (decision === "DENY") {
-      logger.warn(`PermissionEngine: DENIED ${resource}.${action}`, { workspaceId, command: policyPayload.command });
+      logger.warn(`PermissionEngine: DENIED ${resource}.${action}`, { workspaceId, command: payload.command });
       return { granted: false, decision: "DENY", reason: `Operation blocked by security policy: ${resource}.${action}` };
     }
     if (decision === "ALLOW") {
@@ -85,7 +62,7 @@ class PermissionEngine {
     const permissionId = `perm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     logger.info(`PermissionEngine: Requesting approval [${permissionId}] for ${resource}.${action}`);
     eventBus.publish(EVENT_TOPICS.PERMISSION_REQUESTED, {
-      permissionId, resource, action, payload: policyPayload, expiresAt: Date.now() + timeout,
+      permissionId, resource, action, payload, expiresAt: Date.now() + timeout,
     }, { workspaceId, sessionId, turnId, source: "permission", actor: "system" });
 
     return new Promise(resolve => {
@@ -97,12 +74,14 @@ class PermissionEngine {
         }, { workspaceId, sessionId, turnId, source: "permission", actor: "system" });
         resolve({ granted: false, decision: "ASK", reason: "Interactive permission request timed out." });
       }, timeout);
+
       this.pendingRequests.set(permissionId, {
         resolve: (granted, reason) => {
           clearTimeout(timer);
           this.pendingRequests.delete(permissionId);
-          eventBus.publish(EVENT_TOPICS.PERMISSION_RESOLVED, { permissionId, granted, reason },
-            { workspaceId, sessionId, turnId, source: "permission", actor: "system" });
+          eventBus.publish(EVENT_TOPICS.PERMISSION_RESOLVED, {
+            permissionId, granted, reason,
+          }, { workspaceId, sessionId, turnId, source: "permission", actor: "system" });
           resolve({ granted, decision: "ASK", reason: granted ? "Approved by user" : (reason || "Rejected by user") });
         },
         workspaceId,
@@ -112,28 +91,24 @@ class PermissionEngine {
   }
 
   resolvePermission(permissionId, granted, reason = "", workspaceId = null) {
-    if (typeof granted !== "boolean" || typeof permissionId !== "string" || !permissionId) return false;
     const pending = this.pendingRequests.get(permissionId);
-    if (pending && pending.workspaceId === workspaceId) {
-      pending.resolve(granted, reason);
-      logger.info(`PermissionEngine: Resolved [${permissionId}] -> ${granted ? "GRANTED" : "REJECTED"}`);
-      return true;
-    }
-    return false;
+    if (!pending || pending.workspaceId !== workspaceId) return false;
+    pending.resolve(granted, reason);
+    logger.info(`PermissionEngine: Resolved [${permissionId}] -> ${granted ? "GRANTED" : "REJECTED"}`);
+    return true;
   }
 
   _evaluatePolicy(resource, action, payload) {
-    if (resource === "command" || action === "run_command" || action === "execute") return classifyCommandForPolicy(payload.command, { isolatedRepoAgent: payload.isolatedRepoAgent === true });
-    if (resource === "file") return classifyFileOperationForPolicy(action, payload.path, { isolatedRepoAgent: payload.isolatedRepoAgent === true });
-    if (resource === "git") {
-      if (action === "force-push") return "DENY";
-      if (payload.isolatedRepoAgent) return ["push", "pull", "clone"].includes(action) ? "DENY" : "ALLOW";
-      if (["push", "commit", "pull", "clone", "branch-create", "branch-delete", "branch-switch"].includes(action)) return "ASK";
+    if (resource === "command" || action === "run_command" || action === "execute") {
+      return classifyCommandForPolicy(payload.command);
+    }
+    if (resource === "file") {
+      if (action === "delete" || action === "delete_file") return "ASK";
       return "ALLOW";
     }
-    if (resource === "github") {
-      if (action === "force-push" || payload.isolatedRepoAgent) return "DENY";
-      if (["push", "create_pr", "create_repo", "create_issue"].includes(action)) return "ASK";
+    if (resource === "git" || resource === "github") {
+      if (action === "force-push") return "DENY";
+      if (action === "push") return "ASK";
       return "ALLOW";
     }
     return this.defaultPolicy;
@@ -143,4 +118,5 @@ class PermissionEngine {
     return Array.from(this.pendingRequests.values()).map(p => p.descriptor);
   }
 }
+
 export const permissionEngine = new PermissionEngine();
