@@ -5,7 +5,7 @@ import { dockerWorkspaceRuntime } from "./dockerWorkspaceRuntime.js";
 import { buildRepositoryContext, formatRepositoryContext } from "./repoContextEngine.js";
 import { appendRepoTaskEvent, saveRepoContextRound, listRepoContextRounds } from "../db/repoAgentStore.js";
 import { config } from "../config/env.js";
-import { executeTaskGraph } from "./taskGraph.js";
+import { executeTaskGraph } from "./taskGraph.js";\nimport { worktreeManager } from "./worktreeManager.js";\nimport { createScopedWorkspaceService } from "./workspaceService.js";
 
 const PLANNER_TOOLS = ["read_file","list_files"];
 const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command"];
@@ -23,7 +23,7 @@ function extractAssistantText(result) {
 }
 
 async function runRole(options) {
-  const { task, role, roundNumber, message, workspaceDir, workspaceId, workspaceService, tools, maxIterations, onEvent } = options;
+  const { task, role, roundNumber, message, workspaceDir, executionWorkspaceDir, workspaceId, workspaceService, tools, maxIterations, onEvent } = options;
   await appendRepoTaskEvent(task.id, {
     type: "agent_round",
     data: { role, round: roundNumber, status: "started" },
@@ -354,18 +354,59 @@ export async function runRepoAgentPipeline(options) {
   });
 
   const plannedTasks = parseImplementationTasks(plan, task.prompt);
+  const taskOrdinals = new Map(plannedTasks.map((item,index)=>[item.id,index]));
+  const pendingMerges = [];
+  const configuredParallelism = Number(process.env.REPO_AGENT_MAX_PARALLEL || 2);
+  const maxConcurrency = Math.max(1, Math.min(2, Number.isFinite(configuredParallelism) ? configuredParallelism : 2));
   const taskGraphResult = await executeTaskGraph(plannedTasks, async (plannedTask, priorResults) => {
-    const summary = await runRole({
-      task, role: "coder", roundNumber: roundOffset + 2 + Object.keys(priorResults).length,
-      workspaceDir, workspaceId, workspaceService, tools: CODER_TOOLS, model: "coding", signal, onEvent,
-      message: baseFor(30000) + "\n\nIMPLEMENTATION PLAN:\n" + plan +
-        "\n\nASSIGNED GRAPH TASK (" + plannedTask.id + "):\n" + plannedTask.description +
-        "\n\nCOMPLETED PREREQUISITES:\n" + JSON.stringify(priorResults) +
-        "\n\nImplement only this task, preserve project conventions, and avoid unrelated refactors. This pipeline currently serializes writers in the shared workspace; do not assume other tasks are editing concurrently. Run quick checks available within the workspace.",
-      maxIterations: 22,
+    if (signal?.aborted) throw new Error("Task graph cancelled before worktree creation.");
+    const worktree = await worktreeManager.createWorktree({
+      workspaceDir, workspaceId, taskId: plannedTask.id,
     });
-    return summary;
-  }, { maxConcurrency: 1, signal });
+    const agentWorkspaceId = ("repo-agent-" + task.id + "-" + plannedTask.id).slice(0, 64);
+    const scopedWorkspace = createScopedWorkspaceService(worktree.worktreePath, agentWorkspaceId);
+    try {
+      await dockerWorkspaceRuntime.ensureContainer(agentWorkspaceId, workspaceDir, { restartPolicy:"no" });
+      const summary = await runRole({
+        task, role: "coder", roundNumber: roundOffset + 2 + taskOrdinals.get(plannedTask.id),
+        workspaceDir, executionWorkspaceDir:workspaceDir, workspaceId:agentWorkspaceId,
+        workspaceService:scopedWorkspace, tools:CODER_TOOLS, model:"coding", signal, onEvent,
+        message: baseFor(30000) + "\n\nIMPLEMENTATION PLAN:\n" + plan +
+          "\n\nASSIGNED GRAPH TASK (" + plannedTask.id + "):\n" + plannedTask.description +
+          "\n\nCOMPLETED PREREQUISITES:\n" + JSON.stringify(priorResults) +
+          "\n\nYou are working in an isolated Git worktree. Only modify files within your assigned worktree. Do not access sibling worktrees or the parent checkout. Run relevant focused checks before finishing.",
+        maxIterations:22,
+      });
+      const committed = await worktreeManager.commitWorktree(worktree, "agent task: " + plannedTask.id, signal);
+      pendingMerges.push({ ...committed, taskId:plannedTask.id });
+      return summary;
+    } finally {
+      await dockerWorkspaceRuntime.stop(agentWorkspaceId).catch(()=>{});
+    }
+  }, {
+    maxConcurrency, signal,
+    afterBatch: async (batch) => {
+      // Each batch starts from one shared base commit. Integrate completed
+      // branches serially so Git is the final conflict arbiter.
+      for (const plannedTask of batch) {
+        const candidate = pendingMerges.find(item=>item.taskId===plannedTask.id);
+        if (!candidate) throw new Error("Missing committed worktree for task " + plannedTask.id);
+        try {
+          await worktreeManager.mergeWorktree(candidate, signal);
+          await worktreeManager.removeWorktree(candidate, {deleteBranch:true});
+          pendingMerges.splice(pendingMerges.indexOf(candidate),1);
+          onEvent?.({type:"task_integrated",data:{taskId:plannedTask.id,branch:candidate.branch,commit:candidate.commit}});
+        } catch (error) {
+          await dockerWorkspaceRuntime.execute({
+            workspaceId,workspaceDir,cwd:workspaceDir,
+            command:"git merge --abort",
+            timeout:15000,
+          }).catch(()=>{});
+          throw new Error("Could not safely integrate task " + plannedTask.id + " (" + candidate.branch + "): " + error.message + ". Its worktree branch was preserved for inspection.");
+        }
+      }
+    },
+  });
   let implementationSummary = Object.entries(taskGraphResult.results)
     .map(([id, summary]) => "TASK " + id + "\n" + summary).join("\n\n");
 
@@ -379,7 +420,7 @@ export async function runRepoAgentPipeline(options) {
     // work. Run them concurrently; the reviewer consumes both reports below.
     const [tester, deterministicResults] = await Promise.all([
       runRole({
-        task, role: "tester", roundNumber: roundOffset + 3 + attempt * 2, workspaceDir, workspaceId,
+        task, role: "tester", roundNumber: roundOffset + 2 + plannedTasks.length + attempt * 2, workspaceDir, workspaceId,
         workspaceService, tools: TESTER_TOOLS, model: "fast", signal, onEvent,
         message: baseFor(14000) + "\n\nIMPLEMENTATION SUMMARY:\n" + implementationSummary +
           "\n\nRun the repository's most relevant tests/build checks that can run without downloading dependencies. Report exact commands and outputs. Do not edit source code in this phase.",
@@ -394,7 +435,7 @@ export async function runRepoAgentPipeline(options) {
     }
     await options.setStatus?.("reviewing");
     review = await runRole({
-      task, role: "reviewer", roundNumber: roundOffset + 4 + attempt * 2, workspaceDir, workspaceId,
+      task, role: "reviewer", roundNumber: roundOffset + 3 + plannedTasks.length + attempt * 2, workspaceDir, workspaceId,
       workspaceService, tools: REVIEWER_TOOLS, model: "reasoning", signal, onEvent,
       message: baseFor(20000) + "\n\nPLAN:\n" + plan +
         "\n\nIMPLEMENTATION:\n" + implementationSummary +
@@ -422,7 +463,7 @@ export async function runRepoAgentPipeline(options) {
       "\nTester report:\n" + tester,
     ].join("\n");
     implementationSummary = await runRole({
-      task, role: "repair_coder", roundNumber: roundOffset + 5 + attempt * 2, workspaceDir, workspaceId,
+      task, role: "repair_coder", roundNumber: roundOffset + 4 + plannedTasks.length + attempt * 2, workspaceDir, workspaceId,
       workspaceService, tools: CODER_TOOLS, model: "coding", signal, onEvent,
       message: baseFor(24000) + "\n\n" + repairInput,
       maxIterations: 16,
