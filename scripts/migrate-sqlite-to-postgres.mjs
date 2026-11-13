@@ -252,14 +252,15 @@ export async function migrateSqliteToPostgres({
       const evidenceJson = JSON.stringify(safeJson(r.evidence_json || r.evidence, {}));
       if (!dryRun) {
         await pgClient.query(
-          `INSERT INTO repo_agent_context_rounds (task_id, round_number, agent_role, status, input_summary, output_summary, evidence, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, COALESCE($8::timestamptz, CURRENT_TIMESTAMP))
+          `INSERT INTO repo_agent_context_rounds (id, task_id, round_number, agent_role, status, input_summary, output_summary, evidence, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, COALESCE($9::timestamptz, CURRENT_TIMESTAMP))
            ON CONFLICT (task_id, round_number, agent_role) DO UPDATE SET
              status = EXCLUDED.status,
              input_summary = EXCLUDED.input_summary,
              output_summary = EXCLUDED.output_summary,
              evidence = EXCLUDED.evidence;`,
           [
+            r.id,
             r.task_id,
             r.round_number,
             r.agent_role,
@@ -348,7 +349,7 @@ export async function migrateSqliteToPostgres({
     ).all().map(row => row.name);
 
     for (const table of sqliteTables) {
-      if (explicitlyMigrated.has(table)) continue;
+      if (table === "schema_migrations" || explicitlyMigrated.has(table)) continue;
       if (!/^[a-z_][a-z0-9_]*$/.test(table)) {
         throw new Error(`Unsafe or unsupported SQLite table name: ${table}`);
       }
@@ -393,6 +394,23 @@ export async function migrateSqliteToPostgres({
         });
         if (!dryRun) await pgClient.query(insertSql, values);
         report[table].migrated++;
+      }
+    }
+
+    // Preserve generated-ID continuity after importing explicit SQLite IDs.
+    for (const table of sqliteTables) {
+      if (table === "schema_migrations") continue;
+      if (!/^[a-z_][a-z0-9_]*$/.test(table)) continue;
+      const sequenceResult = await pgClient.query(
+        "SELECT pg_get_serial_sequence($1, 'id') AS sequence_name",
+        [table]
+      );
+      const sequenceName = sequenceResult.rows[0]?.sequence_name;
+      if (sequenceName) {
+        await pgClient.query(
+          `SELECT setval($1::regclass, COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) FROM "${table}"`,
+          [sequenceName]
+        );
       }
     }
 
