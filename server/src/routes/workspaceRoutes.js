@@ -16,6 +16,7 @@ import {
 import { LocalBackend } from "../services/backends/localBackend.js";
 import { config } from "../config/env.js";
 import { listWorkspaceSessions, createWorkspaceSession } from "../services/workspaceSessionService.js";
+import { resolveWorkspaceShare } from "../services/workspaceCollaborationService.js";
 
 const router = Router();
 
@@ -42,6 +43,25 @@ router.post("/sessions", requireAuth, async (req, res) => {
 
 router.use(requireAuth, async (req, res, next) => {
   const workspaceId = req.get("X-Workspace-Id") || "default";
+  const shareToken = req.get("X-ATH-Share-Token");
+  if (shareToken) {
+    try {
+      const share = await resolveWorkspaceShare(shareToken);
+      if (!share) return res.status(404).json({ error: "WorkspaceShareInvalid", message: "This collaboration link is invalid, expired or revoked." });
+      if (req.get("X-Workspace-Id") && workspaceId !== share.workspaceId) {
+        return res.status(403).json({ error: "WorkspaceShareScopeMismatch" });
+      }
+      req.workspaceAccess = share;
+      if (req.method !== "GET" && share.permission !== "edit") {
+        return res.status(403).json({ error: "WorkspaceReadOnly", message: "This collaboration link has read-only access." });
+      }
+      if (req.path === "/exec") return res.status(403).json({ error: "WorkspaceExecutionForbidden", message: "Shared collaborators cannot execute workspace commands." });
+      return next();
+    } catch (error) {
+      return res.status(503).json({ error: "WorkspaceShareUnavailable", message: "Workspace collaboration storage is unavailable." });
+    }
+  }
+  req.workspaceAccess = { ownerUserId: req.user.id, workspaceId, permission: "owner" };
   if (workspaceId === "default") return next();
   try {
     const sessions = await listWorkspaceSessions(req.user.id);
