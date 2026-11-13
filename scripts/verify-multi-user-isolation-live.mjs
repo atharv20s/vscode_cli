@@ -57,8 +57,6 @@ async function request(token, method, body) {
   return { status: response.status, data };
 }
 
-let createdA = false;
-let createdB = false;
 let passed = false;
 try {
   const [writeA, writeB] = await Promise.all([
@@ -66,21 +64,14 @@ try {
     request(tokenB, "POST", contentB),
   ]);
   if (writeA.status !== 200 || !writeA.data.success) throw new Error("Synthetic user A write failed: HTTP " + writeA.status);
-  createdA = true;
   if (writeB.status !== 200 || !writeB.data.success) throw new Error("Synthetic user B write failed: HTTP " + writeB.status);
-  createdB = true;
 
-  const [readA, readB, crossReadA, crossReadB] = await Promise.all([
+  const [readA, readB] = await Promise.all([
     request(tokenA, "GET"),
     request(tokenB, "GET"),
-    request(tokenB, "GET"),
-    request(tokenA, "GET"),
   ]);
   if (readA.status !== 200 || readA.data.content !== contentA) throw new Error("User A did not read back its own isolated content.");
   if (readB.status !== 200 || readB.data.content !== contentB) throw new Error("User B did not read back its own isolated content.");
-  if (crossReadA.data.content === contentA || crossReadB.data.content === contentB) {
-    throw new Error("A synthetic identity observed another identity's workspace content.");
-  }
   passed = true;
   console.log(JSON.stringify({
     success: true,
@@ -93,10 +84,10 @@ try {
     workspaceFile: filePath,
   }, null, 2));
 } finally {
-  const cleanup = [];
-  if (createdA) cleanup.push(request(tokenA, "DELETE").then(result => ({ user: "A", status: result.status })));
-  if (createdB) cleanup.push(request(tokenB, "DELETE").then(result => ({ user: "B", status: result.status })));
-  const results = await Promise.all(cleanup);
+  const results = await Promise.all([
+    request(tokenA, "DELETE").then(result => ({ user: "A", status: result.status })),
+    request(tokenB, "DELETE").then(result => ({ user: "B", status: result.status })),
+  ]);
   if (results.some(result => result.status !== 200 && result.status !== 404)) {
     console.error("Acceptance cleanup needs attention:", JSON.stringify(results));
   }
