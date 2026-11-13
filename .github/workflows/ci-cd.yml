@@ -49,16 +49,15 @@ jobs:
           find server/src -type f -name "*.js" -print0 | xargs -0 -n1 node --check
           find benchmarks -type f -name "*.mjs" -print0 | xargs -0 -n1 node --check
 
-      - name: Run unit tests
+      - name: Install Playwright Chromium for browser tests
+        run: |
+          cd server
+          npx playwright install --with-deps chromium
+
+      - name: Run unit and browser-tool integration tests
         run: |
           cd server
           npm test
-
-      - name: Install Playwright for browser acceptance
-        run: |
-          cd server
-          npm install --no-save --package-lock=false playwright
-          npx playwright install --with-deps chromium
 
       - name: Run browser acceptance and visual regression
         run: |
