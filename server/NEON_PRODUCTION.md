@@ -133,3 +133,28 @@ repo-agent worker's `databaseIdentity` startup log. Pooled and direct Neon
 URLs should produce the same identity when they point to the same branch,
 database and role. The audit cannot establish whether historical reports came
 from the same branch unless those original connection identities were recorded.
+
+
+## Full encrypted backup/restore acceptance drill
+
+For a real end-to-end restore test, create a separate empty Neon branch/database
+and run during a write-quiescent maintenance window:
+
+```bash
+RESTORE_CONFIRM_EMPTY_TARGET=YES npm run db:verify-backup-restore
+```
+
+The command requires `DIRECT_DATABASE_URL`, `RESTORE_DATABASE_URL` and
+`NEON_BACKUP_KEY` in the server environment. It refuses to continue if source
+and target fingerprints match or if the target contains user relations. It
+creates an AES-256-GCM encrypted logical backup, restores it through the
+existing authenticated restore utility, then compares every user table name
+and exact row count between source and target. It also checks the source table
+counts stayed stable during the drill. The encrypted archive is retained at the
+reported path for audit. The target branch is populated by this test; do not
+point it at production or a database containing data.
+
+The script does not create or delete Neon branches. Create the empty target
+branch in Neon first, and remove it manually after retaining the evidence if it
+is no longer needed. A passing logical restore drill does not replace Neon
+provider-managed point-in-time backups.
