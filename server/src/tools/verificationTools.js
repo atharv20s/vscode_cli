@@ -10,8 +10,8 @@ export function detectVerificationCommands(manifest, files = []) {
   const commands = [];
   const manager = files.includes("pnpm-lock.yaml") ? "pnpm"
     : files.includes("yarn.lock") ? "yarn" : "npm";
-  const run = name => manager === "npm" ? "npm run " + name
-    : manager + " run " + name;
+  const run = name => manager === "npm" ? "npm run " + name : manager + " run " + name;
+
   if (scripts.typecheck) commands.push({ name: "typecheck", command: run("typecheck") });
   if (scripts.lint) commands.push({ name: "lint", command: run("lint") });
   if (scripts.test) commands.push({
@@ -19,6 +19,12 @@ export function detectVerificationCommands(manifest, files = []) {
     command: manager === "npm" ? "CI=true npm test" : manager + " test",
   });
   if (scripts.build) commands.push({ name: "build", command: run("build") });
+
+  if (!scripts.test && (files.includes("pyproject.toml") || files.includes("requirements.txt") || files.includes("pytest.ini"))) {
+    commands.push({ name: "test", command: "python3 -m pytest -q" });
+  }
+  if (!scripts.test && files.includes("Cargo.toml")) commands.push({ name: "test", command: "cargo test --locked" });
+  if (!scripts.test && files.includes("go.mod")) commands.push({ name: "test", command: "go test ./..." });
   return commands.slice(0, 4);
 }
 
@@ -27,7 +33,7 @@ export function registerVerificationTools() {
     type: "function",
     function: {
       name: "verify_workspace",
-      description: "Run the workspace's declared typecheck, lint, test and build scripts and return exact outcomes. Must be used before claiming a code-changing task is complete. Does not install packages or deploy.",
+      description: "Run the workspace's declared typecheck, lint, test and build scripts, or standard Python/Rust/Go tests when detected. Returns exact outcomes. Must be used before claiming a code-changing task is complete. Does not install packages or deploy.",
       parameters: {
         type: "object",
         properties: {
@@ -50,10 +56,11 @@ export function registerVerificationTools() {
     if (args.checks?.length) checks = checks.filter(item => args.checks.includes(item.name));
     if (!checks.length) return {
       success: false,
-      output: "No supported package.json verification scripts were detected. Inspect the project and run its documented checks manually; absence of checks is not a pass.",
+      output: "No supported verification scripts or standard test manifests were detected. Inspect the project and run documented checks manually; absence of checks is not a pass.",
       checks: [],
       verified: false,
     };
+
     const results = [];
     for (const check of checks) {
       if (ctx.signal?.aborted) return { success: false, verified: false, checks: results, error: "Verification cancelled." };
