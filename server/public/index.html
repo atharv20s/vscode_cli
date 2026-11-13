@@ -9,9 +9,12 @@
       var url = new URL(window.location.href);
       var fragment = new URLSearchParams(url.hash.slice(1));
       var token = fragment.get("share") || url.searchParams.get("share");
-      if (!token) return;
-      window.__ATH_IDE_SHARE_TOKEN = token;
+      var workspaceToken = fragment.get("workspace-share") || url.searchParams.get("workspace-share");
+      if (token) window.__ATH_IDE_SHARE_TOKEN = token;
+      if (workspaceToken) window.ATH_WORKSPACE_SHARE_TOKEN = workspaceToken;
+      if (!token && !workspaceToken) return;
       url.searchParams.delete("share");
+      url.searchParams.delete("workspace-share");
       url.hash = "";
       window.history.replaceState({}, document.title, url.pathname + url.search);
     })();
@@ -33,6 +36,22 @@
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
   <!-- Xterm.js Fit Addon -->
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+  <script>
+    // Attach a workspace capability only to same-origin workspace API calls.
+    (function () {
+      var originalFetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        init = init || {};
+        var url = typeof input === "string" ? input : input && input.url;
+        if (window.ATH_WORKSPACE_SHARE_TOKEN && typeof url === "string" && url.startsWith("/api/workspace")) {
+          var headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+          headers.set("X-ATH-Share-Token", window.ATH_WORKSPACE_SHARE_TOKEN);
+          init = Object.assign({}, init, { headers: headers });
+        }
+        return originalFetch(input, init);
+      };
+    })();
+  </script>
 </head>
 <body>
   <div id="app" class="ide-container">
@@ -49,6 +68,10 @@
           <i data-lucide="folder-git-2" class="pill-icon"></i>
           <span id="current-workspace-name">workspace</span>
         </div>
+        <button id="btn-share-workspace" class="topbar-btn" type="button" title="Invite collaborators" style="display:flex;align-items:center;gap:5px;padding:5px 9px;font-size:11px;">
+          <i data-lucide="users"></i> Share
+        </button>
+        <span id="collab-presence" aria-live="polite" style="font-size:11px;color:var(--text-muted);white-space:nowrap;"></span>
       </div>
 
       <div class="topbar-center">
