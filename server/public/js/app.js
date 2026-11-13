@@ -271,8 +271,10 @@ class App {
         "",
         "Action: " + action,
         command ? "Command:\\n" + command.slice(0, 3000) : "",
+        details.path ? "File path: " + details.path : "",
         details.working_dir ? "Working directory: " + details.working_dir : "",
         "",
+        "Build, install and test commands may execute scripts from this workspace and its dependencies.",
         "Approve only if you recognize and trust this exact operation. Reject unexpected commands.",
       ].filter(Boolean).join("\\n");
       const approved = window.confirm(summary);
