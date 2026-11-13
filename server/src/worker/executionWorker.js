@@ -13,6 +13,7 @@ import { config, validateConfig } from "../config/env.js";
 import { dockerWorkspaceRuntime } from "../services/dockerWorkspaceRuntime.js";
 import { getWorkspaceSnapshot, isWorkspaceObjectStoreConfigured, putWorkspaceSnapshot } from "../services/workspaceObjectStore.js";
 import { execFileSync as dockerExecFileSync } from "child_process";
+import { resolveSafeWorkspacePath, safeRelativeWorkspacePath } from "../services/workspacePathSafety.js";
 
 const app = express();
 const PORT = Number(process.env.WORKER_PORT || 8081);
@@ -29,13 +30,9 @@ if ((process.env.WORKSPACE_OBJECT_STORE_REQUIRED || "false").toLowerCase() === "
 function safeWorkspaceId(value) {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 }
-function safeRelativePath(value) {
-  if (typeof value !== "string" || !value || value.includes("\\") || value.startsWith("/") || value.includes("\0")) return false;
-  return value.split("/").every(part => part && part !== "." && part !== "..");
-}
 
 async function resolveSafeWorkspacePath(root, relativePath) {
-  if (!safeRelativePath(relativePath)) throw new Error("Unsafe workspace path.");
+  if (!safeRelativeWorkspacePath(relativePath)) throw new Error("Unsafe workspace path.");
   const canonicalRoot = await fs.promises.realpath(root);
   const segments = relativePath.split("/");
   let current = canonicalRoot;
@@ -169,7 +166,7 @@ async function replaceWorkspace(root, files) {
   const incoming = new Set();
   let total = 0;
   for (const file of files) {
-    if (!file || !safeRelativePath(file.path) || typeof file.content !== "string") throw new Error("Invalid workspace file entry.");
+    if (!file || !safeRelativeWorkspacePath(file.path) || typeof file.content !== "string") throw new Error("Invalid workspace file entry.");
     if (IGNORED.has(file.path.split("/")[0])) continue;
     const bytes = Buffer.from(file.content, "base64");
     if (bytes.length > MAX_FILE_BYTES || bytes.toString("base64") !== file.content) throw new Error("Invalid or oversized workspace file.");
