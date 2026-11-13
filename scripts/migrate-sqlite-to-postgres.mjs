@@ -408,17 +408,25 @@ export async function migrateSqliteToPostgres({
     for (const table of sqliteTables) {
       if (table === "schema_migrations") continue;
       if (!/^[a-z_][a-z0-9_]*$/.test(table)) continue;
-      const sequenceResult = await pgClient.query(
-        "SELECT pg_get_serial_sequence($1, 'id') AS sequence_name",
-        [table]
-      );
-      const sequenceName = sequenceResult.rows[0]?.sequence_name;
-      if (sequenceName) {
-        await pgClient.query(
-          `SELECT setval($1::regclass, COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) FROM "${table}"`,
-          [sequenceName]
+      try {
+        const hasIdColumn = await pgClient.query(
+          "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = 'id'",
+          [table]
         );
-      }
+        if (!hasIdColumn.rows.length) continue;
+
+        const sequenceResult = await pgClient.query(
+          "SELECT pg_get_serial_sequence($1, 'id') AS sequence_name",
+          [table]
+        );
+        const sequenceName = sequenceResult.rows[0]?.sequence_name;
+        if (sequenceName) {
+          await pgClient.query(
+            `SELECT setval($1::regclass, COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) FROM "${table}"`,
+            [sequenceName]
+          );
+        }
+      } catch {}
     }
 
     // 12. Reconcile each migrated table with exact row counts.
