@@ -20,4 +20,4 @@ else
   npx playwright install chromium
 fi
 
-echo "Browser runtime installed. Restart ath-ide-server.service to apply."
+echo "Browser runtime installed for the repo-agent worker user. Restart ath-ide-worker.service to apply."
