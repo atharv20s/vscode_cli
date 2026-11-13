@@ -349,14 +349,19 @@ export async function runRepoAgentPipeline(options) {
   for (let attempt = 0; attempt < 3; attempt++) {
     if (signal?.aborted) throw new Error("Task cancelled.");
     await options.setStatus?.("testing");
-    const tester = await runRole({
-      task, role: "tester", roundNumber: roundOffset + 3 + attempt * 2, workspaceDir, workspaceId,
-      workspaceService, tools: TESTER_TOOLS, model: "fast", signal, onEvent,
-      message: baseFor(14000) + "\n\nIMPLEMENTATION SUMMARY:\n" + implementationSummary +
-        "\n\nRun the repository's most relevant tests/build checks that can run without downloading dependencies. Report exact commands and outputs. Do not edit source code in this phase. If there are no executable checks, explain precisely why.",
-      maxIterations: 10,
-    });
-    verification = await runDeterministicChecks({ task, root: workspaceDir, workspaceId, context, signal, onEvent });
+    // Tester reasoning and deterministic checks are independent read-only
+    // work. Run them concurrently; the reviewer consumes both reports below.
+    const [tester, deterministicResults] = await Promise.all([
+      runRole({
+        task, role: "tester", roundNumber: roundOffset + 3 + attempt * 2, workspaceDir, workspaceId,
+        workspaceService, tools: TESTER_TOOLS, model: "fast", signal, onEvent,
+        message: baseFor(14000) + "\n\nIMPLEMENTATION SUMMARY:\n" + implementationSummary +
+          "\n\nRun the repository's most relevant tests/build checks that can run without downloading dependencies. Report exact commands and outputs. Do not edit source code in this phase.",
+        maxIterations: 10,
+      }),
+      runDeterministicChecks({ task, root: workspaceDir, workspaceId, context, signal, onEvent }),
+    ]);
+    verification = deterministicResults;
     const failedChecks = verification.filter(item=>!item.success);
     if (verification.some(item=>item.blocked)) {
       throw new Error("Quality gate blocked the PR: declared dependencies are missing and the isolated worker has no dependency-registry egress. Configure an approved package cache/egress proxy, then retry. No PR was published.");
