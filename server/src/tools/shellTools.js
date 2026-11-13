@@ -105,7 +105,7 @@ export function registerShellTools() {
       const result = await executionService.execute({
         command: args.command,
         cwd: resolvedCwd,
-        workspaceDir: baseDir,
+        workspaceDir: ctx.executionWorkspaceDir || baseDir,
         mode: "AGENT_BACKGROUND",
         operationId,
         turnId: ctx.turnId || null,
