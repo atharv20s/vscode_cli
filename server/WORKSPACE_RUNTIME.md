@@ -66,6 +66,13 @@ Remote execution requires:
 
 The worker writes snapshots after workspace sync/command execution, periodically during an attached terminal, and on terminal detach. It restores a snapshot when the worker's workspace directory is empty. Snapshots are bounded to 12 MiB, 4,000 files and 2 MiB per file; dependency/build caches are intentionally excluded.
 
+Run `npm run storage:verify-s3` from `server/` on the execution-worker host to
+perform a live upload/read-back check using a fresh random workspace key. It
+verifies S3 connectivity and snapshot checksum validation. It intentionally
+does not delete any existing user workspace; the separate disposable-worker
+restore drill must still clear or replace a test workspace directory and call
+the authenticated worker pull endpoint.
+
 Before production sign-off, run the acceptance checks in this document on a disposable user/workspace and a disposable database branch. In particular, prove a worker process restart with the Docker container left running, prove a fresh worker workspace can restore from S3, and prove two different users cannot read or mutate one another's workspaces. A VM/container restart is a different failure domain from restarting the Node worker process.
 
 No VM, cloud resource, secret, or deployment is created by repository code.
