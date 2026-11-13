@@ -69,8 +69,18 @@ Install dependencies and start the worker from the \`server/\` directory:
 
 \`\`\`bash
 npm ci
-npm run worker:repo-agent
+sudo npm run browser:install
+sudo systemctl restart ath-ide-worker.service
+sudo systemctl is-active ath-ide-worker.service
 \`\`\`
+
+The provisioning script installs Chromium's Linux libraries and browser binary for the `ubuntu` service account when run as root. Override `ATH_IDE_USER` if systemd uses a different account. The browser tool runs inside the repository-agent worker process, so restarting only the API service is insufficient.
+
+Smoke-test Chromium as the worker account:
+
+```bash
+sudo -u ubuntu bash -lc 'cd /home/ubuntu/ath-ide/server && node --input-type=module -e "import { chromium } from \"playwright\"; const browser = await chromium.launch({ headless: true, args: [\"--no-sandbox\"] }); console.log(await browser.version()); await browser.close();"'
+```
 
 Run multiple worker processes/hosts with the same Postgres and Redis. Redis Streams consumer-group claiming, \`XAUTOCLAIM\`, renewable per-task leases, task cancellation and worker heartbeats coordinate the pool. Each worker can use its own local \`WORKSPACE_ROOT\`; a task attempt reclones the pinned GitHub SHA on whichever worker claims it.
 
