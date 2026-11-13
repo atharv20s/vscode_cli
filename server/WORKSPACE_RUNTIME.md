@@ -70,6 +70,23 @@ Before production sign-off, run the acceptance checks in this document on a disp
 
 No VM, cloud resource, secret, or deployment is created by repository code.
 
+## Semantic repository context
+
+Repository-connected coding agents now have a Tree-sitter structural index in
+`server/src/services/repoSymbolIndex.js`, integrated into
+`server/src/services/repoContextEngine.js`. It parses supported JavaScript,
+TypeScript, Python, Rust, Go and Java source files, extracts declarations and
+call sites, ranks prompt-relevant symbols, and expands selected files through
+one hop of relative imports. Sensitive files and dependency/build directories
+are excluded, and indexing is bounded by file-count and per-file-size limits.
+
+The regression suite includes a fixture that checks declaration retrieval,
+cross-file call-site retrieval and context formatting. This is structural
+code-context retrieval, not a full language server: it does not promise
+compiler-grade type resolution, complete reference graphs, or embedding-based
+semantic search. Language coverage and large-repository recall should be
+benchmarked before describing it as equivalent to IDE-grade LSP intelligence.
+
 ## GitHub repository agent tasks
 
 Repository-connected background coding agents now use a separate Redis Streams worker tier. The API persists the task and enqueues its ID; dedicated Linux workers load the owner's GitHub connection from shared Postgres, clone the pinned repository SHA, run the multi-agent pipeline inside a task-specific Docker sandbox, and publish a draft PR only after deterministic checks and reviewer approval.
