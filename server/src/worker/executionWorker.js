@@ -34,6 +34,32 @@ function safeRelativePath(value) {
   return value.split("/").every(part => part && part !== "." && part !== "..");
 }
 
+async function resolveSafeWorkspacePath(root, relativePath) {
+  if (!safeRelativePath(relativePath)) throw new Error("Unsafe workspace path.");
+  const canonicalRoot = await fs.promises.realpath(root);
+  const segments = relativePath.split("/");
+  let current = canonicalRoot;
+  for (let index = 0; index < segments.length; index++) {
+    current = path.join(current, segments[index]);
+    try {
+      const stat = await fs.promises.lstat(current);
+      if (stat.isSymbolicLink()) throw new Error("Workspace paths cannot traverse symbolic links.");
+      if (index < segments.length - 1 && !stat.isDirectory()) {
+        throw new Error("Workspace path parent is not a directory.");
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      current = path.join(current, ...segments.slice(index + 1));
+      break;
+    }
+  }
+  const relative = path.relative(canonicalRoot, current);
+  if (!relative || relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
+    throw new Error("Workspace path escaped root.");
+  }
+  return current;
+}
+
 function verifySignature({ method, requestPath, body, headers }) {
   const secret = process.env.WORKER_SHARED_SECRET || "";
   const timestamp = headers["x-worker-timestamp"] || "";
@@ -160,14 +186,12 @@ async function replaceWorkspace(root, files) {
   // Runtime-generated files and package caches remain untouched.
   for (const relative of previous) {
     if (incoming.has(relative)) continue;
-    const target = path.resolve(root, ...relative.split("/"));
-    if (!target.startsWith(root + path.sep)) throw new Error("Refusing to remove a path outside the workspace.");
+    const target = await resolveSafeWorkspacePath(root, relative);
     await fs.promises.rm(target, { force: true });
   }
   // Update only changed files so long-running processes and dependency caches survive.
   for (const file of validated) {
-    const target = path.resolve(root, ...file.path.split("/"));
-    if (!target.startsWith(root + path.sep)) throw new Error("Workspace path escaped root.");
+    const target = await resolveSafeWorkspacePath(root, file.path);
     const current = await fs.promises.readFile(target).catch(error => {
       if (error.code === "ENOENT") return null;
       throw error;
