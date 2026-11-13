@@ -9,7 +9,7 @@
  * and removes both test files.
  */
 import crypto from "node:crypto";
-import jwt from "jsonwebtoken";
+import crypto from "node:crypto";
 
 const baseUrl = new URL(process.env.WORKSPACE_API_URL || "");
 const jwtSecret = process.env.JWT_SECRET || "";
@@ -27,8 +27,16 @@ const userA = "ath-acceptance-a-" + runId;
 const userB = "ath-acceptance-b-" + runId;
 const contentA = "ATH-ISOLATION-A:" + crypto.randomBytes(24).toString("hex");
 const contentB = "ATH-ISOLATION-B:" + crypto.randomBytes(24).toString("hex");
-const tokenA = jwt.sign({ id: userA, username: "Acceptance A" }, jwtSecret, { expiresIn: "5m" });
-const tokenB = jwt.sign({ id: userB, username: "Acceptance B" }, jwtSecret, { expiresIn: "5m" });
+function signSyntheticToken(id, username) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ id, username, iat: now, exp: now + 300 })).toString("base64url");
+  const unsigned = header + "." + payload;
+  const signature = crypto.createHmac("sha256", jwtSecret).update(unsigned).digest("base64url");
+  return unsigned + "." + signature;
+}
+const tokenA = signSyntheticToken(userA, "Acceptance A");
+const tokenB = signSyntheticToken(userB, "Acceptance B");
 
 async function request(token, method, body) {
   const target = new URL("/api/workspace/file?path=" + encodeURIComponent(filePath), baseUrl);
