@@ -59,7 +59,7 @@ class DockerWorkspaceRuntime {
     const inspected = JSON.parse(raw)[0];
     const networks = inspected?.NetworkSettings?.Networks || {};
     const preferred = networks[network];
-    const address = preferred?.IPAddress || Object.values(networks).map(item => item?.IPAddress).find(Boolean);
+    const address = preferred?.IPAddress;
     if (!address) throw new Error("Workspace container has no reachable IP on the configured runtime network.");
     return address;
   }
