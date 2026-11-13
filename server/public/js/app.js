@@ -292,7 +292,7 @@ class App {
    */
   setupEventListeners() {
     // Shared-link guests can collaborate, but only workspace owners manage invites.
-    if (window.ATH_WORKSPACE_SHARE_TOKEN) {
+    if (window.ATH_IS_WORKSPACE_COLLABORATOR) {
       document.getElementById("btn-share-workspace")?.setAttribute("hidden", "");
       document.getElementById("btn-manage-workspace-shares")?.setAttribute("hidden", "");
     }
