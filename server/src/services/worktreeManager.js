@@ -24,6 +24,13 @@ export function assertSafeId(value, label) {
 export class WorktreeManager {
   constructor(options = {}) {
     this.directoryName = options.directoryName || ".ath-worktrees";
+    this.mutationQueue = Promise.resolve();
+  }
+
+  withMutationLock(operation) {
+    const result = this.mutationQueue.then(operation);
+    this.mutationQueue = result.catch(() => {});
+    return result;
   }
 
   async execute({ workspaceDir, workspaceId, command, signal, timeout = 60000 }) {
@@ -36,7 +43,11 @@ export class WorktreeManager {
     return result.output || "";
   }
 
-  async createWorktree({ workspaceDir, workspaceId, taskId, baseRef = "HEAD", signal }) {
+  async createWorktree(options) {
+    return this.withMutationLock(() => this.createWorktreeLocked(options));
+  }
+
+  async createWorktreeLocked({ workspaceDir, workspaceId, taskId, baseRef = "HEAD", signal }) {
     if (!path.isAbsolute(workspaceDir) || !workspaceId) {
       throw new Error("An absolute task workspace and workspace identity are required.");
     }
@@ -87,6 +98,10 @@ export class WorktreeManager {
   }
 
   async mergeWorktree(worktree, signal) {
+    return this.withMutationLock(() => this.mergeWorktreeLocked(worktree, signal));
+  }
+
+  async mergeWorktreeLocked(worktree, signal) {
     const { workspaceDir, workspaceId, branch, containerWorktreePath } = worktree || {};
     assertSafeId(String(branch || "").replace(/^ath-agent\//, ""), "Worktree branch suffix");
     if (!String(branch).startsWith("ath-agent/")) throw new Error("Only ATH IDE agent branches may be merged.");
@@ -99,6 +114,10 @@ export class WorktreeManager {
   }
 
   async removeWorktree(worktree, options = {}) {
+    return this.withMutationLock(() => this.removeWorktreeLocked(worktree, options));
+  }
+
+  async removeWorktreeLocked(worktree, options = {}) {
     const { workspaceDir, workspaceId, worktreePath, containerWorktreePath, branch } = worktree || {};
     if (!workspaceDir || !workspaceId || !worktreePath) return false;
     const relative = path.relative(workspaceDir, worktreePath);
