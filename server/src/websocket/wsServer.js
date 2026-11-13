@@ -43,6 +43,8 @@ export function initWebSocketServer(httpServer) {
     server: httpServer,
     path: "/ws",
   });
+  const presenceNodeId = crypto.randomUUID();
+  const presenceByWorkspace = new Map();
 
   // Heartbeat check
   const heartbeatInterval = setInterval(() => {
@@ -67,6 +69,7 @@ export function initWebSocketServer(httpServer) {
   wss.on("close", () => {
     clearInterval(heartbeatInterval);
     clearInterval(idleCleanupInterval);
+    clearInterval(presenceInterval);
   });
 
   const broadcastScoped = (type, envelope, payload = envelope.payload) => {
@@ -75,6 +78,33 @@ export function initWebSocketServer(httpServer) {
       if (client.workspaceId === envelope.workspaceId) sendMessage(client, type, payload);
     });
   };
+
+  const sendPresenceToLocal = workspaceId => {
+    const nodes = presenceByWorkspace.get(workspaceId) || new Map();
+    const now = Date.now();
+    const peers = [...nodes.values()]
+      .filter(snapshot => now - snapshot.seenAt < 45000)
+      .flatMap(snapshot => snapshot.peers);
+    wss.clients.forEach(client => {
+      if (client.workspaceId === workspaceId && client.readyState === 1) {
+        sendMessage(client, "collab.presence", { users: peers, count: peers.length });
+      }
+    });
+  };
+
+  eventBus.subscribe("collab.presence.snapshot", envelope => {
+    if (!envelope.workspaceId || !envelope.payload?.nodeId) return;
+    let nodes = presenceByWorkspace.get(envelope.workspaceId);
+    if (!nodes) {
+      nodes = new Map();
+      presenceByWorkspace.set(envelope.workspaceId, nodes);
+    }
+    nodes.set(envelope.payload.nodeId, {
+      peers: Array.isArray(envelope.payload.peers) ? envelope.payload.peers : [],
+      seenAt: Date.now(),
+    });
+    sendPresenceToLocal(envelope.workspaceId);
+  });
 
   const broadcastPresence = workspaceId => {
     if (!workspaceId) return;
@@ -86,12 +116,28 @@ export function initWebSocketServer(httpServer) {
         username: client.collaboratorName || "Collaborator",
         role: client.workspacePermission || "owner",
       }));
-    wss.clients.forEach(client => {
-      if (client.workspaceId === workspaceId && client.readyState === 1) {
-        sendMessage(client, "collab.presence", { users: peers, count: peers.length });
-      }
+    eventBus.publish("collab.presence.snapshot", { nodeId: presenceNodeId, peers }, {
+      workspaceId,
+      source: "websocket",
+      actor: "system",
     });
   };
+
+  const presenceInterval = setInterval(() => {
+    const activeWorkspaces = new Set([...wss.clients]
+      .filter(client => client.workspaceId && client.readyState === 1)
+      .map(client => client.workspaceId));
+    for (const workspaceId of activeWorkspaces) broadcastPresence(workspaceId);
+    const now = Date.now();
+    for (const [workspaceId, nodes] of presenceByWorkspace) {
+      for (const [nodeId, snapshot] of nodes) {
+        if (now - snapshot.seenAt >= 45000) nodes.delete(nodeId);
+      }
+      if (!nodes.size) presenceByWorkspace.delete(workspaceId);
+      else sendPresenceToLocal(workspaceId);
+    }
+  }, 15000);
+  presenceInterval.unref?.();
 
   // 1. Filesystem Events
   eventBus.subscribe(EVENT_TOPICS.FILE_CHANGED, (envelope) => {
