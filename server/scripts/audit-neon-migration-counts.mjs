@@ -168,4 +168,5 @@ if (process.env.SQLITE_SOURCE_PATH) {
 }
 
 console.log(JSON.stringify(result, null, 2));
-if (!identityMatches) process.exitCode = 3;
+if (!identityMatches || !identityVerificationComplete) process.exitCode = 3;
+if (!process.env.SQLITE_SOURCE_PATH && !process.exitCode) process.exitCode = 4;
