@@ -159,12 +159,9 @@ You are in THINK mode. Use deep reasoning:
 7. Consider what could go wrong
 8. Then proceed with implementation
 
-Format your thinking:
-```thinking
-<your detailed reasoning here>
-```
-
-Then provide your solution.
+Do not expose private chain-of-thought or hidden scratch work. Provide a concise
+summary of the key considerations, chosen approach, material trade-offs and
+verification evidence, then provide the solution.
 """,
         tools_enabled=True,
         auto_verify=True,
