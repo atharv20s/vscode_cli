@@ -50,6 +50,7 @@ jobs:
         run: |
           node --check scripts/migrate-sqlite-to-postgres.mjs
           node --check scripts/neon-db-backup.mjs
+          node --check server/scripts/audit-neon-migration-counts.mjs
           node --check scripts/verify-s3-live.mjs
           node --check scripts/verify-s3-restore-live.mjs
           node --check scripts/verify-terminal-restart.mjs
