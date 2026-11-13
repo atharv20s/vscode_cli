@@ -61,3 +61,75 @@ export async function executeTaskGraph(input, executor, options = {}) {
   }
   return { batches:batches.map(batch=>batch.map(task=>task.id)), results:Object.fromEntries(results) };
 }
+
+/**
+ * Schedule ready DAG nodes as soon as their own prerequisites have completed.
+ * afterTask runs before dependents are released, allowing callers to integrate
+ * an isolated worktree before a dependent task branches from the new HEAD.
+ */
+export async function executeTaskGraphDynamic(input, executor, options = {}) {
+  if (typeof executor !== "function") throw new Error("Task graph executor must be a function.");
+  const tasks = normalizeTaskGraph(input);
+  const maxConcurrency = Math.max(1, Math.min(16, Number(options.maxConcurrency) || 1));
+  const byId = new Map(tasks.map(task => [task.id, task]));
+  const order = new Map(tasks.map((task, index) => [task.id, index]));
+  const dependents = new Map(tasks.map(task => [task.id, []]));
+  const remainingDependencies = new Map(tasks.map(task => [task.id, task.dependsOn.length]));
+  for (const task of tasks) for (const dependency of task.dependsOn) dependents.get(dependency).push(task.id);
+
+  // Validate cycles before starting any side-effecting executor.
+  buildTaskBatches(tasks);
+  const ready = tasks.filter(task => remainingDependencies.get(task.id) === 0);
+  const running = new Map();
+  const results = new Map();
+  const scheduled = new Set();
+  const completedOrder = [];
+
+  while (results.size < tasks.length) {
+    if (options.signal?.aborted) {
+      await Promise.allSettled([...running.values()]);
+      throw new Error("Task graph cancelled.");
+    }
+
+    ready.sort((a, b) => order.get(a.id) - order.get(b.id));
+    while (ready.length && running.size < maxConcurrency) {
+      const task = ready.shift();
+      if (scheduled.has(task.id)) continue;
+      scheduled.add(task.id);
+      const prior = Object.fromEntries(results);
+      const promise = Promise.resolve().then(async () => ({
+        task,
+        result: await executor(task, prior),
+      }));
+      running.set(task.id, promise);
+    }
+
+    if (!running.size) throw new Error("Task graph stalled before all tasks completed.");
+    const settled = await Promise.race([...running.entries()].map(([id, promise]) =>
+      promise.then(value => ({ id, value }), error => ({ id, error }))
+    ));
+    running.delete(settled.id);
+    if (settled.error) {
+      await Promise.allSettled([...running.values()]);
+      throw settled.error;
+    }
+
+    const { task, result } = settled.value;
+    if (typeof options.afterTask === "function") {
+      await options.afterTask(task, result, Object.fromEntries(results));
+    }
+    results.set(task.id, result);
+    completedOrder.push(task.id);
+
+    for (const dependentId of dependents.get(task.id)) {
+      const count = remainingDependencies.get(dependentId) - 1;
+      remainingDependencies.set(dependentId, count);
+      if (count === 0) ready.push(byId.get(dependentId));
+    }
+  }
+
+  return {
+    order: completedOrder,
+    results: Object.fromEntries(results),
+  };
+}
