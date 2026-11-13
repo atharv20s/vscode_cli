@@ -10,7 +10,6 @@
  */
 import crypto from "node:crypto";
 import "../server/src/config/env.js";
-import crypto from "node:crypto";
 
 const baseUrl = new URL(process.env.WORKSPACE_API_URL || "");
 const jwtSecret = process.env.JWT_SECRET || "";
