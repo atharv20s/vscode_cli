@@ -7,6 +7,8 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createRequire } from "node:module";
+const require = createRequire(new URL("../server/package.json", import.meta.url));
 
 const appUrl = process.env.APP_URL;
 if (!appUrl) throw new Error("APP_URL is required.");
@@ -15,24 +17,34 @@ if (!["http:","https:"].includes(parsed.protocol)) throw new Error("APP_URL must
 const allowed = ["localhost","127.0.0.1","::1"];
 const configuredPreview = process.env.PREVIEW_PUBLIC_URL ? new URL(process.env.PREVIEW_PUBLIC_URL) : null;
 const matchesConfiguredPreview = configuredPreview && configuredPreview.host.toLowerCase() === parsed.host.toLowerCase();
-if (!allowed.includes(parsed.hostname) && !parsed.hostname.endsWith(".preview") && !matchesConfiguredPreview) {
+if (!allowed.includes(parsed.hostname) && !matchesConfiguredPreview) {
   throw new Error("APP_URL must target localhost, an approved .preview host, or the exact PREVIEW_PUBLIC_URL host.");
 }
 if (parsed.username || parsed.password) throw new Error("APP_URL must not embed credentials.");
 const baselineDir = path.resolve(process.env.VISUAL_BASELINE_DIR || "benchmarks/visual-baselines");
-const baselinePath = path.join(baselineDir, (process.env.VISUAL_BASELINE_NAME || "default") + ".png");
+const baselineName = process.env.VISUAL_BASELINE_NAME || "default";
+if (!/^[a-zA-Z0-9_-]{1,64}$/.test(baselineName)) throw new Error("VISUAL_BASELINE_NAME must be a simple filename.");
+const baselinePath = path.join(baselineDir, baselineName + ".png");
 const updateBaseline = process.env.UPDATE_VISUAL_BASELINES === "1";
 const threshold = Math.max(0, Math.min(1, Number(process.env.VISUAL_DIFF_THRESHOLD || 0.01)));
-const { chromium } = await import("playwright");
-const browser = await chromium.launch({headless:true,args:["--no-sandbox","--disable-dev-shm-usage"]});
+const { chromium } = require("playwright");
+const browser = await chromium.launch({headless:true,args:["--no-sandbox","--disable-dev-shm-usage","--no-proxy-server"]});
 const page = await browser.newPage({viewport:{width:1440,height:900},deviceScaleFactor:1});
 const errors = [];
+await page.route("**/*", route => {
+  let target;
+  try { target = new URL(route.request().url()); } catch { return route.abort(); }
+  if (target.origin !== parsed.origin && !["data:","blob:"].includes(target.protocol)) return route.abort();
+  return route.continue();
+});
 page.on("pageerror", error => errors.push(String(error.message || error)));
 page.on("console", message => { if (message.type()==="error") errors.push(message.text()); });
 let failed = false;
 try {
-  const response = await page.goto(parsed.toString(),{waitUntil:"networkidle",timeout:30000});
+  const response = await page.goto(parsed.toString(),{waitUntil:"domcontentloaded",timeout:30000});
   if (!response || response.status() >= 400) throw new Error("Application returned HTTP " + (response?.status() ?? "no response"));
+  if (new URL(page.url()).origin !== parsed.origin) throw new Error("Application redirected outside the approved origin.");
+  await page.waitForTimeout(500);
   const title = await page.title();
   if (!title.trim()) throw new Error("Application title is empty.");
   for (const selector of (process.env.REQUIRED_SELECTORS || "").split(",").map(x=>x.trim()).filter(Boolean)) {
@@ -40,7 +52,7 @@ try {
   }
   const screenshot = await page.screenshot({type:"png",fullPage:true});
   await fs.mkdir(baselineDir,{recursive:true});
-  if (updateBaseline || !(await fs.access(baselinePath).then(()=>true).catch(()=>false))) {
+  if (updateBaseline) {
     await fs.writeFile(baselinePath,screenshot);
     console.log(JSON.stringify({type:"baseline",path:baselinePath,updated:updateBaseline}));
   } else {

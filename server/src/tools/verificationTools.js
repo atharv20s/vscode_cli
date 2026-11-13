@@ -37,6 +37,7 @@ export function registerVerificationTools() {
       parameters: {
         type: "object",
         properties: {
+          browser_url: { type: "string", description: "Optional running localhost or configured preview URL for browser acceptance." },
           checks: {
             type: "array",
             items: { type: "string", enum: ["typecheck","lint","test","build"] },
@@ -54,7 +55,7 @@ export function registerVerificationTools() {
     const paths = (tree.entries || []).map(item => item.name).filter(Boolean);
     let checks = detectVerificationCommands(manifest, paths);
     if (args.checks?.length) checks = checks.filter(item => args.checks.includes(item.name));
-    if (!checks.length) return {
+    if (!checks.length && !args.browser_url) return {
       success: false,
       output: "No supported verification scripts or standard test manifests were detected. Inspect the project and run documented checks manually; absence of checks is not a pass.",
       checks: [],
@@ -78,12 +79,23 @@ export function registerVerificationTools() {
       ctx.onEvent?.({ type: "verification_result", data: item });
       if (!item.success) break;
     }
-    const verified = results.length === checks.length && results.every(item => item.success);
+    let browserResult = null;
+    if (args.browser_url && results.every(item => item.success)) {
+      browserResult = await executeTool("browser_verify", { url: args.browser_url }, {
+        ...ctx,
+        allowedTools: null,
+      });
+    }
+    const checksPassed = checks.length === 0 ? Boolean(args.browser_url) : results.length === checks.length && results.every(item => item.success);
+    const verified = checksPassed &&
+      (!args.browser_url || browserResult?.success === true);
+    const output = results.map(item => (item.success ? "PASS " : "FAIL ") + item.name + ": " + item.command + "\n" + item.output).join("\n\n");
     return {
       success: verified,
       verified,
       checks: results,
-      output: results.map(item => (item.success ? "PASS " : "FAIL ") + item.name + ": " + item.command + "\n" + item.output).join("\n\n"),
+      browser: browserResult,
+      output: output + (browserResult ? "\n\nBROWSER ACCEPTANCE:\n" + JSON.stringify(browserResult).slice(0,12000) : ""),
     };
   });
 }

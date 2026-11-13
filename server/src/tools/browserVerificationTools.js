@@ -15,8 +15,7 @@ function normalizeUrl(value) {
       configured = preview.host.toLowerCase() === url.host.toLowerCase();
     } catch {}
   }
-  const previewSubdomain = /^(?:[a-z0-9-]+\\.)*(?:preview|previews)$/i.test(host);
-  if (!local && !configured && !previewSubdomain) {
+  if (!local && !configured) {
     throw new Error("Browser verification is restricted to localhost or the exact PREVIEW_PUBLIC_URL host.");
   }
   return url;
@@ -69,14 +68,23 @@ export function registerBrowserVerificationTool() {
     }
     let browser;
     try {
-      browser = await chromium.launch({ headless:true, args:["--no-sandbox","--disable-dev-shm-usage"] });
+      browser = await chromium.launch({ headless:true, executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, args:["--no-sandbox","--disable-dev-shm-usage","--no-proxy-server"] });
       const page = await browser.newPage({ viewport:{width:1440,height:900} });
+      // Keep redirects and subresources on the approved origin to prevent the
+      // browser from becoming an SSRF bridge to metadata or private services.
+      await page.route("**/*", route => {
+        let target;
+        try { target = new URL(route.request().url()); } catch { return route.abort(); }
+        if (target.origin !== url.origin && !["data:","blob:"].includes(target.protocol)) return route.abort();
+        return route.continue();
+      });
       const consoleErrors = [];
       const pageErrors = [];
       page.on("console", message => { if (message.type()==="error") consoleErrors.push(message.text().slice(0,1000)); });
       page.on("pageerror", error => pageErrors.push(String(error.message || error).slice(0,1000)));
       const response = await page.goto(url.toString(), { waitUntil:"domcontentloaded", timeout:args.timeout_ms || 15000 });
       await page.waitForTimeout(500);
+      if (new URL(page.url()).origin !== url.origin) throw new Error("Preview redirected outside the approved origin.");
       const title = await page.title();
       const actions = [];
       for (const action of (args.actions || [])) {

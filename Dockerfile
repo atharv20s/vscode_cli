@@ -15,10 +15,11 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-RUN apk add --no-cache git bash
+RUN apk add --no-cache git bash chromium nss freetype harfbuzz ca-certificates ttf-freefont
 
 ENV NODE_ENV=production
 ENV PORT=3001
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Copy built node_modules and code
 COPY --from=builder /app/node_modules ./node_modules

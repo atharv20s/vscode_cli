@@ -48,6 +48,27 @@ jobs:
           cd server
           npm test
 
+      - name: Install Playwright for browser acceptance
+        run: |
+          cd server
+          npm install --no-save --package-lock=false playwright
+          npx playwright install --with-deps chromium
+
+      - name: Run browser acceptance and visual regression
+        run: |
+          python3 -m http.server 4173 --directory benchmarks/fixtures/browser-acceptance >/tmp/ath-browser-fixture.log 2>&1 &
+          echo $! >/tmp/ath-browser-fixture.pid
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          cd server
+          export APP_URL=http://127.0.0.1:4173
+          export VISUAL_BASELINE_DIR=/tmp/ath-visual-baselines
+          UPDATE_VISUAL_BASELINES=1 npm run bench:browser
+          npm run bench:browser
+          kill "$(cat /tmp/ath-browser-fixture.pid)" || true
+
   web-build:
     name: 🌐 Build and Type-check Studio Frontend
     runs-on: ubuntu-latest

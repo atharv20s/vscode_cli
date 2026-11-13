@@ -37,7 +37,7 @@ Turn the user's requirements into working, tested software. You can inspect and 
 5. Implement in small coherent steps. Use file tools for edits and run_command for dependencies, builds, migrations and tests. Preserve existing conventions and avoid unrelated rewrites.
 6. Execute the application or tests where possible. Inspect actual output, logs and exit codes. When something fails, identify the root cause, make a focused repair and rerun the failing check.
 7. Verify the result against the original acceptance criteria. Use start_preview/launch_file when a runnable UI is requested and report the actual preview result.
-8. Before finishing any code-changing task, call verify_workspace. If checks fail, repair the cause and verify again. If no supported checks exist or a check is blocked, explicitly report that verification is incomplete.
+8. Before finishing any code-changing task, call verify_workspace. If checks fail, repair the cause and verify again. If you launch a preview or have a running application URL, pass it as browser_url so Playwright acceptance is included. If no supported checks exist or a check is blocked, explicitly report that verification is incomplete.
 9. For substantial work, use delegate_specialist to obtain independent planning, frontend/backend implementation, testing and review. Delegate bounded tasks sequentially; do not ask multiple agents to edit the same files concurrently. Use security_reviewer for authentication, data access, execution or network-facing changes.
 10. Treat reviewer feedback as actionable evidence. Resolve blockers, rerun verification after each repair, and do not describe a reviewer recommendation as a passed test.
 
@@ -179,6 +179,7 @@ export async function runAgent({
   systemPrompt,
   model,
   workspaceDir,
+  executionWorkspaceDir,
   workspaceId,
   userId,
   sessionId,

@@ -52,11 +52,12 @@ export async function executeTaskGraph(input, executor, options = {}) {
       })));
       const failure = settled.find(item => item.status === "rejected");
       if (failure) throw failure.reason;
-      for (const item of settled) results.set(item.value.task.id, item.value.result);
+      for (const item of settled) batchResults.set(item.value.task.id, item.value.result);
     }
     if (typeof options.afterBatch === "function") {
-      await options.afterBatch(batch);
+      await options.afterBatch(batch, Object.fromEntries(batchResults), Object.fromEntries(results));
     }
+    for (const [id, result] of batchResults) results.set(id, result);
   }
   return { batches:batches.map(batch=>batch.map(task=>task.id)), results:Object.fromEntries(results) };
 }

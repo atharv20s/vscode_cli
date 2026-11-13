@@ -25,3 +25,17 @@ test("executes prerequisites before dependents and passes prior results", async 
   assert.equal(result.results.c,"ab");
   assert.deepEqual(batchesSeen, [["a","b"],["c"]]);
 });
+
+test("integrates a completed dependency batch before scheduling dependents", async () => {
+  const order=[];
+  const result=await executeTaskGraph([
+    {id:"a",description:"A"},
+    {id:"b",description:"B"},
+    {id:"c",description:"C",dependsOn:["a","b"]},
+  ],async task=>{order.push("run:"+task.id);return task.id;},{
+    maxConcurrency:2,
+    afterBatch:async batch=>{order.push("merge:"+batch.map(x=>x.id).join(","));},
+  });
+  assert.deepEqual(order,["run:a","run:b","merge:a,b","run:c","merge:c"]);
+  assert.equal(result.results.c,"c");
+});
