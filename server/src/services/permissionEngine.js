@@ -43,13 +43,13 @@ export function classifyCommandForPolicy(command, { isolatedRepoAgent = false } 
 
 export function classifyFileOperationForPolicy(action, inputPath = "") {
   const filePath = String(inputPath || "").replace(/\\/g, "/").toLowerCase();
-  const secretPath = /(^|\\/)(\\.env(?:$|\\.)|id_rsa|id_ed25519|credentials(?:\\.json)?|\\.npmrc|\\.pypirc|\\.netrc|kubeconfig)(?:$|\\/)/i.test(filePath) ||
-    /\\.(pem|key|p12|pfx|tfstate)$/i.test(filePath);
+  const secretPath = /(^|\/)(\.env(?:$|\.)|id_rsa|id_ed25519|credentials(?:\.json)?|\.npmrc|\.pypirc|\.netrc|kubeconfig)(?:$|\/)/i.test(filePath) ||
+    /\.(pem|key|p12|pfx|tfstate)$/i.test(filePath);
   if (action === "read" && secretPath) return "DENY";
   if (action === "delete" || action === "delete_file") return "ASK";
-  const sensitiveProjectFile = /(^|\\/)\\.github\\/workflows\\//i.test(filePath) ||
-    /(^|\\/)(package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|pnpm-lock\\.yaml|yarn\\.lock|dockerfile|docker-compose[^/]*|\\.env(?:$|\\.)|\\.npmrc)$/i.test(filePath) ||
-    /(^|\\/)server\\/src\\/config\\/env\\.js$/i.test(filePath);
+  const sensitiveProjectFile = /(^|\/)\.github\/workflows\//i.test(filePath) ||
+    /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|dockerfile|docker-compose[^/]*|\.env(?:$|\.)|\.npmrc)$/i.test(filePath) ||
+    /(^|\/)server\/src\/config\/env\.js$/i.test(filePath);
   if ((action === "write" || action === "edit") && (secretPath || sensitiveProjectFile)) return "ASK";
   return "ALLOW";
 }
