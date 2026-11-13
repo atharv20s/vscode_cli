@@ -60,4 +60,8 @@ test("workspace collaboration links reject invalid permissions and expiries", as
     createWorkspaceShare({ ownerUserId: "test", workspaceId: "default", permission: "view", expiresInHours: 721 }),
     /expiry must be between/
   );
+  await assert.rejects(
+    createWorkspaceShare({ ownerUserId: "test", workspaceId: "default", permission: "view", expiresInHours: 0 }),
+    /expiry must be between/
+  );
 });
