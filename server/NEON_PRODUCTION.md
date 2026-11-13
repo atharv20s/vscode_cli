@@ -128,11 +128,16 @@ opens SQLite read-only and compares exact user/session ID sets without printing
 raw IDs. It exits non-zero if the source and Neon sets differ or if Neon has
 orphan sessions. It does not migrate, repair, or delete any rows.
 
-Compare the printed `databaseIdentity` with the API health response and the
-repo-agent worker's `databaseIdentity` startup log. Pooled and direct Neon
-URLs should produce the same identity when they point to the same branch,
-database and role. The audit cannot establish whether historical reports came
-from the same branch unless those original connection identities were recorded.
+For an automated three-way identity comparison, also set
+`API_HEALTH_URL=https://<api-host>/api/health` and
+`REPO_AGENT_WORKER_DATABASE_IDENTITY=<fingerprint-copied-from-worker-startup-log>`
+before running the audit. The script compares the direct/pooler URL fingerprint,
+the live API health `database.identity`, and the repo-agent worker's logged
+`databaseIdentity`. It reports whether all three were supplied and match.
+Pooled and direct Neon URLs should produce the same identity when they point to
+the same branch, database and role. The audit cannot establish whether
+historical reports came from the same branch unless those original connection
+identities were recorded.
 
 
 ## Full encrypted backup/restore acceptance drill
