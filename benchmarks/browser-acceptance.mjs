@@ -15,7 +15,7 @@ if (!["http:","https:"].includes(parsed.protocol)) throw new Error("APP_URL must
 const allowed = ["localhost","127.0.0.1","::1"];
 const configuredPreview = process.env.PREVIEW_PUBLIC_URL ? new URL(process.env.PREVIEW_PUBLIC_URL) : null;
 const matchesConfiguredPreview = configuredPreview && configuredPreview.host.toLowerCase() === parsed.host.toLowerCase();
-if (!allowed.includes(parsed.hostname) && !parsed.hostname.endsWith(".preview") && !matchesConfiguredPreview) {
+if (!allowed.includes(parsed.hostname) && !matchesConfiguredPreview) {
   throw new Error("APP_URL must target localhost, an approved .preview host, or the exact PREVIEW_PUBLIC_URL host.");
 }
 if (parsed.username || parsed.password) throw new Error("APP_URL must not embed credentials.");
@@ -26,14 +26,14 @@ const threshold = Math.max(0, Math.min(1, Number(process.env.VISUAL_DIFF_THRESHO
 const { chromium } = require("playwright");
 const browser = await chromium.launch({headless:true,args:["--no-sandbox","--disable-dev-shm-usage"]});
 const page = await browser.newPage({viewport:{width:1440,height:900},deviceScaleFactor:1});
-const errors = [];
+const errors = [];\nawait page.route("**/*", route => {\n  let target;\n  try { target = new URL(route.request().url()); } catch { return route.abort(); }\n  if (target.origin !== parsed.origin && !["data:","blob:"].includes(target.protocol)) return route.abort();\n  return route.continue();\n});
 page.on("pageerror", error => errors.push(String(error.message || error)));
 page.on("console", message => { if (message.type()==="error") errors.push(message.text()); });
 let failed = false;
 try {
   const response = await page.goto(parsed.toString(),{waitUntil:"networkidle",timeout:30000});
   if (!response || response.status() >= 400) throw new Error("Application returned HTTP " + (response?.status() ?? "no response"));
-  const title = await page.title();
+  if (new URL(page.url()).origin !== parsed.origin) throw new Error("Application redirected outside the approved origin.");\n  const title = await page.title();
   if (!title.trim()) throw new Error("Application title is empty.");
   for (const selector of (process.env.REQUIRED_SELECTORS || "").split(",").map(x=>x.trim()).filter(Boolean)) {
     if (!await page.locator(selector).count()) throw new Error("Required selector not found: " + selector);
