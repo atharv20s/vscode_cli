@@ -18,6 +18,7 @@ test("S3-compatible workspace snapshots are signed and round-trip through the ob
   const originalFetch = globalThis.fetch;
   const calls = [];
   const snapshot = { version: 1, updatedAt: new Date().toISOString(), files: [{ path: "src/app.js", content: Buffer.from("ok").toString("base64") }] };
+  let stored = null;
   try {
     process.env.WORKSPACE_OBJECT_STORE_BUCKET = "ath-workspaces";
     process.env.WORKSPACE_OBJECT_STORE_ACCESS_KEY_ID = "test-access";
@@ -26,19 +27,58 @@ test("S3-compatible workspace snapshots are signed and round-trip through the ob
     process.env.WORKSPACE_OBJECT_STORE_ENDPOINT = "https://objects.example.test";
     globalThis.fetch = async (url, options) => {
       calls.push({ url: String(url), options });
-      if (options.method === "PUT") return new Response("", { status: 200 });
-      return Response.json(snapshot, { status: 200 });
+      if (options.method === "PUT") {
+        stored = JSON.parse(Buffer.from(options.body).toString("utf8"));
+        return new Response("", { status: 200 });
+      }
+      return Response.json(stored, { status: 200 });
     };
 
     assert.equal(isWorkspaceObjectStoreConfigured(), true);
     assert.equal(await putWorkspaceSnapshot("a".repeat(64), snapshot), true);
-    assert.deepEqual(await getWorkspaceSnapshot("a".repeat(64)), snapshot);
+    const restored = await getWorkspaceSnapshot("a".repeat(64));
+    assert.deepEqual(restored.files, snapshot.files);
+    assert.equal(restored.integrity.algorithm, "sha256");
     assert.equal(calls.length, 2);
+
+    stored.files[0].content = Buffer.from("tampered").toString("base64");
+    await assert.rejects(
+      getWorkspaceSnapshot("a".repeat(64)),
+      /integrity check failed/
+    );
     assert.match(calls[0].options.headers.authorization, /^AWS4-HMAC-SHA256 /);
     assert.equal(calls[0].options.headers["x-amz-content-sha256"].length, 64);
     assert.match(calls[0].url, /ath-workspaces\/workspaces\/a{64}\/snapshot\.json$/);
   } finally {
     globalThis.fetch = originalFetch;
+    for (const name of names) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    }
+  }
+});
+
+
+test("workspace object storage rejects unsafe identities and snapshot paths", async () => {
+  const names = [
+    "WORKSPACE_OBJECT_STORE_BUCKET",
+    "WORKSPACE_OBJECT_STORE_ACCESS_KEY_ID",
+    "WORKSPACE_OBJECT_STORE_SECRET_ACCESS_KEY",
+  ];
+  const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  try {
+    process.env.WORKSPACE_OBJECT_STORE_BUCKET = "ath-workspaces";
+    process.env.WORKSPACE_OBJECT_STORE_ACCESS_KEY_ID = "test-access";
+    process.env.WORKSPACE_OBJECT_STORE_SECRET_ACCESS_KEY = "test-secret";
+    await assert.rejects(
+      putWorkspaceSnapshot("../outside", { version: 1, files: [] }),
+      /Invalid workspace identity/
+    );
+    await assert.rejects(
+      putWorkspaceSnapshot("b".repeat(64), { version: 1, files: [{ path: "../outside", content: "b2s=" }] }),
+      /unsafe file entry/
+    );
+  } finally {
     for (const name of names) {
       if (previous[name] === undefined) delete process.env[name];
       else process.env[name] = previous[name];
