@@ -77,6 +77,7 @@ After the adapter and migrations are implemented:
 - Repository-agent PostgreSQL persistence: **Implemented — uses shared pool and task leasing**.
 - Primary application records (auth/users/sessions/conversations): **PostgreSQL repository layer implemented with async boundaries and fail-closed production mode (`server/src/db/database.js`)**.
 - Migration & reconciliation tooling: **Expanded to all source tables with atomic import and exact per-table row-count checks; full row-content checksums and live migration execution remain pending (`scripts/migrate-sqlite-to-postgres.mjs`).**
+- Migration target safety: **Run against a fresh/empty target branch. Exact total-table row-count reconciliation intentionally fails if target tables already contain unrelated rows; it never truncates production data to force a match.**
 - API/worker restart and worker lease-recovery drills: **Pending on the production Lightsail services.**
 - Backup/restore: **Pending; no successful restore drill is claimed.**
 - Full production cutover: **Not signed off; requires the remaining acceptance checks and verified Lightsail service configuration.**
