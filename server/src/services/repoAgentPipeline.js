@@ -5,6 +5,7 @@ import { dockerWorkspaceRuntime } from "./dockerWorkspaceRuntime.js";
 import { buildRepositoryContext, formatRepositoryContext } from "./repoContextEngine.js";
 import { appendRepoTaskEvent, saveRepoContextRound, listRepoContextRounds } from "../db/repoAgentStore.js";
 import { config } from "../config/env.js";
+import { executeTaskGraph } from "./taskGraph.js";
 
 const PLANNER_TOOLS = ["read_file","list_files"];
 const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command"];
@@ -83,6 +84,22 @@ async function runRole(options) {
   });
   if (error) throw new Error(role + " agent failed: " + error);
   return finalText;
+}
+
+function parseImplementationTasks(plan, prompt) {
+  const candidates = [];
+  const fenced = plan.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) candidates.push(fenced[1]);
+  const start = plan.indexOf("{"), end = plan.lastIndexOf("}");
+  if (start >= 0 && end > start) candidates.push(plan.slice(start, end + 1));
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const tasks = parsed.tasks || parsed.taskGraph;
+      if (Array.isArray(tasks) && tasks.length) return tasks;
+    } catch {}
+  }
+  return [{ id:"implementation", description:prompt, dependsOn:[] }];
 }
 
 async function detectChecks(root, context) {
@@ -333,15 +350,24 @@ export async function runRepoAgentPipeline(options) {
   const plan = await runRole({
     task, role: "planner", roundNumber: roundOffset + 1, workspaceDir, workspaceId,
     workspaceService, tools: PLANNER_TOOLS, model: "reasoning", signal, onEvent,
-    message: baseFor(16000) + "\n\nInspect the actual project. Produce a focused implementation plan, identify likely files and existing conventions, note likely tests and acceptance criteria. Do not modify source files in this phase.",
+    message: baseFor(16000) + "\n\nInspect the actual project. Produce a focused implementation plan and a dependency-aware task graph. End with a JSON object containing tasks:[{id,description,dependsOn,role}] where ids are unique, dependsOn lists prerequisite ids, and independent tasks are separate. Keep tasks bounded and avoid overlapping file ownership where possible. Do not modify source files in this phase.",
   });
 
-  let implementationSummary = await runRole({
-    task, role: "coder", roundNumber: roundOffset + 2, workspaceDir, workspaceId,
-    workspaceService, tools: CODER_TOOLS, model: "coding", signal, onEvent,
-    message: baseFor(30000) + "\n\nIMPLEMENTATION PLAN:\n" + plan + "\n\nImplement the request in the repository. Make coherent changes, preserve project conventions, and avoid unrelated refactors. Run quick checks available within the workspace. Do not say the task is complete until the verification agent has checked it.",
-    maxIterations: 22,
-  });
+  const plannedTasks = parseImplementationTasks(plan, task.prompt);
+  const taskGraphResult = await executeTaskGraph(plannedTasks, async (plannedTask, priorResults) => {
+    const summary = await runRole({
+      task, role: "coder", roundNumber: roundOffset + 2 + Object.keys(priorResults).length,
+      workspaceDir, workspaceId, workspaceService, tools: CODER_TOOLS, model: "coding", signal, onEvent,
+      message: baseFor(30000) + "\\n\\nIMPLEMENTATION PLAN:\\n" + plan +
+        "\\n\\nASSIGNED GRAPH TASK (" + plannedTask.id + "):\\n" + plannedTask.description +
+        "\\n\\nCOMPLETED PREREQUISITES:\\n" + JSON.stringify(priorResults) +
+        "\\n\\nImplement only this task, preserve project conventions, and avoid unrelated refactors. This pipeline currently serializes writers in the shared workspace; do not assume other tasks are editing concurrently. Run quick checks available within the workspace.",
+      maxIterations: 22,
+    });
+    return summary;
+  }, { maxConcurrency: 1, signal });
+  let implementationSummary = Object.entries(taskGraphResult.results)
+    .map(([id, summary]) => "TASK " + id + "\\n" + summary).join("\\n\\n");
 
   let verification = [];
   let review = "";
