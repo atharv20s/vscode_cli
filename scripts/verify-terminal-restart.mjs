@@ -126,7 +126,7 @@ try {
   await detached;
   console.log("Marker written and tmux session detached.");
 
-  await prompt.question("Now restart the Node execution-worker service (for example: sudo systemctl restart ath-ide-worker.service), wait for it to return healthy, then press Enter here: ");
+  await prompt.question("Now restart the systemd unit that runs server/src/worker/executionWorker.js (not the repo-agent worker unless it runs this entrypoint). Use its actual unit name, wait for /healthz to return healthy, then press Enter here: ");
 
   second = await connectAndWaitReady();
   const replay = await waitFor(second.messages, second.socket,
