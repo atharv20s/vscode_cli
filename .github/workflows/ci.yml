@@ -34,6 +34,10 @@ jobs:
         working-directory: server
         run: npm ci
 
+      - name: Install Playwright Chromium
+        working-directory: server
+        run: npx playwright install --with-deps chromium
+
       - name: Build / syntax checks
         working-directory: server
         run: npm run build
