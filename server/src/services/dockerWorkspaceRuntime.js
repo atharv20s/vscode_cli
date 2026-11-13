@@ -6,6 +6,7 @@
  * Requires a Docker Engine on the same worker host as the API process.
  */
 import { spawn, execFileSync } from "child_process";
+import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { config } from "../config/env.js";
@@ -62,6 +63,7 @@ class DockerWorkspaceRuntime {
     if (!workspaceId || !path.isAbsolute(workspaceDir)) {
       throw new Error("A workspace identity and absolute workspace directory are required.");
     }
+    await fs.promises.mkdir(workspaceDir, { recursive: true, mode: 0o700 });
 
     const name = containerName(workspaceId);
     const existing = this.containers.get(name);

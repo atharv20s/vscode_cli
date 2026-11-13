@@ -719,6 +719,8 @@ server.on("upgrade", async (req, socket, head) => {
 
   try {
     const root = workspaceRootFor(workspaceId);
+    await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
+    await restoreWorkspaceSnapshotIfEmpty(workspaceId, root);
     await dockerWorkspaceRuntime.ensureContainer(workspaceId, root);
     terminalWss.handleUpgrade(req, socket, head, ws => {
       attachPersistentTerminal(ws, { workspaceId, sessionId, cols, rows })
