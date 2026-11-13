@@ -53,20 +53,22 @@ WORKER_SHARED_SECRET=<same-random-32+-character-secret-as-worker>
 
 The API delegates non-interactive command execution to `POST /v1/execute`. The current bridge transfers a bounded workspace snapshot (up to 12 MiB and 4,000 files; individual files up to 2 MiB), runs the command in the per-workspace Docker container, and returns the resulting snapshot. It excludes `.git`, `node_modules`, `.next`, `dist`, `build` and `.cache`.
 
-## Important: not production-ready yet
+## Production activation boundaries
 
-This branch implements the first authenticated execution bridge, not the complete distributed workspace architecture. **Do not enable `EXECUTION_RUNTIME=remote` on production yet.** The current API workspace CRUD, file watchers, preview service and interactive terminal still use API-local filesystem/process assumptions. Cloud Run local disk is ephemeral and instance-local; snapshot transfer alone does not make user workspaces durable or consistent across Cloud Run instances.
+The repository now contains an authenticated remote execution worker, per-workspace Docker containers, incremental workspace sync, S3-compatible worker snapshots, preview proxying and tmux-backed remote terminals. These are implemented code paths, not proof that the deployed Lightsail services have every required setting or that the full failure matrix has passed.
 
-Before production activation, complete and test all of the following:
+The API's normal workspace CRUD still operates on its configured workspace filesystem. The worker's S3 object is a durable snapshot/restore layer for the remote execution workspace; it is not a transactional, shared filesystem for every API replica. Keep `WORKSPACE_STORAGE_ROOT` on durable shared storage for multiple API instances.
 
-1. Make durable object/shared storage the source of truth for workspace files and route every file CRUD operation through it.
-2. Make worker workspace sync incremental and concurrency-safe across multiple worker instances; the current worker lock is process-local.
-3. Implement authenticated interactive PTY streaming and container lifecycle/idle cleanup.
-4. Implement a secure preview reverse proxy to the isolated worker; production live preview remains disabled.
-5. Add disk quotas, per-user concurrency limits, request/response size limits at ingress, worker health/readiness checks, audit logging and backup/restore.
-6. Run integration tests on a real disposable Linux Docker host: cross-user filesystem isolation, path/symlink traversal, container escape hardening, cancellation, timeout, network denial, worker restart and concurrent execution.
+Remote execution requires:
+- API: `EXECUTION_RUNTIME=remote`, HTTPS `EXECUTION_WORKER_URL`, matching `WORKER_SHARED_SECRET`.
+- Execution worker: `EXECUTION_RUNTIME=docker`, private worker ingress, Docker Engine and the matching secret.
+- Worker snapshots: `WORKSPACE_OBJECT_STORE_REQUIRED=true` and valid bucket/region/credential configuration. The bucket should be private, encrypted at rest and versioned.
 
-No VM, cloud resource, secret, or deployment is created by this repository change.
+The worker writes snapshots after workspace sync/command execution, periodically during an attached terminal, and on terminal detach. It restores a snapshot when the worker's workspace directory is empty. Snapshots are bounded to 12 MiB, 4,000 files and 2 MiB per file; dependency/build caches are intentionally excluded.
+
+Before production sign-off, run the acceptance checks in this document on a disposable user/workspace and a disposable database branch. In particular, prove a worker process restart with the Docker container left running, prove a fresh worker workspace can restore from S3, and prove two different users cannot read or mutate one another's workspaces. A VM/container restart is a different failure domain from restarting the Node worker process.
+
+No VM, cloud resource, secret, or deployment is created by repository code.
 
 ## GitHub repository agent tasks
 
@@ -117,26 +119,28 @@ overwriting newer edits. New-file creation uses `If-None-Match: *`. The lock
 heartbeat prevents an active writer from being mistaken for a stale lock.
 
 The browser terminal uses the MIT-licensed xterm.js package over an authenticated
-WebSocket connected to node-pty. Browser JWT authentication is carried in the
-WebSocket subprotocol negotiation (not the URL query string), avoiding token
-exposure in ordinary reverse-proxy request URL logs. A PTY can detach and reattach using a
-workspace-scoped terminal UUID while the owning API/worker process remains
-alive; the server replays a bounded recent output buffer on reconnect. Idle
-detached PTYs are terminated after `TERMINAL_IDLE_TTL_MS`.
+WebSocket connected to node-pty. The remote execution worker attaches the PTY
+to a stable tmux session inside the long-lived per-workspace Docker container.
+The browser WebSocket is an attach/detach transport: reconnecting with the same
+terminal UUID attaches to the existing tmux session and replays the last 200
+terminal lines. This survives a Node execution-worker process restart only
+while Docker and the workspace container remain running. It does not restore
+arbitrary in-memory processes after the Docker container or VM itself restarts.
+Local/API-host PTY behavior remains process-affine.
 
 ### Explicit limits
 
-- Durable storage currently means a mounted filesystem, not S3/GCS object storage.
-- All APIs sharing the same workspace files must mount the same filesystem and
-  honor its exclusive-create/rename/mtime semantics.
-- The workspace event bus is process-local; cross-replica live file notifications
-  still need Redis Pub/Sub or PostgreSQL NOTIFY.
-- PTY ownership and output buffers are process-local. Reconnect survives a
-  browser disconnect, not a worker restart or a different replica.
-- Production terminal/preview routing still needs a worker-affinity or terminal
-  broker and an authenticated preview reverse proxy.
-- This branch does not provision infrastructure, run migrations against a
-  hosted DB, or activate any paid service.
+- API workspace CRUD still requires a durable shared filesystem across API replicas.
+- S3 snapshots persist bounded remote-worker workspace files, but do not replace
+  the API's shared workspace filesystem or provide live multi-writer semantics.
+- The workspace event bus uses Redis Pub/Sub when distributed events are enabled;
+  Pub/Sub is at-most-once, so clients must reload authoritative files after reconnect.
+- Remote tmux PTYs survive a Node worker process restart only if the Docker
+  container remains running; Docker/VM restarts terminate live process trees.
+- Production acceptance must test workspace ownership, snapshot restore, terminal
+  detach/reattach, worker process restart, and the separate Docker/VM restart case.
+- Repository code does not provision infrastructure, inject secrets, or prove
+  that any cloud service is active.
 
 
 ## Redis-backed cross-instance workspace events
@@ -158,10 +162,9 @@ event will not replay it. Clients must reload authoritative workspace metadata
 and file contents after reconnect. The filesystem or future object-storage
 adapter remains the source of truth.
 
-This closes the cross-replica event notification gap only. Interactive PTYs are
-still process/worker-affine and do not survive worker restarts; authenticated
-preview proxying and shared durable workspace storage remain separate
-production blockers.
+This closes the cross-replica notification gap only. It does not replicate file
+contents, terminal state or task state. Shared durable workspace storage and
+remote terminal affinity remain separate operational requirements.
 
 
 ## Persistent cloud execution and terminal recovery
