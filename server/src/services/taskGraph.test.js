@@ -12,6 +12,16 @@ test("rejects duplicate, unknown and cyclic dependencies", () => {
 });
 test("executes prerequisites before dependents and passes prior results", async () => {
   const seen=[];
-  const result=await executeTaskGraph([{id:"a",description:"A"},{id:"b",description:"B"},{id:"c",description:"C",dependsOn:["a","b"]}],async(task,prior)=>{seen.push(task.id);return task.id==="c"?prior.a+prior.b:task.id;},{maxConcurrency:2});
-  assert.deepEqual(seen,["a","b","c"]); assert.equal(result.results.c,"ab");
+  const batchesSeen = [];
+  const result=await executeTaskGraph(
+    [{id:"a",description:"A"},{id:"b",description:"B"},{id:"c",description:"C",dependsOn:["a","b"]}],
+    async(task,prior)=>{seen.push(task.id);return task.id==="c"?prior.a+prior.b:task.id;},
+    {
+      maxConcurrency:2,
+      afterBatch: async (batch) => { batchesSeen.push(batch.map(t => t.id)); },
+    }
+  );
+  assert.deepEqual(seen,["a","b","c"]);
+  assert.equal(result.results.c,"ab");
+  assert.deepEqual(batchesSeen, [["a","b"],["c"]]);
 });

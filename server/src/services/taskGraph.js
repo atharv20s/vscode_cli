@@ -54,6 +54,9 @@ export async function executeTaskGraph(input, executor, options = {}) {
       if (failure) throw failure.reason;
       for (const item of settled) results.set(item.value.task.id, item.value.result);
     }
+    if (typeof options.afterBatch === "function") {
+      await options.afterBatch(batch);
+    }
   }
   return { batches:batches.map(batch=>batch.map(task=>task.id)), results:Object.fromEntries(results) };
 }

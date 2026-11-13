@@ -11,7 +11,7 @@ import { createScopedWorkspaceService } from "./workspaceService.js";
 
 const PLANNER_TOOLS = ["read_file","list_files"];
 const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command"];
-const TESTER_TOOLS = ["read_file","list_files","run_command"];
+const TESTER_TOOLS = ["read_file","list_files","run_command","browser_verify"];
 const REVIEWER_TOOLS = ["read_file","list_files"];
 
 function extractAssistantText(result) {
@@ -425,7 +425,7 @@ export async function runRepoAgentPipeline(options) {
         task, role: "tester", roundNumber: roundOffset + 2 + plannedTasks.length + attempt * 2, workspaceDir, workspaceId,
         workspaceService, tools: TESTER_TOOLS, model: "fast", signal, onEvent,
         message: baseFor(14000) + "\n\nIMPLEMENTATION SUMMARY:\n" + implementationSummary +
-          "\n\nRun the repository's most relevant tests/build checks that can run without downloading dependencies. Report exact commands and outputs. Do not edit source code in this phase.",
+          "\n\nRun the repository's most relevant tests/build checks that can run without downloading dependencies. If the changes affect user-facing UI or a web preview, call browser_verify on the preview URL to inspect errors and visual layout. Report exact commands, browser evidence, and outputs. Do not edit source code in this phase.",
         maxIterations: 10,
       }),
       runDeterministicChecks({ task, root: workspaceDir, workspaceId, context, signal, onEvent }),
