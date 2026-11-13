@@ -235,9 +235,9 @@ is stored. Owners can list and revoke links. The default expiry is seven days
 and the maximum is 30 days. Treat the raw invite URL like a password.
 
 - **View** links permit workspace file and directory reads only.
-- **Edit** links permit file creation, edits, moves and deletes, but do not grant
-  terminal access, command execution, agent tool execution, preview control or
-  permission management.
+- **Edit** links permit version-checked file creation and updates only. Moving,
+  deleting, creating folders, terminal access, command execution, agent tool
+  execution, preview control and permission management remain owner-only.
 - Collaborators resolve to the owner's workspace root, not a same-named
   workspace under the collaborator's own account.
 - WebSocket authentication sends the collaboration capability as a subprotocol,
