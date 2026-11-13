@@ -482,6 +482,9 @@ export class WorkspaceService {
           pendingChanges.clear();
         }, 300);
       });
+      if (typeof this.watcher?.unref === "function") {
+        this.watcher.unref();
+      }
 
       logger.info(`WorkspaceService: Native file watcher initialized on ${this.workspaceRoot}`);
     } catch (err) {
@@ -544,4 +547,4 @@ export function getWorkspaceService(userId, workspaceKey = "default") {
 
 // Retained for trusted internal/system operations only. Request handlers must
 // use getWorkspaceService(req.user.id) and must never expose this shared root.
-export const workspaceService = new WorkspaceService();
+export const workspaceService = new WorkspaceService(undefined, "system", { watch: false });
