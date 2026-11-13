@@ -110,6 +110,7 @@ class EditorManager {
 
       this.openTabs.set(filePath, {
         content: data.content,
+        version: data.version || null,
         isDirty: false,
         language,
       });
@@ -352,6 +353,7 @@ class EditorManager {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
+          ...(tab.version ? { "If-Match": `"${tab.version}"` } : { "If-None-Match": "*" }),
         },
         body: JSON.stringify({
           path: filePath,
@@ -359,7 +361,13 @@ class EditorManager {
         }),
       });
 
+      if (response.status === 409) {
+        const conflict = await response.json().catch(() => ({}));
+        throw new Error(conflict.message || "This file changed in another session. Reload it before saving.");
+      }
       if (!response.ok) throw new Error("Save failed");
+      const saved = await response.json().catch(() => ({}));
+      tab.version = saved.version || tab.version;
 
       tab.isDirty = false;
       this.updateTabUI(filePath);
@@ -367,6 +375,34 @@ class EditorManager {
       app.logTerminal(`Saved ${filePath}`, "success");
     } catch (err) {
       app.logTerminal(`Failed to save ${filePath}: ${err.message}`, "error");
+    }
+  }
+
+  async handleRemoteFileChange(event) {
+    const filePath = event?.path;
+    if (!filePath || !this.openTabs.has(filePath)) return;
+    const tab = this.openTabs.get(filePath);
+    if (tab.isDirty) {
+      tab.hasRemoteConflict = true;
+      this.updateTabUI(filePath);
+      if (window.app?.logTerminal) window.app.logTerminal(`Another collaborator changed ${filePath}. Your local draft was kept; reload before saving.`, "warning");
+      return;
+    }
+    try {
+      const response = await fetch(`/api/workspace/file?path=${encodeURIComponent(filePath)}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token") || ""}` },
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      tab.content = data.content;
+      tab.version = data.version || null;
+      tab.isDirty = false;
+      tab.hasRemoteConflict = false;
+      if (this.activeTab === filePath && this.editorView) this.editorView.innerText = data.content;
+      this.updateTabUI(filePath);
+      this.saveStateToCache();
+    } catch (error) {
+      console.warn("Collaborative file refresh failed:", error);
     }
   }
 
