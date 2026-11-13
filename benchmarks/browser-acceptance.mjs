@@ -7,16 +7,18 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 const appUrl = process.env.APP_URL;
 if (!appUrl) throw new Error("APP_URL is required.");
 const parsed = new URL(appUrl);
 if (!["http:","https:"].includes(parsed.protocol)) throw new Error("APP_URL must use HTTP(S).");
 const allowed = ["localhost","127.0.0.1","::1"];
-if (!allowed.includes(parsed.hostname) && !parsed.hostname.endsWith(".preview")) {
-  throw new Error("APP_URL must target localhost or an approved .preview host.");
+const configuredPreview = process.env.PREVIEW_PUBLIC_URL ? new URL(process.env.PREVIEW_PUBLIC_URL) : null;
+const matchesConfiguredPreview = configuredPreview && configuredPreview.host.toLowerCase() === parsed.host.toLowerCase();
+if (!allowed.includes(parsed.hostname) && !parsed.hostname.endsWith(".preview") && !matchesConfiguredPreview) {
+  throw new Error("APP_URL must target localhost, an approved .preview host, or the exact PREVIEW_PUBLIC_URL host.");
 }
+if (parsed.username || parsed.password) throw new Error("APP_URL must not embed credentials.");
 const baselineDir = path.resolve(process.env.VISUAL_BASELINE_DIR || "benchmarks/visual-baselines");
 const baselinePath = path.join(baselineDir, (process.env.VISUAL_BASELINE_NAME || "default") + ".png");
 const updateBaseline = process.env.UPDATE_VISUAL_BASELINES === "1";
