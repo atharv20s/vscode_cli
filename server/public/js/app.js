@@ -250,6 +250,39 @@ class App {
       }
     });
 
+    // Explicit approval gate for agent-generated shell commands and sensitive actions.
+    // The server fails closed if this request is rejected, unavailable or times out.
+    window.wsClient.on("permission.requested", (event) => {
+      const request = event?.payload || event || {};
+      const permissionId = request.permissionId;
+      if (!permissionId) return;
+      const details = request.payload || {};
+      const command = typeof details.command === "string" ? details.command : "";
+      const action = request.resource + "." + request.action;
+      const expiresAt = Number(request.expiresAt) || 0;
+      if (expiresAt && expiresAt <= Date.now()) {
+        window.wsClient.send("permission.resolve", {
+          permissionId, granted: false, reason: "Approval request expired before it could be reviewed.",
+        });
+        return;
+      }
+      const summary = [
+        "ATH IDE approval required",
+        "",
+        "Action: " + action,
+        command ? "Command:\\n" + command.slice(0, 3000) : "",
+        details.working_dir ? "Working directory: " + details.working_dir : "",
+        "",
+        "Approve only if you recognize and trust this exact operation. Reject unexpected commands.",
+      ].filter(Boolean).join("\\n");
+      const approved = window.confirm(summary);
+      window.wsClient.send("permission.resolve", {
+        permissionId,
+        granted: approved,
+        reason: approved ? "Approved by workspace owner." : "Rejected by workspace owner.",
+      });
+    });
+
     // Agent Background Task Banner Listeners
     window.wsClient.on("agent.command.started", (data) => {
       const banner = document.getElementById("agent-exec-banner");
