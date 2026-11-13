@@ -10,7 +10,8 @@ import { worktreeManager } from "./worktreeManager.js";
 import { createScopedWorkspaceService } from "./workspaceService.js";
 
 const PLANNER_TOOLS = ["read_file","list_files"];
-const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command"];\nconst WORKTREE_CODER_TOOLS = ["read_file","write_file","edit_file","list_files"];
+const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command"];
+const WORKTREE_CODER_TOOLS = ["read_file","write_file","edit_file","list_files"];
 const TESTER_TOOLS = ["read_file","list_files","run_command"];
 const REVIEWER_TOOLS = ["read_file","list_files"];
 
