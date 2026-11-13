@@ -380,6 +380,7 @@ class EditorManager {
   }
 
   async handleRemoteFileChange(event) {
+    if (event?.actor && event.actor === window.app?.currentUser?.id) return;
     const filePath = event?.path;
     if (!filePath || !this.openTabs.has(filePath)) return;
     const tab = this.openTabs.get(filePath);
