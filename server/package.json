@@ -13,7 +13,8 @@
     "bench:websocket": "node ../benchmarks/websocket-load.mjs",
     "bench:redis-lease": "node ../benchmarks/redis-lease-fault.mjs",
     "worker:repo-agent": "node src/worker/repoAgentWorker.js",
-    "start:stack": "node src/server.js"
+    "start:stack": "node src/server.js",
+    "bench:browser": "node ../benchmarks/browser-acceptance.mjs"
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0",

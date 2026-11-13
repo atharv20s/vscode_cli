@@ -141,6 +141,22 @@ export async function syncWorkspaceOnRemote({ workspaceId, workspaceDir, signal,
   }, { timeoutMs: 90000, signal });
 }
 
+export async function pullWorkspaceFromRemote({ workspaceId, workspaceDir, signal }) {
+  if (!path.isAbsolute(workspaceDir)) throw new Error("Workspace directory must be absolute.");
+  const result = await postWorkerJson("/v1/workspace/pull", {
+    workspaceId: workspaceRuntimeKey(workspaceId),
+  }, { timeoutMs: 90000, signal });
+  const localFiles = await collectWorkspaceFiles(workspaceDir);
+  // A newly provisioned worker may not have received its first snapshot yet.
+  // Never let an empty remote directory erase an existing local workspace.
+  if (result.files.length === 0 && localFiles.length > 0) {
+    await syncWorkspaceOnRemote({ workspaceId, workspaceDir, signal });
+    return { success: true, files: localFiles.length, initializedRemote: true };
+  }
+  await applyWorkspaceFiles(workspaceDir, result.files);
+  return { success: true, files: result.files.length };
+}
+
 export async function ensureRemoteWorkspace({ workspaceId, workspaceDir, signal }) {
   return syncWorkspaceOnRemote({ workspaceId, workspaceDir, signal, initialOnly: true });
 }

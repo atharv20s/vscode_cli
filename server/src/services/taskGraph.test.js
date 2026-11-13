@@ -1,0 +1,17 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { buildTaskBatches, executeTaskGraph } from "./taskGraph.js";
+test("builds stable dependency-aware batches", () => {
+  const batches=buildTaskBatches([{id:"api",description:"API"},{id:"ui",description:"UI"},{id:"integration",description:"Integrate",dependsOn:["api","ui"]},{id:"docs",description:"Docs"}]);
+  assert.deepEqual(batches.map(batch=>batch.map(task=>task.id)),[["api","ui","docs"],["integration"]]);
+});
+test("rejects duplicate, unknown and cyclic dependencies", () => {
+  assert.throws(()=>buildTaskBatches([{id:"x",description:"x"},{id:"x",description:"dup"}]),/Duplicate/);
+  assert.throws(()=>buildTaskBatches([{id:"x",description:"x",dependsOn:["missing"]}]),/unknown/);
+  assert.throws(()=>buildTaskBatches([{id:"x",description:"x",dependsOn:["y"]},{id:"y",description:"y",dependsOn:["x"]}]),/cycle/);
+});
+test("executes prerequisites before dependents and passes prior results", async () => {
+  const seen=[];
+  const result=await executeTaskGraph([{id:"a",description:"A"},{id:"b",description:"B"},{id:"c",description:"C",dependsOn:["a","b"]}],async(task,prior)=>{seen.push(task.id);return task.id==="c"?prior.a+prior.b:task.id;},{maxConcurrency:2});
+  assert.deepEqual(seen,["a","b","c"]); assert.equal(result.results.c,"ab");
+});

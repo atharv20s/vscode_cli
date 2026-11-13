@@ -11,6 +11,7 @@ import fs from "fs";
 import path from "path";
 import { config, validateConfig } from "../config/env.js";
 import { dockerWorkspaceRuntime } from "../services/dockerWorkspaceRuntime.js";
+import { getWorkspaceSnapshot, isWorkspaceObjectStoreConfigured, putWorkspaceSnapshot } from "../services/workspaceObjectStore.js";
 import { execFileSync as dockerExecFileSync } from "child_process";
 
 const app = express();
@@ -21,6 +22,9 @@ const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
 const IGNORED = new Set([".git", "node_modules", ".next", "dist", "build", ".cache"]);
 const replayedNonces = new Map();
 const inFlight = new Map();
+if ((process.env.WORKSPACE_OBJECT_STORE_REQUIRED || "false").toLowerCase() === "true" && !isWorkspaceObjectStoreConfigured()) {
+  throw new Error("WORKSPACE_OBJECT_STORE_REQUIRED=true but durable object storage is not configured.");
+}
 
 function safeWorkspaceId(value) {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
@@ -203,6 +207,21 @@ async function readWorkspace(root) {
   return output;
 }
 
+async function persistWorkspaceSnapshot(workspaceId, root) {
+  const files = await readWorkspace(root);
+  await putWorkspaceSnapshot(workspaceId, { version: 1, updatedAt: new Date().toISOString(), files });
+}
+
+async function restoreWorkspaceSnapshotIfEmpty(workspaceId, root) {
+  await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
+  const existing = await readWorkspace(root);
+  if (existing.length) return false;
+  const snapshot = await getWorkspaceSnapshot(workspaceId);
+  if (!snapshot) return false;
+  await replaceWorkspace(root, snapshot.files);
+  return true;
+}
+
 async function measureWorkspaceBytes(root) {
   let total = 0;
   async function walk(dir) {
@@ -222,11 +241,28 @@ async function syncWorkspace(workspaceId, files) {
   const root = workspaceRootFor(workspaceId);
   return withWorkspaceLock(workspaceId, () => withWorkspaceFileLock(workspaceId, async () => {
     await replaceWorkspace(root, files);
+    await persistWorkspaceSnapshot(workspaceId, root);
     return { workspaceId, syncedFiles: files.length };
   }));
 }
 
 app.get("/healthz", (_req, res) => res.json({ status: "ok", role: "execution-worker" }));
+
+app.post("/v1/workspace/pull", express.raw({ type: "application/json", limit: "1mb" }), verifyRequest, async (req, res) => {
+  try {
+    const input = JSON.parse(req.body.toString("utf8"));
+    if (!safeWorkspaceId(input.workspaceId)) return res.status(400).json({ error: "Invalid workspace identity." });
+    const files = await withWorkspaceLock(input.workspaceId, () => withWorkspaceFileLock(input.workspaceId, async () => {
+      const root = workspaceRootFor(input.workspaceId);
+      await restoreWorkspaceSnapshotIfEmpty(input.workspaceId, root);
+      return readWorkspace(root);
+    }));
+    return res.json({ success: true, workspaceId: input.workspaceId, files });
+  } catch (error) {
+    const status = error.code === "WORKSPACE_BUSY" ? 423 : 500;
+    return res.status(status).json({ error: status === 423 ? error.message : "Workspace pull failed." });
+  }
+});
 
 app.post("/v1/workspace/sync", express.raw({ type: "application/json", limit: "20mb" }), verifyRequest, async (req, res) => {
   try {
@@ -264,6 +300,7 @@ app.post("/v1/execute", express.raw({ type: "application/json", limit: "20mb" })
         workspaceId, workspaceDir: root, cwd: resolvedCwd, command, timeout,
       });
       const quotaBytes = Math.max(64 * 1024 * 1024, Number(process.env.WORKER_WORKSPACE_QUOTA_BYTES || 1073741824));
+      await persistWorkspaceSnapshot(workspaceId, root);
       const usedBytes = await measureWorkspaceBytes(root);
       if (usedBytes > quotaBytes) {
         return {
@@ -341,6 +378,48 @@ async function proxyPreviewHttp(req, res) {
   }
 }
 
+async function resolvePreviewCommand(root, command, port) {
+  const text = String(command || "").trim();
+  let packageJson = {};
+  try { packageJson = JSON.parse(await fs.promises.readFile(path.join(root, "package.json"), "utf8")); } catch {}
+  const allDeps = { ...(packageJson.dependencies || {}), ...(packageJson.devDependencies || {}) };
+  const devScript = String(packageJson.scripts?.dev || "");
+  const isNext = /next/.test(text + " " + devScript) || Boolean(allDeps.next);
+  const isVite = /vite/.test(text + " " + devScript) || Boolean(allDeps.vite);
+  const isAstro = /astro/.test(text + " " + devScript) || Boolean(allDeps.astro);
+
+  if (/\buvicorn\b/.test(text)) {
+    let next = text;
+    if (!/--host(?:=|\s)/.test(next)) next += " --host 0.0.0.0";
+    if (!/--port(?:=|\s)/.test(next)) next += " --port " + port;
+    return next;
+  }
+  if (/\bflask\s+run\b/.test(text)) {
+    let next = text;
+    if (!/--host(?:=|\s)/.test(next)) next += " --host 0.0.0.0";
+    if (!/--port(?:=|\s)/.test(next)) next += " --port " + port;
+    return next;
+  }
+  if (/\bpython(?:3)?\s+-m\s+http\.server\b/.test(text)) {
+    let next = text;
+    if (!/--bind(?:=|\s)/.test(next)) next += " --bind 0.0.0.0";
+    if (!/(?:^|\s)\d{2,5}(?:\s|$)/.test(next)) next += " " + port;
+    return next;
+  }
+
+  const npmDev = /\b(?:npm\s+run\s+dev|pnpm\s+dev|yarn\s+dev|bun\s+run\s+dev)\b/.test(text);
+  if (npmDev && (isNext || isVite || isAstro)) {
+    if (/--host(?:name)?(?:=|\s)/.test(text)) return text;
+    const flag = isNext ? "--hostname" : "--host";
+    const args = flag + " 0.0.0.0 --port " + port;
+    return text + (text.includes(" -- ") ? " " : " -- ") + args;
+  }
+  if (/\bvite\b|\bastro\b/.test(text) && !/--host(?:=|\s)/.test(text)) {
+    return text + " --host 0.0.0.0 --port " + port;
+  }
+  return text;
+}
+
 async function startPreviewOnWorker(input) {
   const { workspaceId, files, cwd = ".", command, port } = input;
   if (!safeWorkspaceId(workspaceId) || typeof command !== "string" || !command.trim() || command.length > 20000 || !validatePreviewPort(port)) {
@@ -350,6 +429,8 @@ async function startPreviewOnWorker(input) {
   const root = workspaceRootFor(workspaceId);
   return withWorkspaceLock(workspaceId, () => withWorkspaceFileLock(workspaceId, async () => {
     await replaceWorkspace(root, files);
+    await persistWorkspaceSnapshot(workspaceId, root);
+    const previewCommand = await resolvePreviewCommand(root, command, port);
     const resolvedCwd = path.resolve(root, cwd);
     if (resolvedCwd !== root && !resolvedCwd.startsWith(root + path.sep)) throw new Error("Preview working directory escaped workspace.");
     const container = await dockerWorkspaceRuntime.ensureContainer(workspaceId, root);
@@ -359,7 +440,7 @@ async function startPreviewOnWorker(input) {
     const script = 'nohup setsid /bin/bash -lc "$ATH_PREVIEW_COMMAND" > /tmp/ath-preview-' + port + '.log 2>&1 < /dev/null & echo $! > /tmp/ath-preview-' + port + '.pid; cat /tmp/ath-preview-' + port + '.pid';
     const pid = execDocker([
       "exec", "-w", containerCwd,
-      "-e", "ATH_PREVIEW_COMMAND=" + command,
+      "-e", "ATH_PREVIEW_COMMAND=" + previewCommand,
       "-e", "PORT=" + port, "-e", "HOST=0.0.0.0", "-e", "HOSTNAME=0.0.0.0",
       container, "/bin/bash", "-lc", script,
     ], { encoding: "utf8" }).trim();
@@ -467,6 +548,7 @@ function sendTerminal(ws, type, payload) {
 
 async function attachPersistentTerminal(ws, { workspaceId, sessionId, cols, rows }) {
   const root = workspaceRootFor(workspaceId);
+  await restoreWorkspaceSnapshotIfEmpty(workspaceId, root);
   await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
   const container = await dockerWorkspaceRuntime.ensureContainer(workspaceId, root);
   const tmuxSession = "ath-" + sessionId.replace(/[^a-f0-9]/gi, "").slice(0, 32);
@@ -542,12 +624,20 @@ async function attachPersistentTerminal(ws, { workspaceId, sessionId, cols, rows
     }
   });
 
+  const snapshotInterval = setInterval(() => {
+    persistWorkspaceSnapshot(workspaceId, root).catch(error => console.warn("Workspace snapshot persistence failed:", error.message));
+  }, 60000);
+  snapshotInterval.unref?.();
   ws.on("close", () => {
+    clearInterval(snapshotInterval);
     // Detach the PTY client only. Do not kill the tmux session.
     try { terminal?.kill(); } catch {}
+    persistWorkspaceSnapshot(workspaceId, root).catch(error => console.warn("Workspace snapshot persistence failed:", error.message));
   });
   ws.on("error", () => {
+    clearInterval(snapshotInterval);
     try { terminal?.kill(); } catch {}
+    persistWorkspaceSnapshot(workspaceId, root).catch(error => console.warn("Workspace snapshot persistence failed:", error.message));
   });
 }
 

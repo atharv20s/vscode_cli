@@ -3,6 +3,23 @@
  */
 
 import { getWorkspaceService } from "../services/workspaceService.js";
+import { config } from "../config/env.js";
+import { pullWorkspaceFromRemote, syncWorkspaceOnRemote } from "../services/remoteExecutionWorker.js";
+
+async function pullRuntimeChanges(workspaceService) {
+  if (config.executionRuntime !== "remote") return;
+  await pullWorkspaceFromRemote({ workspaceId: workspaceService.workspaceId, workspaceDir: workspaceService.workspaceRoot });
+}
+
+async function pushRuntimeChanges(workspaceService) {
+  if (config.executionRuntime !== "remote") return true;
+  try {
+    await syncWorkspaceOnRemote({ workspaceId: workspaceService.workspaceId, workspaceDir: workspaceService.workspaceRoot });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * GET /api/workspace/files?path=.
@@ -11,6 +28,7 @@ export async function listFiles(req, res) {
   const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
   const dirPath = req.query.path || ".";
   try {
+    await pullRuntimeChanges(workspaceService);
     const data = await workspaceService.listDirectory(dirPath);
     res.json(data);
   } catch (err) {
@@ -35,6 +53,7 @@ export async function readFile(req, res) {
   }
 
   try {
+    await pullRuntimeChanges(workspaceService);
     const result = await workspaceService.readFile(filePath);
     if (result.version) res.setHeader("ETag", '"' + result.version + '"');
     res.json({ path: result.path, content: result.content, size: Buffer.byteLength(result.content), version: result.version });
@@ -64,8 +83,9 @@ export async function writeFile(req, res) {
     const ifNoneMatch = req.get("If-None-Match");
     const expectedVersion = ifMatch ? ifMatch.replace(/^W\//, "").replace(/^"|"$/g, "") : undefined;
     const result = await workspaceService.writeFile(filePath, content, { expectedVersion, mustNotExist: ifNoneMatch === "*" });
+    const runtimeSynced = await pushRuntimeChanges(workspaceService);
     res.setHeader("ETag", '"' + result.version + '"');
-    res.json({ success: true, path: result.path, size: Buffer.byteLength(content), version: result.version, isNew: result.isNew });
+    res.json({ success: true, path: result.path, size: Buffer.byteLength(content), version: result.version, isNew: result.isNew, runtimeSynced });
   } catch (err) {
     if (err.message?.includes("Access denied")) return res.status(403).json({ error: "Forbidden", message: err.message });
     if (err.code === "WORKSPACE_VERSION_CONFLICT") return res.status(409).json({ error: "WorkspaceConflict", message: err.message, currentVersion: err.currentVersion || null });
@@ -87,7 +107,8 @@ export async function deleteFile(req, res) {
 
   try {
     const result = await workspaceService.deleteFile(filePath);
-    res.json({ success: true, path: result.path });
+    const runtimeSynced = await pushRuntimeChanges(workspaceService);
+    res.json({ success: true, path: result.path, runtimeSynced });
   } catch (err) {
     if (err.message?.includes("Access denied")) {
       return res.status(403).json({ error: "Forbidden", message: err.message });
@@ -111,7 +132,8 @@ export async function moveFile(req, res) {
 
   try {
     const result = await workspaceService.renameFile(from, to);
-    res.json({ success: true, from: result.from, to: result.to });
+    const runtimeSynced = await pushRuntimeChanges(workspaceService);
+    res.json({ success: true, from: result.from, to: result.to, runtimeSynced });
   } catch (err) {
     if (err.message?.includes("Access denied")) return res.status(403).json({ error: "Forbidden", message: err.message });
     res.status(500).json({ error: "InternalError", message: err.message });
@@ -130,7 +152,8 @@ export async function createFolder(req, res) {
 
   try {
     const result = await workspaceService.createDirectory(folderPath);
-    res.json({ success: true, path: result.path });
+    const runtimeSynced = await pushRuntimeChanges(workspaceService);
+    res.json({ success: true, path: result.path, runtimeSynced });
   } catch (err) {
     if (err.message?.includes("Access denied")) return res.status(403).json({ error: "Forbidden", message: err.message });
     res.status(500).json({ error: "InternalError", message: err.message });
