@@ -15,8 +15,7 @@ function normalizeUrl(value) {
       configured = preview.host.toLowerCase() === url.host.toLowerCase();
     } catch {}
   }
-  const previewSubdomain = /^(?:[a-z0-9-]+\\.)*(?:preview|previews)$/i.test(host);
-  if (!local && !configured && !previewSubdomain) {
+  if (!local && !configured) {
     throw new Error("Browser verification is restricted to localhost or the exact PREVIEW_PUBLIC_URL host.");
   }
   return url;
