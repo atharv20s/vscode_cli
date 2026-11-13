@@ -32,7 +32,7 @@ const SAFE_READ_ONLY_COMMANDS = [
   /^(node|npm|python|python3)\s+--version$/,
 ];
 
-export function classifyCommandForPolicy(command) {
+export function classifyCommandForPolicy(command, options = {}) {
   if (typeof command !== "string" || !command.trim()) return "DENY";
   const cmd = command.trim();
   if (DENY_COMMAND_PATTERNS.some(pattern => pattern.test(cmd))) return "DENY";
@@ -40,6 +40,28 @@ export function classifyCommandForPolicy(command) {
   // Never auto-allow shell composition, substitutions, redirects or multiline input.
   if (/[\n\r;&|<>\x60$]/.test(cmd)) return "ASK";
   return SAFE_READ_ONLY_COMMANDS.some(pattern => pattern.test(cmd)) ? "ALLOW" : "ASK";
+}
+
+const SECRET_PATH_PATTERNS = [
+  /(^|\\/)\\.env(?:\\.|$)/i,
+  /(^|\\/)(id_rsa|id_ed25519|.*\\.pem|.*\\.key)$/i,
+  /(^|\\/)\\.aws\\/credentials$/i,
+  /(^|\\/)terraform\\.tfstate(?:\\.|$)/i,
+];
+
+const SENSITIVE_WRITE_PATHS = [
+  /^package(?:-lock)?\\.json$/i,
+  /^Dockerfile$/i,
+  /^\\.github\\/workflows\\//i,
+  /(^|\\/)server\\/src\\/config\\//i,
+];
+
+export function classifyFileOperationForPolicy(action, filePath = "") {
+  const normalized = String(filePath || "").replace(/\\\\/g, "/").replace(/^\\.\\//, "");
+  if (action === "read" && SECRET_PATH_PATTERNS.some(pattern => pattern.test(normalized))) return "DENY";
+  if (["delete", "delete_file"].includes(action)) return "ASK";
+  if (["write", "edit", "create"].includes(action) && SENSITIVE_WRITE_PATHS.some(pattern => pattern.test(normalized))) return "ASK";
+  return "ALLOW";
 }
 
 class PermissionEngine {
@@ -100,7 +122,7 @@ class PermissionEngine {
 
   _evaluatePolicy(resource, action, payload) {
     if (resource === "command" || action === "run_command" || action === "execute") {
-      return classifyCommandForPolicy(payload.command);
+      return classifyCommandForPolicy(payload.command, { isolatedRepoAgent: payload.isolatedRepoAgent === true });
     }
     if (resource === "file") {
       if (action === "delete" || action === "delete_file") return "ASK";
