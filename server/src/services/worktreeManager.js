@@ -46,7 +46,9 @@ export class WorktreeManager {
     }
     const root = await fs.realpath(workspaceDir);
     const worktreeRoot = path.join(root, this.directoryName);
-    const worktreeName = safeTaskId + "-" + crypto.randomUUID().slice(0, 8);\n    const worktreePath = path.join(worktreeRoot, worktreeName);\n    const containerWorktreePath = path.posix.join("/workspace", this.directoryName, worktreeName);
+    const worktreeName = safeTaskId + "-" + crypto.randomUUID().slice(0, 8);
+    const worktreePath = path.join(worktreeRoot, worktreeName);
+    const containerWorktreePath = path.posix.join("/workspace", this.directoryName, worktreeName);
     const branch = "ath-agent/" + safeTaskId + "-" + crypto.randomUUID().slice(0, 8);
     await fs.mkdir(worktreeRoot, { recursive: true, mode: 0o700 });
 
