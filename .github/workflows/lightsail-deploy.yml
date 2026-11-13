@@ -1,0 +1,109 @@
+name: ATH IDE — Guarded Lightsail production deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DEPLOY to authorize the production rollout"
+        required: true
+        type: string
+      deploy_path:
+        description: "Absolute path to the existing repository checkout on Lightsail"
+        required: true
+        type: string
+      api_service:
+        description: "API systemd unit name"
+        required: true
+        type: string
+      execution_worker_service:
+        description: "Execution-worker systemd unit name (runs server/src/worker/executionWorker.js)"
+        required: true
+        type: string
+      repo_agent_service:
+        description: "Repository-agent systemd unit name"
+        required: true
+        type: string
+      api_health_url:
+        description: "Public HTTPS API health URL, e.g. https://api.example.com/api/health"
+        required: true
+        type: string
+      worker_health_url:
+        description: "Loopback execution-worker health URL"
+        required: true
+        default: "http://127.0.0.1:8081/healthz"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ath-ide-lightsail-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy reviewed main to AWS Lightsail
+    runs-on: ubuntu-latest
+    environment: production
+    if: ${{ inputs.confirmation == 'DEPLOY' }}
+    steps:
+      - name: Checkout production main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Configure pinned-host SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.LIGHTSAIL_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.LIGHTSAIL_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/lightsail"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/lightsail" "$HOME/.ssh/known_hosts"
+
+      - name: Validate deployment inputs
+        env:
+          HOST: ${{ secrets.LIGHTSAIL_SSH_HOST }}
+          USER: ${{ secrets.LIGHTSAIL_SSH_USER }}
+          DEPLOY_PATH: ${{ inputs.deploy_path }}
+          API_SERVICE: ${{ inputs.api_service }}
+          EXECUTION_SERVICE: ${{ inputs.execution_worker_service }}
+          REPO_AGENT_SERVICE: ${{ inputs.repo_agent_service }}
+          API_HEALTH_URL: ${{ inputs.api_health_url }}
+          WORKER_HEALTH_URL: ${{ inputs.worker_health_url }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = "DEPLOY"
+          test -n "$HOST" && test -n "$USER"
+          [[ "$DEPLOY_PATH" = /* ]]
+          [[ "$API_SERVICE" =~ ^[A-Za-z0-9_.@:-]+$ ]]
+          [[ "$EXECUTION_SERVICE" =~ ^[A-Za-z0-9_.@:-]+$ ]]
+          [[ "$REPO_AGENT_SERVICE" =~ ^[A-Za-z0-9_.@:-]+$ ]]
+          [[ "$API_HEALTH_URL" = https://* ]]
+          [[ "$WORKER_HEALTH_URL" =~ ^http://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]+)?/healthz$ ]]
+
+      - name: Deploy and verify with automatic code rollback on failure
+        env:
+          HOST: ${{ secrets.LIGHTSAIL_SSH_HOST }}
+          USER: ${{ secrets.LIGHTSAIL_SSH_USER }}
+          DEPLOY_PATH: ${{ inputs.deploy_path }}
+          API_SERVICE: ${{ inputs.api_service }}
+          EXECUTION_SERVICE: ${{ inputs.execution_worker_service }}
+          REPO_AGENT_SERVICE: ${{ inputs.repo_agent_service }}
+          API_HEALTH_URL: ${{ inputs.api_health_url }}
+          WORKER_HEALTH_URL: ${{ inputs.worker_health_url }}
+        run: |
+          set -euo pipefail
+          printf -v REMOTE_ARGS '%q ' "$DEPLOY_PATH" "$API_SERVICE" "$EXECUTION_SERVICE" "$REPO_AGENT_SERVICE" "$API_HEALTH_URL" "$WORKER_HEALTH_URL"
+          ssh -i "$HOME/.ssh/lightsail" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$USER@$HOST" "bash -s -- $REMOTE_ARGS" < scripts/deploy-lightsail.sh
