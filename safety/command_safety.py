@@ -115,7 +115,7 @@ DANGEROUS_PATTERNS: list[DangerousPattern] = [
         is_regex=True,
     ),
     DangerousPattern(
-        pattern=r"(^|\\s)(format|mkfs(?:\\.\\w+)?)(\\s|$)",
+        pattern=r"(^|\s)(format|mkfs(?:\.\w+)?)(\s|$)",
         risk_level=RiskLevel.CRITICAL,
         description="Disk format command",
         category="filesystem",
@@ -281,21 +281,20 @@ PROTECTED_PATHS = [
 
 # File patterns that are sensitive
 SENSITIVE_FILE_PATTERNS = [
-    r"(^|/)\\.env(?:\\..*)?$",
-    r"(^|/)\\.npmrc$",
-    r"(^|/)\\.pypirc$",
-    r"(^|/)\\.netrc$",
-    r"(^|/)(?:credentials?|secrets?|service-account)(?:/|$|\\.)",
-    r".*\\.(?:pem|key|crt|p8|p12|pfx|jks)$",
+    r"(^|/)\.env(?:\..*)?$",
+    r"(^|/)\.npmrc$",
+    r"(^|/)\.pypirc$",
+    r"(^|/)\.netrc$",
+    r"(^|/)(?:credentials?|secrets?|service-account)(?:/|$|\.)",
+    r".*\.(?:pem|key|crt|p8|p12|pfx|jks)$",
     r".*password.*",
     r".*credential.*",
-    r".*/\\.ssh/.*",
-    r".*/\\.aws/.*",
-    r".*/\\.azure/.*",
-    r".*/\\.kube/.*",
-    r".*/terraform\\.tfstate(?:\\.backup)?$",
+    r".*/\.ssh/.*",
+    r".*/\.aws/.*",
+    r".*/\.azure/.*",
+    r".*/\.kube/.*",
+    r".*/terraform\.tfstate(?:\.backup)?$",
 ]
-
 
 class CommandSafetyChecker:
     """
