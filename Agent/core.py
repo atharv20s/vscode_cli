@@ -85,7 +85,7 @@ class Agent:
         
         # Custom personas cannot remove the shared safety baseline.
         base_prompt = system_prompt if system_prompt else get_system_prompt(persona)
-        self.system_prompt = base_prompt + "\n\n" + SECURITY_BASELINE
+        self.system_prompt = base_prompt if SECURITY_BASELINE in base_prompt else base_prompt + "\n\n" + SECURITY_BASELINE
 
     async def __aenter__(self) -> Agent:
         """Async context manager entry - initialize resources."""
