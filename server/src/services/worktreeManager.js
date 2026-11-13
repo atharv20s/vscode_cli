@@ -9,11 +9,11 @@ import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import { dockerWorkspaceRuntime } from "./dockerWorkspaceRuntime.js";
 
-function shellQuote(value) {
+export function shellQuote(value) {
   return "'" + String(value).replace(/'/g, "'\\''") + "'";
 }
 
-function assertSafeId(value, label) {
+export function assertSafeId(value, label) {
   const id = String(value || "");
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) {
     throw new Error(label + " must contain only letters, numbers, underscores or hyphens.");
