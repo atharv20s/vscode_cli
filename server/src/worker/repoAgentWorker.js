@@ -2,7 +2,7 @@ import os from "os";
 import crypto from "crypto";
 import { config, validateConfig } from "../config/env.js";
 import { initDatabase, closeDatabase } from "../db/database.js";
-import { initPostgres, getPostgresPool } from "../db/postgres.js";
+import { initPostgres, getPostgresPool, getPostgresIdentity } from "../db/postgres.js";
 import { initializeTools } from "../tools/index.js";
 import { repoAgentQueue } from "../services/repoAgentQueue.js";
 import { processRepoAgentTask } from "../services/repoAgentService.js";
@@ -21,7 +21,7 @@ async function bootDatabase() {
   if (config.databaseUrl) {
     try {
       await initPostgres(config.databaseUrl, { directUrl: config.directDatabaseUrl });
-      logger.info("Worker connected to shared PostgreSQL database");
+      logger.info("Worker connected to shared PostgreSQL database", { databaseIdentity: getPostgresIdentity() });
     } catch (pgErr) {
       if (!config.isDev || config.requirePostgres) {
         logger.error("Worker failed to connect to shared PostgreSQL database in production", { error: pgErr.message });
