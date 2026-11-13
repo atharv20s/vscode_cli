@@ -53,7 +53,11 @@ function createSocket() {
   });
   const messages = [];
   socket.on("message", raw => {
-    try { messages.push(JSON.parse(raw.toString("utf8"))); } catch {}
+    try {
+      const parsed = JSON.parse(raw.toString("utf8"));
+      messages.push(parsed);
+      console.log("[WS MSG]", JSON.stringify(parsed));
+    } catch {}
   });
   socket.on("error", error => messages.push({ type: "socket.error", payload: { message: error.message } }));
   return { socket, messages };
