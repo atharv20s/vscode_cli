@@ -31,7 +31,8 @@ class LLMClient:
         # Resolve model and provider
         self._resolved_model: str = self._settings.model
         self._resolved_base_url: str = self._settings.api_base_url
-        self._resolved_api_key: str = self._settings.api_key
+        self._resolved_api_key: str = self._settings.api_key or "ollama"
+        self._supports_tools: bool = True
         
         if model:
             self._resolve_model_config(model)
@@ -39,21 +40,23 @@ class LLMClient:
     def _resolve_model_config(self, model: str) -> None:
         """Resolve model configuration from models registry."""
         try:
-            from config.models import get_model, PROVIDERS, LLMProvider
-            
+            from config.models import get_model, PROVIDER_CONFIGS, LLMProvider
+
             model_config = get_model(model)
             if model_config:
                 self._resolved_model = model_config.model_id
-                provider_config = PROVIDERS.get(model_config.provider)
-                
+                self._supports_tools = model_config.supports_tools
+                provider_config = PROVIDER_CONFIGS.get(model_config.provider)
+
                 if provider_config:
                     self._resolved_base_url = provider_config.base_url
-                    # Use environment variable for API key based on provider
-                    import os
-                    env_key = provider_config.env_key
-                    env_api_key = os.environ.get(env_key)
-                    if env_api_key:
-                        self._resolved_api_key = env_api_key
+                    # ProviderConfig exposes api_key_env; Ollama intentionally
+                    # uses a harmless placeholder because it has no API key.
+                    env_key = provider_config.api_key_env
+                    if env_key:
+                        self._resolved_api_key = os.environ.get(env_key, self._resolved_api_key)
+                    elif model_config.provider == LLMProvider.OLLAMA:
+                        self._resolved_api_key = "ollama"
             else:
                 # Model name not in registry, use as-is (direct model ID)
                 self._resolved_model = model
@@ -92,6 +95,13 @@ class LLMClient:
         Yields:
             StreamEvent objects for text deltas, tool calls, completion, or errors
         """
+        if tools and not self._supports_tools:
+            yield StreamEvent(
+                type=StreamEventType.ERROR,
+                error=f"The selected model '{self._resolved_model}' does not support tool calling.",
+            )
+            return
+
         client = self.get_client()
         kwargs: dict[str, Any] = {
             "model": self._resolved_model,
