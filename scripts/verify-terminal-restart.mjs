@@ -55,6 +55,7 @@ function createSocket() {
   socket.on("message", raw => {
     try { messages.push(JSON.parse(raw.toString("utf8"))); } catch {}
   });
+  socket.on("error", error => messages.push({ type: "socket.error", payload: { message: error.message } }));
   return { socket, messages };
 }
 
@@ -66,8 +67,9 @@ function waitFor(messages, socket, predicate, description, timeoutMs = 60000) {
     const onMessage = raw => {
       let message;
       try { message = JSON.parse(raw.toString("utf8")); } catch { return; }
-      messages.push(message);
-      if (message.type === "terminal.state" && message.payload?.state === "error") {
+      if (message.type === "socket.error") {
+        finish(new Error(message.payload?.message || "Remote terminal socket failed."));
+      } else if (message.type === "terminal.state" && message.payload?.state === "error") {
         finish(new Error(message.payload.error || "Remote terminal returned an error."));
       } else if (predicate(message)) finish(null, message);
     };
@@ -111,8 +113,9 @@ try {
   await waitFor(first.messages, first.socket,
     message => message.type === "terminal.output" && String(message.payload?.text || "").includes(marker),
     "initial terminal marker");
+  const detached = new Promise(resolve => first.socket.once("close", resolve));
   first.socket.close();
-  await new Promise(resolve => first.socket.once("close", resolve));
+  await detached;
   console.log("Marker written and tmux session detached.");
 
   await prompt.question("Now restart the Node execution-worker service (for example: sudo systemctl restart ath-ide-worker.service), wait for it to return healthy, then press Enter here: ");
