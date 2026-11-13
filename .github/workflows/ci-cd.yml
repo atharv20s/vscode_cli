@@ -8,6 +8,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      update_visual_baselines:
+        description: "Generate a candidate visual baseline artifact for human review"
+        required: false
+        type: boolean
+        default: false
 
 # Production runs on AWS Lightsail. The Lightsail API and execution-worker
 # services are managed on the instance; this workflow intentionally performs
@@ -61,10 +67,27 @@ jobs:
           done
           cd server
           export APP_URL=http://127.0.0.1:4173
-          export VISUAL_BASELINE_DIR=/tmp/ath-visual-baselines
-          UPDATE_VISUAL_BASELINES=1 npm run bench:browser
+          export VISUAL_BASELINE_DIR=../benchmarks/visual-baselines
+          export VISUAL_ACTUAL_PATH=/tmp/ath-browser-actual.png
+          export REQUIRED_SELECTORS="main,[data-testid=browser-acceptance],#task,#run,#status"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.update_visual_baselines }}" = "true" ]; then
+            export UPDATE_VISUAL_BASELINES=1
+          else
+            export UPDATE_VISUAL_BASELINES=0
+          fi
           npm run bench:browser
           kill "$(cat /tmp/ath-browser-fixture.pid)" || true
+
+      - name: Upload browser evidence and candidate baselines
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ath-ide-browser-evidence
+          path: |
+            /tmp/ath-browser-actual.png
+            benchmarks/visual-baselines/*.png
+          if-no-files-found: ignore
+          retention-days: 14
 
   web-build:
     name: 🌐 Build and Type-check Studio Frontend

@@ -5,14 +5,14 @@ import { dockerWorkspaceRuntime } from "./dockerWorkspaceRuntime.js";
 import { buildRepositoryContext, formatRepositoryContext } from "./repoContextEngine.js";
 import { appendRepoTaskEvent, saveRepoContextRound, listRepoContextRounds } from "../db/repoAgentStore.js";
 import { config } from "../config/env.js";
-import { executeTaskGraph } from "./taskGraph.js";
+import { executeTaskGraphDynamic } from "./taskGraph.js";
 import { worktreeManager } from "./worktreeManager.js";
 import { createScopedWorkspaceService } from "./workspaceService.js";
 
 const PLANNER_TOOLS = ["read_file","list_files"];
 const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command"];
 const WORKTREE_CODER_TOOLS = ["read_file","write_file","edit_file","list_files"];
-const TESTER_TOOLS = ["read_file","list_files","run_command","browser_verify"];
+const TESTER_TOOLS = ["read_file","list_files","run_command","start_preview","get_preview_status","stop_preview","browser_verify"];
 const REVIEWER_TOOLS = ["read_file","list_files"];
 
 function extractAssistantText(result) {
@@ -358,10 +358,10 @@ export async function runRepoAgentPipeline(options) {
 
   const plannedTasks = parseImplementationTasks(plan, task.prompt);
   const taskOrdinals = new Map(plannedTasks.map((item,index)=>[item.id,index]));
-  const pendingMerges = [];
+  const pendingMerges = new Map();
   const configuredParallelism = Number(process.env.REPO_AGENT_MAX_PARALLEL || 2);
   const maxConcurrency = Math.max(1, Math.min(2, Number.isFinite(configuredParallelism) ? configuredParallelism : 2));
-  const taskGraphResult = await executeTaskGraph(plannedTasks, async (plannedTask, priorResults) => {
+  const taskGraphResult = await executeTaskGraphDynamic(plannedTasks, async (plannedTask, priorResults) => {
     if (signal?.aborted) throw new Error("Task graph cancelled before worktree creation.");
     const worktree = await worktreeManager.createWorktree({
       workspaceDir, workspaceId, taskId: plannedTask.id,
@@ -381,32 +381,30 @@ export async function runRepoAgentPipeline(options) {
         maxIterations:22,
       });
       const committed = await worktreeManager.commitWorktree(worktree, "agent task: " + plannedTask.id, signal);
-      pendingMerges.push({ ...committed, taskId:plannedTask.id });
+      pendingMerges.set(plannedTask.id, { ...committed, taskId:plannedTask.id });
       return summary;
     } finally {
       await dockerWorkspaceRuntime.stop(agentWorkspaceId).catch(()=>{});
     }
   }, {
     maxConcurrency, signal,
-    afterBatch: async (batch) => {
-      // Each batch starts from one shared base commit. Integrate completed
-      // branches serially so Git is the final conflict arbiter.
-      for (const plannedTask of batch) {
-        const candidate = pendingMerges.find(item=>item.taskId===plannedTask.id);
-        if (!candidate) throw new Error("Missing committed worktree for task " + plannedTask.id);
-        try {
-          await worktreeManager.mergeWorktree(candidate, signal);
-          await worktreeManager.removeWorktree(candidate, {deleteBranch:true});
-          pendingMerges.splice(pendingMerges.indexOf(candidate),1);
-          onEvent?.({type:"task_integrated",data:{taskId:plannedTask.id,branch:candidate.branch,commit:candidate.commit}});
-        } catch (error) {
-          await dockerWorkspaceRuntime.execute({
-            workspaceId,workspaceDir,cwd:workspaceDir,
-            command:"git merge --abort",
-            timeout:15000,
-          }).catch(()=>{});
-          throw new Error("Could not safely integrate task " + plannedTask.id + " (" + candidate.branch + "): " + error.message + ". Its worktree branch was preserved for inspection.");
-        }
+    afterTask: async (plannedTask) => {
+      // Integrate each isolated branch before unlocking its dependents. Other
+      // independent agents keep running instead of waiting at a whole-DAG barrier.
+      const candidate = pendingMerges.get(plannedTask.id);
+      if (!candidate) throw new Error("Missing committed worktree for task " + plannedTask.id);
+      try {
+        await worktreeManager.mergeWorktree(candidate, signal);
+        await worktreeManager.removeWorktree(candidate, {deleteBranch:true});
+        pendingMerges.delete(plannedTask.id);
+        onEvent?.({type:"task_integrated",data:{taskId:plannedTask.id,branch:candidate.branch,commit:candidate.commit}});
+      } catch (error) {
+        await dockerWorkspaceRuntime.execute({
+          workspaceId,workspaceDir,cwd:workspaceDir,
+          command:"git merge --abort",
+          timeout:15000,
+        }).catch(()=>{});
+        throw new Error("Could not safely integrate task " + plannedTask.id + " (" + candidate.branch + "): " + error.message + ". Its worktree branch was preserved for inspection.");
       }
     },
   });
@@ -426,7 +424,7 @@ export async function runRepoAgentPipeline(options) {
         task, role: "tester", roundNumber: roundOffset + 2 + plannedTasks.length + attempt * 2, workspaceDir, workspaceId,
         workspaceService, tools: TESTER_TOOLS, model: "fast", signal, onEvent,
         message: baseFor(14000) + "\n\nIMPLEMENTATION SUMMARY:\n" + implementationSummary +
-          "\n\nRun the repository's most relevant tests/build checks that can run without downloading dependencies. If the changes affect user-facing UI or a web preview, call browser_verify on the preview URL to inspect errors and visual layout. Report exact commands, browser evidence, and outputs. Do not edit source code in this phase.",
+          "\n\nRun the repository's most relevant tests/build checks that can run without downloading dependencies. If the changes affect user-facing UI, automatically provision a preview: inspect package scripts, start the appropriate dev server with start_preview, wait for get_preview_status to report running, then call browser_verify with the returned URL. Exercise one or more meaningful accessible interactions when feasible. Always call stop_preview after browser verification, including when verification fails. If preview startup or Playwright is unavailable, report the exact blocker; never claim browser verification passed. Report the URL, HTTP status, console/page errors, screenshot evidence and interaction results. Do not edit source code in this phase.",
         maxIterations: 10,
       }),
       runDeterministicChecks({ task, root: workspaceDir, workspaceId, context, signal, onEvent }),
