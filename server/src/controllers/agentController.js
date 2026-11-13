@@ -9,14 +9,26 @@ import { runAgent } from "../services/agentService.js";
 import { getAvailableModels } from "../services/llmService.js";
 import { config } from "../config/env.js";
 import { getWorkspaceService } from "../services/workspaceService.js";
+import { normalizeAgentMode } from "../services/agentModes.js";
 
 /**
  * POST /api/agent/chat — SSE streaming chat.
  */
 export async function chatStream(req, res) {
-  const { message, images = [], model, systemPrompt, conversationId: requestedConversationId } = req.body || {};
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const { message, images = [], model, mode = "agent", conversationId: requestedConversationId } = body;
 
-  if (!message && (!Array.isArray(images) || images.length === 0)) {
+  if ((message !== undefined && typeof message !== "string") ||
+      (typeof message === "string" && message.length > 100000) ||
+      !Array.isArray(images) || images.length > 4 ||
+      images.some(image => typeof image !== "string" || image.length > 12_000_000)) {
+    return res.status(400).json({
+      error: "BadRequest",
+      message: "Message or image payload is invalid or exceeds the request limits.",
+    });
+  }
+
+  if ((!message || !message.trim()) && images.length === 0) {
     return res.status(400).json({
       error: "BadRequest",
       message: "Missing 'message' or 'images' in request body.",
@@ -34,7 +46,16 @@ export async function chatStream(req, res) {
   const convId = conversation?.id || `conv_${uuidv4().replace(/-/g, "").slice(0, 16)}`;
   const sessionId = req.user.sessionId || `sess_${ownerId}`;
   const title = (message || "Image conversation").slice(0, 60);
+  const selectedMode = normalizeAgentMode(typeof mode === "string" ? mode : "agent");
   const workspaceService = getWorkspaceService(ownerId, req.get("X-Workspace-Id") || "default");
+  const rawEditor = body.context?.editor && typeof body.context.editor === "object" ? body.context.editor : null;
+  const editorPath = typeof rawEditor?.activeFile === "string" ? rawEditor.activeFile.slice(0, 400) : "";
+  const isSensitiveEditorPath = /(^|\\/)(?:\\.env(?:\\.|$)|\\.npmrc|\\.netrc|credentials?|secrets?|[^/]+\\.(?:pem|key|p12|pfx|kubeconfig))$/i.test(editorPath);
+  const editorContext = rawEditor ? {
+    activeFile: editorPath,
+    language: typeof rawEditor.language === "string" ? rawEditor.language.slice(0, 40) : "",
+    content: !isSensitiveEditorPath && typeof rawEditor.content === "string" ? rawEditor.content.slice(0, 12000) : "",
+  } : undefined;
 
   if (!conversation) {
     try {
@@ -74,7 +95,7 @@ export async function chatStream(req, res) {
     if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
   };
 
-  emit({ type: "conversation_started", data: { conversationId: convId, title } });
+  emit({ type: "conversation_started", data: { conversationId: convId, title, mode: selectedMode } });
 
   try {
     const result = await runAgent({
@@ -82,7 +103,8 @@ export async function chatStream(req, res) {
       images,
       conversationHistory: history,
       model: model || undefined,
-      systemPrompt: systemPrompt || undefined,
+      mode: selectedMode,
+      context: editorContext ? { editor: editorContext } : undefined,
       workspaceDir: workspaceService.workspaceRoot,
       workspaceId: workspaceService.workspaceId,
       workspaceService,
