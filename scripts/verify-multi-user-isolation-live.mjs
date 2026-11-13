@@ -9,6 +9,7 @@
  * and removes both test files.
  */
 import crypto from "node:crypto";
+import "../server/src/config/env.js";
 import crypto from "node:crypto";
 
 const baseUrl = new URL(process.env.WORKSPACE_API_URL || "");
