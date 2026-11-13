@@ -7,7 +7,11 @@ import asyncio
 import os
 import shlex
 import subprocess
+import posixpath
+import re
 from pathlib import Path
+
+from safety.command_safety import ApprovalPolicy, SafetyConfig, SafetyManager, PathSafetyChecker
 from typing import Any
 
 from tools.base import Tool, ToolResult
@@ -23,15 +27,23 @@ class ShellTool(Tool):
     2. Remote Cloud execution (Oracle Cloud Infrastructure / SSH / Docker Sandbox).
     """
     
-    def __init__(self, timeout: float = 60.0):
-        """
-        Initialize the shell tool.
-        
-        Args:
-            timeout: Maximum execution time in seconds
-        """
+    def __init__(
+        self,
+        timeout: float = 60.0,
+        safety_manager: SafetyManager | None = None,
+        approval_callback=None,
+    ):
         self.timeout = timeout
-    
+        self.safety_manager = safety_manager or SafetyManager(
+            SafetyConfig(approval_policy=ApprovalPolicy.ON_REQUEST)
+        )
+        if approval_callback:
+            self.safety_manager.set_approval_callback(approval_callback)
+
+    def set_approval_callback(self, callback) -> None:
+        """Install the host application's explicit approval callback."""
+        self.safety_manager.set_approval_callback(callback)
+
     @property
     def name(self) -> str:
         return "shell"
@@ -76,116 +88,94 @@ class ShellTool(Tool):
         command: str,
         working_dir: str | None = None,
     ) -> ToolResult:
-        """Execute the shell command (locally or in remote OCI sandbox)."""
+        """Run only read-only allowlisted commands or explicitly approved work."""
         cfg = get_config()
-        
-        if cfg.remote_enabled and cfg.remote_host:
-            return await self._execute_remote(command, working_dir, cfg)
-        else:
-            return await self._execute_local(command, working_dir)
-    
-    async def _execute_remote(
+        safety = await self.safety_manager.check_and_approve_command(command)
+        if not safety.allowed:
+            explanation = safety.message or "Command blocked by safety policy."
+            if safety.r    async def _execute_remote(
         self,
         command: str,
         working_dir: str | None,
         cfg: Any,
     ) -> ToolResult:
-        """Execute command inside the remote Oracle Cloud VM / Docker sandbox over SSH."""
+        """Execute an approved command over SSH with pinned host-key checking."""
         try:
-            # 1. Resolve remote directory
-            remote_base = cfg.remote_workspace.rstrip("/")
-            if working_dir:
-                clean_wd = working_dir.replace("\\", "/").strip("/")
-                if clean_wd.startswith("/"):
-                    remote_cwd = clean_wd
-                else:
-                    remote_cwd = f"{remote_base}/{clean_wd}"
-            else:
-                remote_cwd = remote_base
+            remote_root = posixpath.normpath(str(cfg.remote_workspace or ""))
+            if not remote_root.startswith("/"):
+                return ToolResult.fail("Remote workspace must be an absolute POSIX path.")
+            candidate = (
+                posixpath.normpath(working_dir)
+                if working_dir and posixpath.isabs(working_dir)
+                else posixpath.normpath(posixpath.join(remote_root, working_dir or "."))
+            )
+            if posixpath.commonpath([remote_root, candidate]) != remote_root:
+                return ToolResult.fail("Remote working directory is outside the configured sandbox root.")
 
-            # 2. Build remote command string
-            # Ensure remote workspace exists before executing
-            if cfg.remote_docker_container:
-                # Execute inside a specific Docker container on the OCI VM
-                escaped_cmd = command.replace('"', '\\"').replace('$', '\\$')
+            # Docker container names are identifiers, not arbitrary shell fragments.
+            container = str(cfg.remote_docker_container or "")
+            if container and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", container):
+                return ToolResult.fail("Invalid remote Docker container name.")
+
+            quoted_cwd = shlex.quote(candidate)
+            inner = f"mkdir -p -- {quoted_cwd} && cd -- {quoted_cwd} && {command}"
+            if container:
                 remote_payload = (
-                    f"docker exec -i {cfg.remote_docker_container} "
-                    f"bash -c \"mkdir -p '{remote_cwd}' && cd '{remote_cwd}' && {escaped_cmd}\""
+                    f"docker exec -i -- {shlex.quote(container)} "
+                    f"bash -lc {shlex.quote(inner)}"
                 )
             else:
-                # Execute natively on the OCI Linux host
-                remote_payload = f"mkdir -p '{remote_cwd}' && cd '{remote_cwd}' && {command}"
+                remote_payload = inner
 
-            # 3. Construct SSH argument list
             ssh_args = [
                 "ssh",
                 "-p", str(cfg.remote_port),
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null",
-                "-o", "LogLevel=ERROR",
-                "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=yes",
                 "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=10",
+                "-o", "LogLevel=ERROR",
             ]
-
             if cfg.remote_key_path:
                 key_path = os.path.expanduser(cfg.remote_key_path)
                 if not os.path.isabs(key_path):
                     key_path = os.path.abspath(key_path)
                 ssh_args.extend(["-i", key_path])
 
-            target = f"{cfg.remote_user}@{cfg.remote_host}"
-            ssh_args.append(target)
-            ssh_args.append(remote_payload)
-
-            # 4. Run SSH subprocess
+            ssh_args.extend([f"{cfg.remote_user}@{cfg.remote_host}", remote_payload])
             process = await asyncio.create_subprocess_exec(
                 *ssh_args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=self.timeout,
-                )
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.timeout)
             except asyncio.TimeoutError:
-                try:
-                    process.kill()
-                except Exception:
-                    pass
+                process.kill()
+                await process.wait()
                 return ToolResult.fail(
-                    f"Remote command timed out after {self.timeout}s on OCI VM ({cfg.remote_host})",
+                    f"Remote command timed out after {self.timeout}s on {cfg.remote_host}",
                     command=command,
                 )
 
             stdout_str = stdout.decode("utf-8", errors="replace").strip()
             stderr_str = stderr.decode("utf-8", errors="replace").strip()
-
             if process.returncode == 0:
-                output = stdout_str or "(no output - command completed successfully)"
                 return ToolResult.ok(
-                    output,
+                    stdout_str or "(no output - command completed successfully)",
                     exit_code=0,
                     remote=True,
                     host=cfg.remote_host,
-                    remote_cwd=remote_cwd,
-                    stderr=stderr_str if stderr_str else None,
+                    remote_cwd=candidate,
+                    stderr=stderr_str or None,
                 )
-            else:
-                error_msg = stderr_str or stdout_str or f"Command exited with code {process.returncode}"
-                return ToolResult.fail(
-                    error_msg,
-                    exit_code=process.returncode,
-                    remote=True,
-                    host=cfg.remote_host,
-                    stdout=stdout_str if stdout_str else None,
-                )
-
-        except Exception as e:
             return ToolResult.fail(
-                f"Failed to execute command on Oracle Cloud VM ({cfg.remote_host}): {str(e)}"
+                stderr_str or stdout_str or f"Command exited with code {process.returncode}",
+                exit_code=process.returncode,
+                remote=True,
+                host=cfg.remote_host,
             )
+        except Exception as error:
+            return ToolResult.fail(f"Remote command failed: {error}")
 
     async def _execute_local(
         self,
