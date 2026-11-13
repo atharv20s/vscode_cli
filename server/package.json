@@ -5,6 +5,7 @@
   "description": "Pure JavaScript backend for the Agentic CLI — AI agent platform with MCP, WebSockets, and GitHub integration",
   "main": "src/server.js",
   "scripts": {
+    "build": "node --check src/server.js && node --check src/db/migrator.js",
     "start": "node src/server.js",
     "start:worker": "node src/worker/executionWorker.js",
     "dev": "node --watch src/server.js",
@@ -15,7 +16,10 @@
     "worker:repo-agent": "node src/worker/repoAgentWorker.js",
     "start:stack": "node src/server.js",
     "bench:browser": "node ../benchmarks/browser-acceptance.mjs",
-    "browser:install": "bash scripts/install-browser-runtime.sh"
+    "browser:install": "bash scripts/install-browser-runtime.sh",
+    "db:migrate": "node src/db/migrator.js",
+    "db:status": "node src/db/migrator.js --status",
+    "db:migrate:sqlite": "node ../scripts/migrate-sqlite-to-postgres.mjs"
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0",

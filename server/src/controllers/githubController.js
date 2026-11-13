@@ -18,14 +18,14 @@ import {
  * GitHub credentials stay in the server-side user record. Never accept PATs
  * from query strings or browser-supplied headers for authenticated operations.
  */
-function getGitHubToken(req) {
+async function getGitHubToken(req) {
   if (!req.user?.id) return "";
-  const user = findUserById(req.user.id);
+  const user = await findUserById(req.user.id);
   return user?.github_access_token || "";
 }
 
 export async function listRepos(req, res) {
-  const token = getGitHubToken(req);
+  const token = await getGitHubToken(req);
   if (!token) {
     return res.status(400).json({
       error: "GitHubNotConnected",
@@ -41,7 +41,7 @@ export async function listRepos(req, res) {
 }
 
 export async function getRepoTree(req, res) {
-  const token = getGitHubToken(req);
+  const token = await getGitHubToken(req);
   if (!token) return res.status(400).json({ error: "GitHubNotConnected" });
   const owner = req.params.owner;
   const repo = req.params.repo;
@@ -55,7 +55,7 @@ export async function getRepoTree(req, res) {
 }
 
 export async function createRepositoryAgentTask(req, res) {
-  const token = getGitHubToken(req);
+  const token = await getGitHubToken(req);
   if (!token) return res.status(400).json({ error: "GitHubNotConnected" });
   try {
     const task = await startRepoAgentTask({

@@ -20,7 +20,7 @@ import helmet from "helmet";
 
 import { config, validateConfig } from "./config/env.js";
 import { logger } from "./config/logger.js";
-import { initDatabase, closeDatabase } from "./db/database.js";
+import { initDatabase, closeDatabase, getDatabaseHealth } from "./db/database.js";
 import { initPostgres } from "./db/postgres.js";
 import { initializeTools } from "./tools/index.js";
 import { initMcpServers, shutdownMcpServers, getMcpStatus } from "./mcp/mcpClient.js";
@@ -102,12 +102,23 @@ app.use(express.static(publicDir));
 // 4. API Routes
 app.use("/api", generalLimiter);
 
-// Health check endpoint
-app.get("/api/health", (req, res) => {
-  res.json({
-    status: "ok",
+// Health check endpoint with database readiness reporting
+app.get("/api/health", async (req, res) => {
+  const dbHealth = await getDatabaseHealth();
+  const isHealthy = dbHealth.ok || (!config.requirePostgres && dbHealth.connected);
+  const status = isHealthy ? "ok" : "degraded";
+  const statusCode = isHealthy ? 200 : (config.isDev ? 200 : 503);
+
+  res.status(statusCode).json({
+    status,
     version: "1.0.0",
     uptime: `${process.uptime().toFixed(0)}s`,
+    database: {
+      dialect: dbHealth.dialect,
+      connected: Boolean(dbHealth.connected ?? dbHealth.ok),
+      schemaVersion: dbHealth.schemaVersion ?? null,
+      latencyMs: dbHealth.latencyMs ?? null,
+    },
     mcp: getMcpStatus(),
     env: config.nodeEnv,
     time: new Date().toISOString(),
@@ -210,16 +221,26 @@ async function startServer() {
     for (const w of warnings) logger.warn(w);
     for (const e of errors) logger.error(e);
 
-    // Initialize Database (Neon Cloud PostgreSQL if configured, plus SQLite local cache)
+    // Initialize Database (PostgreSQL / Neon in production, fail-closed)
     if (config.databaseUrl) {
       try {
-        await initPostgres(config.databaseUrl);
+        await initPostgres(config.databaseUrl, { directUrl: config.directDatabaseUrl });
+        logger.info("PostgreSQL persistence layer initialized successfully");
       } catch (pgErr) {
-        logger.warn(`Postgres initial connect failed: ${pgErr.message}. Falling back to local SQLite database.`);
+        if (!config.isDev || config.requirePostgres) {
+          logger.error("Production database connection failed. Refusing to start with unsafe fallback.", { error: pgErr.message });
+          throw pgErr;
+        }
+        logger.warn(`Postgres initial connect failed: ${pgErr.message}. Falling back to local SQLite database in development.`);
+        initDatabase();
       }
+    } else {
+      if (!config.isDev || config.requirePostgres) {
+        throw new Error("DATABASE_URL is required in production. Refusing to start with SQLite fallback.");
+      }
+      initDatabase();
+      logger.info("SQLite local database initialized for development");
     }
-    initDatabase();
-    logger.info("Database subsystem initialized successfully");
 
     // Initialize cross-instance workspace event fan-out before registering WebSocket listeners.
     await eventBus.initialize({ redisUrl: config.redisUrl, required: config.requireDistributedEvents });

@@ -1,0 +1,16 @@
+[Unit]
+Description=ATH IDE Isolated Docker Execution Worker
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ath-ide/server
+EnvironmentFile=/etc/ath-ide/worker.env
+ExecStart=/usr/bin/node src/worker/executionWorker.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+
