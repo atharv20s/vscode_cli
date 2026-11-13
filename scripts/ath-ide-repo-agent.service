@@ -1,0 +1,35 @@
+[Unit]
+Description=ATH IDE Repository Agent Queue Worker (isolated Docker jobs)
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+SupplementaryGroups=docker
+WorkingDirectory=/home/ubuntu/ath-ide/server
+EnvironmentFile=/etc/ath-ide/repo-agent.env
+ExecStartPre=/usr/bin/test -S /var/run/docker.sock
+ExecStart=/usr/bin/node src/worker/repoAgentWorker.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+KillSignal=SIGTERM
+UMask=0077
+LimitNOFILE=65536
+
+# Defense in depth for the worker process. Docker access remains powerful:
+# keep this worker on a dedicated host and never expose the Docker socket over TCP.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
