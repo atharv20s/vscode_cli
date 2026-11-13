@@ -315,3 +315,21 @@ terminal step is interactive; restart only the Node worker when prompted. The
 Neon restore step requires a separate empty target branch and explicit
 `RESTORE_CONFIRM_EMPTY_TARGET=YES`. Missing environment variables cause that
 individual drill to fail, but do not stop later checks.
+
+
+### Deployed API multi-user isolation acceptance
+
+Run from a trusted operator machine or API host:
+
+```bash
+WORKSPACE_API_URL=https://<api-host> npm run security:verify-multi-user-isolation
+```
+
+The script uses `WORKSPACE_API_URL` or the configured `PUBLIC_URL`, and
+reads the JWT signing secret from the loaded server environment (or
+`JWT_SECRET`). It creates two random synthetic JWT identities (no real account
+data is read), concurrently writes the same relative filename with different
+random contents, verifies each identity reads back only its own content, and
+deletes both test files. It refuses to send tokens over non-local HTTP. The
+secret is never printed. Run only against an API environment where synthetic
+JWT identities are permitted by policy.
