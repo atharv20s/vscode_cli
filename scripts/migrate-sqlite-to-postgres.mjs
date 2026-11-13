@@ -391,6 +391,8 @@ export async function migrateSqliteToPostgres({
           const value = row[item.source];
           const targetType = targetColumns.get(item.target).udt_name;
           if (value == null) return null;
+          const targetColumn = targetColumns.get(item.target);
+          if (targetColumn.data_type === "boolean") return Boolean(value);
           if ((targetType === "jsonb" || targetType === "json") && typeof value === "string") {
             try { return JSON.stringify(JSON.parse(value)); }
             catch { throw new Error(`Invalid JSON in ${table}.${item.source}; refusing lossy migration.`); }
