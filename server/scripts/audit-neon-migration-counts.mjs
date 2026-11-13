@@ -16,11 +16,12 @@ import dotenv from "dotenv";
 import pg from "pg";
 import Database from "better-sqlite3";
 import { createPostgresIdentity } from "../src/db/postgres.js";
+import { config } from "../src/config/env.js";
 
 dotenv.config();
 const { Client } = pg;
-const directUrl = process.env.DIRECT_DATABASE_URL || process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL || "";
-const pooledUrl = process.env.DATABASE_URL || directUrl;
+const directUrl = process.env.DIRECT_DATABASE_URL || process.env.DATABASE_URL_UNPOOLED || config.directDatabaseUrl || process.env.DATABASE_URL || config.databaseUrl || "";
+const pooledUrl = process.env.DATABASE_URL || config.databaseUrl || directUrl;
 if (!directUrl) throw new Error("DIRECT_DATABASE_URL or DATABASE_URL is required.");
 
 function sslFor(connectionString) {
@@ -95,7 +96,7 @@ const [direct, pooled] = await Promise.all([
   inspectPostgres(directUrl),
   pooledUrl === directUrl ? Promise.resolve(null) : inspectPostgres(pooledUrl),
 ]);
-const apiHealthUrl = process.env.API_HEALTH_URL || "";
+const apiHealthUrl = process.env.API_HEALTH_URL || (config.publicUrl ? new URL("/api/health", config.publicUrl).toString() : "");
 let apiIdentity = null;
 if (apiHealthUrl) {
   const response = await fetch(apiHealthUrl, { signal: AbortSignal.timeout(15000) });
