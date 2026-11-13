@@ -1,17 +1,19 @@
-# ATH IDE — Terraform Deployment Variables Example
-# Copy this file to terraform.tfvars:
-#   cp terraform.tfvars.example terraform.tfvars
+# ATH IDE GCP Terraform inputs. No credential values belong in this file.
+# Copy to terraform.tfvars and supply non-secret identifiers only.
 
-project_id = "your-gcp-project-id"
-region     = "us-central1"
-zone       = "us-central1-a"
-app_name   = "ath-ide"
+project_id        = "your-gcp-project-id"
+region            = "us-central1"
+zone              = "us-central1-a"
+app_name           = "ath-ide"
+image_tag          = "replace-with-an-immutable-git-sha"
+github_repository  = "atharv20s/vscode_cli"
 
-# Database & Cache (Injected directly from your .env)
-database_url       = "postgresql://neondb_owner:npg_...ep-cold-bush-...neon.tech/neondb?sslmode=require"
-redis_url          = "redis://default:...@redis-....c300.eu-central-1-1.ec2.redns.redis-cloud.com:13961"
-openrouter_api_key = "sk-or-v1-..."
-jwt_secret         = "your-cryptographically-secure-jwt-secret-32-chars"
+# Public access is disabled by default. Enable only when app-level auth is ready.
+allow_public_access = false
 
-# Optional Custom Domain (e.g. ide.yourdomain.com)
+# GKE provisions billable compute; leave disabled unless you need Kubernetes.
+enable_gke = false
+
+# Optional DNS zone only. Cloud Run domain verification and DNS records are
+# configured after Terraform creates the zone.
 domain_name = ""
