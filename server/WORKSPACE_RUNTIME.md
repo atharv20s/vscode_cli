@@ -264,3 +264,20 @@ editor: simultaneous edits to the same file are serialized by version checks,
 and the later stale save must reload/merge rather than being automatically
 merged character-by-character. Validate with two real authenticated browsers,
 a disposable shared workspace, and Redis before production sign-off.
+
+
+### Deployed API multi-user isolation acceptance
+
+Run from a trusted operator machine with a production API URL and the API's
+existing JWT signing secret loaded into the environment:
+
+```bash
+WORKSPACE_API_URL=https://<api-host> JWT_SECRET=<from-api-secret-store> npm run security:verify-multi-user-isolation
+```
+
+The script creates two random synthetic JWT identities (no real account data
+is read), concurrently writes the same relative filename with different random
+contents, verifies each identity reads back only its own content, and deletes
+the two test files. It refuses to send tokens over non-local HTTP. The JWT
+secret is read from the environment and is never printed. Run only against an
+API environment where synthetic JWT identities are permitted by policy.
