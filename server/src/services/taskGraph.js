@@ -38,7 +38,7 @@ export async function executeTaskGraph(input, executor, options = {}) {
   if (typeof executor !== "function") throw new Error("Task graph executor must be a function.");
   const batches = buildTaskBatches(input), results = new Map();
   const maxConcurrency = Math.max(1, Math.min(16, Number(options.maxConcurrency) || 1));
-  for (const batch of batches) {
+  for (const batch of batches) {\n    const batchResults = new Map();
     if (options.signal?.aborted) throw new Error("Task graph cancelled.");
     for (let offset = 0; offset < batch.length; offset += maxConcurrency) {
       const group = batch.slice(offset, offset + maxConcurrency);
