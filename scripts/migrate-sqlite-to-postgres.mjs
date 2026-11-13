@@ -341,13 +341,71 @@ export async function migrateSqliteToPostgres({
       report.llm_daily_usage.migrated++;
     }
 
-    // 11. Reconcile Postgres Counts
-    console.log("\n[Step 11] Running reconciliation verification queries on PostgreSQL...");
+    // 11. Migrate every remaining application table present in the SQLite source.
+    // The explicit migrations above handle tables whose schemas need custom transforms.
+    // This covers the remaining schema-compatible tables and fails closed for unknown tables.
+    const explicitlyMigrated = new Set(Object.keys(report));
+    const sqliteTables = sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    ).all().map(row => row.name);
+
+    for (const table of sqliteTables) {
+      if (explicitlyMigrated.has(table)) continue;
+      if (!/^[a-z_][a-z0-9_]*$/.test(table)) {
+        throw new Error(`Unsafe or unsupported SQLite table name: ${table}`);
+      }
+
+      const targetColumnsResult = await pgClient.query(
+        "SELECT column_name, data_type, udt_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position",
+        [table]
+      );
+      if (!targetColumnsResult.rows.length) {
+        throw new Error(`SQLite table '${table}' has no matching PostgreSQL table; refusing to skip source data.`);
+      }
+
+      const sourceColumns = sqlite.prepare(`PRAGMA table_info("${table}")`).all().map(column => column.name);
+      const targetColumns = new Map(targetColumnsResult.rows.map(column => [column.column_name, column]));
+      const aliases = { evidence_json: "evidence" };
+      const mapping = sourceColumns
+        .map(source => ({ source, target: aliases[source] || source }))
+        .filter(item => targetColumns.has(item.target));
+      if (!mapping.length) {
+        throw new Error(`No compatible columns found for SQLite table '${table}'.`);
+      }
+
+      const sourceRows = sqlite.prepare(`SELECT * FROM "${table}"`).all();
+      const targetNames = mapping.map(item => item.target);
+      const placeholders = mapping.map((item, index) => {
+        const type = targetColumns.get(item.target).udt_name;
+        return type === "jsonb" || type === "json" ? `${index + 1}::${type}` : `${index + 1}`;
+      });
+      const insertSql = `INSERT INTO "${table}" (${targetNames.map(name => `"${name}"`).join(", ")}) VALUES (${placeholders.join(", ")}) ON CONFLICT DO NOTHING`;
+
+      report[table] = { sqliteCount: sourceRows.length, migrated: 0 };
+      for (const row of sourceRows) {
+        const values = mapping.map(item => {
+          const value = row[item.source];
+          const targetType = targetColumns.get(item.target).udt_name;
+          if (value == null) return null;
+          if ((targetType === "jsonb" || targetType === "json") && typeof value === "string") {
+            try { return JSON.stringify(JSON.parse(value)); }
+            catch { throw new Error(`Invalid JSON in ${table}.${item.source}; refusing lossy migration.`); }
+          }
+          return value;
+        });
+        if (!dryRun) await pgClient.query(insertSql, values);
+        report[table].migrated++;
+      }
+    }
+
+    // 12. Reconcile each migrated table with exact row counts.
+    console.log("\n[Step 12] Running exact per-table reconciliation queries on PostgreSQL...");
+
     for (const [table, stats] of Object.entries(report)) {
       if (!dryRun) {
         const countRes = await pgClient.query(`SELECT COUNT(*)::int AS count FROM ${table}`);
         stats.postgresCount = countRes.rows[0]?.count || 0;
-        stats.verified = stats.postgresCount >= stats.sqliteCount;
+        stats.verified = stats.postgresCount === stats.sqliteCount;
       } else {
         stats.postgresCount = "dry-run";
         stats.verified = true;
@@ -361,7 +419,7 @@ export async function migrateSqliteToPostgres({
 
     const allVerified = Object.values(report).every(r => r.verified);
     if (!allVerified) {
-      throw new Error("Reconciliation failed: Some tables did not transfer all records.");
+      throw new Error("Exact reconciliation failed: SQLite and PostgreSQL row counts differ for one or more tables.");
     }
 
     console.log("All tables reconciled and verified successfully!");
