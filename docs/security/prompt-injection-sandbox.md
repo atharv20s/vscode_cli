@@ -38,9 +38,17 @@ The runtime must independently constrain what the model can execute.
 - Docker isolation is not a substitute for a dedicated VM/microVM boundary against a hostile
   kernel/container escape. Keep Docker and the host OS patched and run the worker on a
   dedicated, least-privilege host.
-- The permission engine protects agent run_command calls. The interactive PTY is a direct
-  user terminal and must remain separately protected by authenticated session ownership.
-- Tool/file permissions and approval UI must be tested end-to-end in the deployed environment.
+- Agent shell commands, compile operations, preview-server startup, Git mutations and GitHub
+  write operations are routed through the permission engine. Unknown commands require approval.
+- Secret-bearing file reads are denied; writes to secret/configuration files and sensitive project
+  manifests require approval. Ordinary source-file edits remain available to the coding agent.
+- Approval prompts are delivered only to workspace-owner WebSocket sessions. The browser shows
+  the requested action, command or file path and sends an explicit approve/reject decision.
+- The interactive PTY remains a direct user terminal, not an LLM command channel, and is protected
+  separately by authenticated session ownership.
+- Repository-agent jobs are disposable task workspaces with Docker networking forced to none.
+  Build/test commands can run inside those sandboxes; preview servers are disabled there.
+- Tool/file permissions and approval UI must still be tested end-to-end in the deployed environment.
 - Network isolation does not prevent all covert channels through explicitly exposed preview
   endpoints or other host services; do not put credentials in the workspace.
 
