@@ -41,11 +41,12 @@ export function classifyCommandForPolicy(command, { isolatedRepoAgent = false } 
   return "ASK";
 }
 
-export function classifyFileOperationForPolicy(action, inputPath = "") {
+export function classifyFileOperationForPolicy(action, inputPath = "", { isolatedRepoAgent = false } = {}) {
   const filePath = String(inputPath || "").replace(/\\/g, "/").toLowerCase();
   const secretPath = /(^|\/)(\.env(?:$|\.)|id_rsa(?:$|\.)|id_ed25519(?:$|\.)|credentials(?:\.json)?|secrets?(?:\.[^/]*)?|service-account(?:\.json)?|firebase-adminsdk[^/]*|\.npmrc|\.pypirc|\.netrc|kubeconfig)(?:$|\/)/i.test(filePath) ||
     /\.(pem|key|p8|p12|pfx|jks|tfstate)$/i.test(filePath);
   if (action === "read" && secretPath) return "DENY";
+  if (isolatedRepoAgent) return secretPath ? "DENY" : "ALLOW";
   if (action === "delete" || action === "delete_file") return "ASK";
   const sensitiveProjectFile = /(^|\/)\.github\/workflows\//i.test(filePath) ||
     /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|dockerfile|docker-compose[^/]*|\.env(?:$|\.)|\.npmrc)$/i.test(filePath) ||
@@ -62,9 +63,13 @@ class PermissionEngine {
   }
 
   async checkPermission({ resource, action, payload = {}, sessionId = null, turnId = null, workspaceId = "default", timeout = 60000 }) {
-    const decision = this._evaluatePolicy(resource, action, payload);
+    const policyPayload = {
+      ...payload,
+      isolatedRepoAgent: payload.isolatedRepoAgent === true || String(workspaceId || "").startsWith("repo-agent-"),
+    };
+    const decision = this._evaluatePolicy(resource, action, policyPayload);
     if (decision === "DENY") {
-      logger.warn(`PermissionEngine: DENIED ${resource}.${action}`, { workspaceId, command: payload.command });
+      logger.warn(`PermissionEngine: DENIED ${resource}.${action}`, { workspaceId, command: policyPayload.command });
       return { granted: false, decision: "DENY", reason: `Operation blocked by security policy: ${resource}.${action}` };
     }
     if (decision === "ALLOW") {
@@ -75,7 +80,7 @@ class PermissionEngine {
     const permissionId = `perm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     logger.info(`PermissionEngine: Requesting approval [${permissionId}] for ${resource}.${action}`);
     eventBus.publish(EVENT_TOPICS.PERMISSION_REQUESTED, {
-      permissionId, resource, action, payload, expiresAt: Date.now() + timeout,
+      permissionId, resource, action, payload: policyPayload, expiresAt: Date.now() + timeout,
     }, { workspaceId, sessionId, turnId, source: "permission", actor: "system" });
 
     return new Promise(resolve => {
@@ -113,13 +118,14 @@ class PermissionEngine {
 
   _evaluatePolicy(resource, action, payload) {
     if (resource === "command" || action === "run_command" || action === "execute") return classifyCommandForPolicy(payload.command, { isolatedRepoAgent: payload.isolatedRepoAgent === true });
-    if (resource === "file") return classifyFileOperationForPolicy(action, payload.path);\n    if (resource === "git") {
+    if (resource === "file") return classifyFileOperationForPolicy(action, payload.path, { isolatedRepoAgent: payload.isolatedRepoAgent === true });\n    if (resource === "git") {
       if (action === "force-push") return "DENY";
+      if (payload.isolatedRepoAgent) return ["push", "pull", "clone"].includes(action) ? "DENY" : "ALLOW";
       if (["push", "commit", "pull", "clone", "branch-create", "branch-delete", "branch-switch"].includes(action)) return "ASK";
       return "ALLOW";
     }
     if (resource === "github") {
-      if (action === "force-push") return "DENY";
+      if (action === "force-push" || payload.isolatedRepoAgent) return "DENY";
       if (["push", "create_pr", "create_repo", "create_issue"].includes(action)) return "ASK";
       return "ALLOW";
     }
