@@ -20,7 +20,7 @@ function getSslConfig(connectionString) {
     connectionString.includes("supabase.co") ||
     connectionString.includes("ssl=true")
   ) {
-    return { rejectUnauthorized: false };
+    return { rejectUnauthorized: true };
   }
   return false;
 }
