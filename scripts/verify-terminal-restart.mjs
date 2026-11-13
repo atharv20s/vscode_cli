@@ -14,7 +14,9 @@
 import crypto from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import WebSocket from "ws";
+import { createRequire } from "node:module";
+const require = createRequire(new URL("../server/package.json", import.meta.url));
+const WebSocket = require("ws");
 import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "../server/src/config/env.js";
