@@ -91,6 +91,33 @@ export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, 
             cols: terminal?.cols || 100,
             rows: terminal?.rows || 28,
           });
+        } else if (packet.type === "permission.requested") {
+          const permissionId = payload.permissionId;
+          const details = payload.payload || {};
+          if (typeof permissionId === "string" && permissionId) {
+            const expired = Number(payload.expiresAt) > 0 && Number(payload.expiresAt) <= Date.now();
+            const command = typeof details.command === "string" ? details.command.slice(0, 3000) : "";
+            const summary = [
+              "ATH IDE approval required",
+              "",
+              "Action: " + String(payload.resource || "operation") + "." + String(payload.action || "execute"),
+              command ? "Command:\n" + command : "",
+              details.path ? "File path: " + String(details.path) : "",
+              details.working_dir ? "Working directory: " + String(details.working_dir) : "",
+              "",
+              "Build, install and test commands may execute workspace/dependency scripts.",
+              "Approve only when you recognize and trust this exact operation.",
+            ].filter(Boolean).join("\n");
+            const granted = !expired && window.confirm(summary);
+            send("permission.resolve", {
+              permissionId,
+              granted,
+              reason: expired ? "Approval request expired." : granted ? "Approved by workspace owner." : "Rejected by workspace owner.",
+            });
+            terminal?.writeln(granted
+              ? "\r\n\x1b[33m[ATH IDE] Approved: " + String(payload.action || "operation") + "\x1b[0m"
+              : "\r\n\x1b[90m[ATH IDE] Rejected or expired: " + String(payload.action || "operation") + "\x1b[0m");
+          }
         } else if (packet.type === "terminal.output") {
           const output = payload.text ?? payload.data ?? "";
           if (typeof output === "string" && output) terminal?.write(output);
