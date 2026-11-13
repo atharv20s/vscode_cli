@@ -57,3 +57,46 @@ jobs:
           node --check scripts/verify-s3-live.mjs
           node --check scripts/verify-s3-restore-live.mjs
           node --check scripts/verify-terminal-restart.mjs
+
+  python-safety:
+    name: Python agent and safety runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile agent, client, hooks, prompts and safety modules
+        run: python -m compileall -q Agent CLIENT config hooks prompts safety tools tests
+
+      - name: Run safety and lifecycle regression tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+
+  terraform:
+    name: Terraform format and validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.5"
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive terraform
+
+      - name: Initialize providers without a remote backend
+        working-directory: terraform
+        run: terraform init -backend=false
+
+      - name: Validate infrastructure configuration
+        working-directory: terraform
+        run: terraform validate
