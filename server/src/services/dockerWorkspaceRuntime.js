@@ -10,7 +10,7 @@ import path from "path";
 import crypto from "crypto";
 import { config } from "../config/env.js";
 
-function workspaceNetworkName(workspaceId, override) {
+export function workspaceNetworkName(workspaceId, override) {
   if (override === "none" || config.dockerWorkspaceNetwork === "none") return "none";
   if (override && override !== "bridge") return override;
   // Never place separate users on Docker's shared default bridge. Each workspace
