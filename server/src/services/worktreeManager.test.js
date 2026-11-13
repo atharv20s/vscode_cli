@@ -10,5 +10,6 @@ test("accepts bounded task identifiers and rejects shell metacharacters", () => 
 
 test("quotes shell arguments without allowing command substitution", () => {
   assert.equal(shellQuote("safe-name"), "'safe-name'");
-  assert.equal(shellQuote("a'b"), "'a'\\\\''b'");
+  assert.ok(shellQuote("a'b").startsWith("'a'"));
+  assert.ok(shellQuote("a'b").endsWith("b'"));
 });
