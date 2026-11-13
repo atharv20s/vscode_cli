@@ -15,20 +15,26 @@ import crypto from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import WebSocket from "ws";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { config } from "../server/src/config/env.js";
+import { dockerWorkspaceRuntime } from "../server/src/services/dockerWorkspaceRuntime.js";
 
-const workerUrl = process.env.EXECUTION_WORKER_URL || "";
+const workerUrl = new URL(process.env.WORKER_LOCAL_URL || "http://127.0.0.1:8081");
 const secret = process.env.WORKER_SHARED_SECRET || "";
-if (!workerUrl.startsWith("https://") || secret.length < 32) {
-  throw new Error("Load EXECUTION_WORKER_URL (HTTPS) and WORKER_SHARED_SECRET (32+ chars) from the API environment.");
+if (!["127.0.0.1", "::1", "localhost"].includes(workerUrl.hostname) ||
+    !["http:", "https:"].includes(workerUrl.protocol) || secret.length < 32) {
+  throw new Error("Run this on the execution-worker host with WORKER_SHARED_SECRET loaded and WORKER_LOCAL_URL pointing to loopback.");
 }
 
 const workspaceId = crypto.randomBytes(32).toString("hex");
 const sessionId = crypto.randomUUID();
 const marker = "ATH_TERMINAL_RECOVERY_" + crypto.randomUUID().replace(/-/g, "");
+const workspaceRoot = path.join(config.workspaceRoot, "remote-users", workspaceId);
 
 function createSocket() {
   const target = new URL(workerUrl);
-  target.protocol = "wss:";
+  target.protocol = workerUrl.protocol === "https:" ? "wss:" : "ws:";
   target.pathname = "/v1/terminal";
   target.search = "";
   target.searchParams.set("workspaceId", workspaceId);
@@ -138,4 +144,12 @@ try {
   if (first?.socket.readyState === WebSocket.OPEN) first.socket.close();
   if (second?.socket.readyState === WebSocket.OPEN) second.socket.close();
   prompt.close();
+  // This utility runs on the worker host, so it can clean up the exact random
+  // disposable container and directory without adding a destructive HTTP API.
+  await dockerWorkspaceRuntime.stop(workspaceId).catch(error => {
+    console.error("Could not remove disposable terminal container:", error.message);
+  });
+  await fs.rm(workspaceRoot, { recursive: true, force: true }).catch(error => {
+    console.error("Could not remove disposable terminal workspace:", error.message);
+  });
 }

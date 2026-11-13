@@ -73,14 +73,17 @@ does not delete any existing user workspace; the separate disposable-worker
 restore drill must still clear or replace a test workspace directory and call
 the authenticated worker pull endpoint.
 
-Run `npm run runtime:verify-terminal-restart` from `server/` on the API host
-with `EXECUTION_WORKER_URL` and `WORKER_SHARED_SECRET` loaded from the API
-service environment. It creates a disposable workspace/terminal, writes a
-unique marker into tmux, pauses while an operator restarts the Node execution
-worker service, then reconnects using the same terminal UUID and verifies the
-marker is replayed. Restart only the worker service; leave Docker and the
-workspace container running. This is a manual acceptance test and does not
-test Docker daemon or VM restart.
+Run `npm run runtime:verify-terminal-restart` from `server/` on the
+execution-worker host with `WORKER_SHARED_SECRET` loaded from the worker
+service environment. It connects to the loopback worker API by default
+(`WORKER_LOCAL_URL=http://127.0.0.1:8081`), creates a disposable
+workspace/terminal, writes a unique marker into tmux, pauses while an operator
+restarts the Node execution worker service, then reconnects using the same
+terminal UUID and verifies the marker is replayed. Restart only the Node worker
+service; leave Docker and the workspace container running. The script then
+removes the exact random test container and local workspace directory. The
+small S3 snapshot is retained for audit/lifecycle expiry. This is a manual
+acceptance test and does not test Docker daemon or VM restart.
 
 Before production sign-off, run the acceptance checks in this document on a disposable user/workspace and a disposable database branch. In particular, prove a worker process restart with the Docker container left running, prove a fresh worker workspace can restore from S3, and prove two different users cannot read or mutate one another's workspaces. A VM/container restart is a different failure domain from restarting the Node worker process.
 
