@@ -12,6 +12,11 @@ from CLIENT.llm import LLMClient
 from prompts.system import get_system_prompt
 from tools import setup_tools, ToolRegistry, get_registry
 from config.settings import get_settings, load_agents_md
+from Agent.modes import AgentMode, get_mode_config, get_mode_prompt
+from hooks.lifecycle import HookManager, HookType, HookBlockedError
+from safety.validator import InputValidator
+from safety.filter import ContentFilter, FilterAction
+from prompts.system import SECURITY_BASELINE
 
 
 class Agent:
@@ -38,6 +43,9 @@ class Agent:
         max_iterations: int | None = None,
         auto_verify: bool | None = None,
         model: str | None = None,
+        mode: AgentMode | str = AgentMode.AGENT,
+        allowed_tools: list[str] | None = None,
+        hooks: HookManager | None = None,
     ):
         """Initialize the Agent.
         
@@ -56,18 +64,28 @@ class Agent:
         self.tools_enabled = tools_enabled
         self.registry: ToolRegistry | None = None
         self.current_turn: int = 0
-        self.model = model  # Store model selection
-        # Whether to automatically run verification after write/edit tools
-        self.auto_verify: bool = bool(auto_verify) if auto_verify is not None else False
+        self.model = model
+        try:
+            self.mode = mode if isinstance(mode, AgentMode) else AgentMode(str(mode).lower())
+        except ValueError:
+            self.mode = AgentMode.AGENT
+        self.mode_config = get_mode_config(self.mode)
+        self.explicit_allowed_tools = set(allowed_tools) if allowed_tools is not None else None
+        self.allowed_tool_names: set[str] = set()
+        self.hooks = hooks or HookManager()
+        self.input_validator = InputValidator(max_length=100_000)
+        self.content_filter = ContentFilter()
+        self.auto_verify: bool = (
+            bool(auto_verify) if auto_verify is not None
+            else self.mode in {AgentMode.EDIT, AgentMode.AGENT, AgentMode.DEBUG}
+        )
         
         # Use settings for max iterations if not specified
         self.max_iterations = max_iterations or self.settings.max_iterations
         
-        # Set system prompt - custom takes priority over persona
-        if system_prompt:
-            self.system_prompt = system_prompt
-        else:
-            self.system_prompt = get_system_prompt(persona)
+        # Custom personas cannot remove the shared safety baseline.
+        base_prompt = system_prompt if system_prompt else get_system_prompt(persona)
+        self.system_prompt = base_prompt + "\n\n" + SECURITY_BASELINE
 
     async def __aenter__(self) -> Agent:
         """Async context manager entry - initialize resources."""
