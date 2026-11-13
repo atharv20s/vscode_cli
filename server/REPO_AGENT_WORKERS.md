@@ -22,7 +22,7 @@ A production/multi-worker deployment requires:
 - One or more dedicated **Linux worker hosts with Docker Engine**. Each worker process runs the same code and can claim any task. It needs Git on the host, the sandbox image, and a writable local workspace root.
 - An LLM provider key available to the worker process (for example, \`OPENROUTER_API_KEY\`), because the multi-agent loop runs on the worker, not the API process.
 
-The API may be hosted separately (for example, Cloud Run). It does not need a local Docker daemon for repository tasks; the dedicated worker hosts do. The existing interactive terminal/preview APIs still have their own runtime and storage constraints documented in [WORKSPACE_RUNTIME.md](./WORKSPACE_RUNTIME.md).
+The API and dedicated repository-agent worker can run on the AWS Lightsail host; keep the worker isolated from public ingress. It does not need a local Docker daemon for repository tasks; the dedicated worker hosts do. The existing interactive terminal/preview APIs still have their own runtime and storage constraints documented in [WORKSPACE_RUNTIME.md](./WORKSPACE_RUNTIME.md).
 
 ## API process configuration
 
