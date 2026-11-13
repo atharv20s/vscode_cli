@@ -422,8 +422,8 @@ async function handleMessage(ws, msg, user) {
 
     case "file_save":
     case "file.write":
-      if (ws.workspacePermission === "view") {
-        sendMessage(ws, "error", { message: "This workspace link is read-only." });
+      if (ws.workspacePermission !== "owner") {
+        sendMessage(ws, "error", { message: "Shared collaborators must use version-checked workspace file saves." });
         break;
       }
       await handleFileSave(ws, payload);
