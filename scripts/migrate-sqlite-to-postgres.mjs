@@ -38,7 +38,7 @@ function getSslConfig(connectionString) {
     connectionString.includes("supabase.co") ||
     connectionString.includes("ssl=true")
   ) {
-    return { rejectUnauthorized: false };
+    return { rejectUnauthorized: true };
   }
   return false;
 }
@@ -67,13 +67,11 @@ export async function migrateSqliteToPostgres({
   console.log("Timestamp:", new Date().toISOString());
 
   if (!fs.existsSync(sqlitePath)) {
-    console.log(`SQLite database not found at path: ${sqlitePath}. Nothing to migrate.`);
-    return { success: true, migrated: 0 };
+    throw new Error(`SQLite source database not found at path: ${sqlitePath}. Refusing to report a skipped migration as successful.`);
   }
 
   if (!Database) {
-    console.log("better-sqlite3 is not compiled in this environment. Run data migration on the deployment host where SQLite is active.");
-    return { success: true, deferred: true };
+    throw new Error("better-sqlite3 native bindings are unavailable. Run the migration in the source database environment; no migration was performed.");
   }
 
   if (!postgresUrl) {
@@ -408,7 +406,7 @@ export async function migrateSqliteToPostgres({
         stats.verified = stats.postgresCount === stats.sqliteCount;
       } else {
         stats.postgresCount = "dry-run";
-        stats.verified = true;
+        stats.verified = null;
       }
     }
 
@@ -417,7 +415,11 @@ export async function migrateSqliteToPostgres({
     console.log("=================================================================");
     console.table(report);
 
-    const allVerified = Object.values(report).every(r => r.verified);
+    const allVerified = !dryRun && Object.values(report).every(r => r.verified === true);
+    if (dryRun) {
+      console.log("Dry run complete: no rows were migrated and no reconciliation was performed.");
+      return { success: false, dryRun: true, report };
+    }
     if (!allVerified) {
       throw new Error("Exact reconciliation failed: SQLite and PostgreSQL row counts differ for one or more tables.");
     }
