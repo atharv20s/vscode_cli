@@ -84,11 +84,16 @@ try {
     workspaceFile: filePath,
   }, null, 2));
 } finally {
-  const results = await Promise.all([
-    request(tokenA, "DELETE").then(result => ({ user: "A", status: result.status })),
-    request(tokenB, "DELETE").then(result => ({ user: "B", status: result.status })),
+  const settled = await Promise.allSettled([
+    request(tokenA, "DELETE"),
+    request(tokenB, "DELETE"),
   ]);
-  if (results.some(result => result.status !== 200 && result.status !== 404)) {
+  const results = settled.map((result, index) => ({
+    user: index === 0 ? "A" : "B",
+    status: result.status === "fulfilled" ? result.value.status : null,
+    error: result.status === "rejected" ? result.reason.message : null,
+  }));
+  if (results.some(result => result.error || (result.status !== 200 && result.status !== 404))) {
     console.error("Acceptance cleanup needs attention:", JSON.stringify(results));
   }
   if (!passed) console.error(JSON.stringify({ success: false, test: "deployed-api-concurrent-multi-user-workspace-isolation", cleanup: results }));
