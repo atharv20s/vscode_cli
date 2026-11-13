@@ -30,5 +30,5 @@ test("distinct repository agent task IDs cannot resolve to the same workspace pa
   const first = path.join(root, "task-a", "repo");
   const second = path.join(root, "task-b", "repo");
   assert.notEqual(first, second);
-  assert.equal(path.dirname(first), path.dirname(second));
+  assert.notEqual(path.dirname(first), path.dirname(second));
 });
