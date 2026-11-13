@@ -68,7 +68,7 @@ export function registerBrowserVerificationTool() {
     }
     let browser;
     try {
-      browser = await chromium.launch({ headless:true, executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, args:["--no-sandbox","--disable-dev-shm-usage"] });
+      browser = await chromium.launch({ headless:true, executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, args:["--no-sandbox","--disable-dev-shm-usage","--no-proxy-server"] });
       const page = await browser.newPage({ viewport:{width:1440,height:900} });
       // Keep redirects and subresources on the approved origin to prevent the
       // browser from becoming an SSRF bridge to metadata or private services.
