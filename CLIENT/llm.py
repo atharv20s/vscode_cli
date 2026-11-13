@@ -4,6 +4,7 @@ LLM Client for OpenRouter/OpenAI API communication with multi-model support.
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncGenerator
 from typing import Any
 from dataclasses import dataclass
