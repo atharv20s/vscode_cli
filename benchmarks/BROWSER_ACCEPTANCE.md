@@ -7,7 +7,7 @@ service account that starts the repository-agent worker:
 ```bash
 cd /opt/ath-ide/server
 npm ci
-npm run browser:install
+VISUAL_BASELINE_DIR=../benchmarks/visual-baselines npm run browser:install
 ```
 
 For a deterministic local fixture:
