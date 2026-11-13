@@ -11,9 +11,10 @@ import crypto from "crypto";
 import { config } from "../config/env.js";
 
 function workspaceNetworkName(workspaceId, override) {
-  if (override) return override;
-  const base = config.dockerWorkspaceNetwork;
-  if (!base || base === "none" || base === "bridge") return base || "none";
+  if (override === "none" || config.dockerWorkspaceNetwork === "none") return "none";
+  if (override && override !== "bridge") return override;
+  // Never place separate users on Docker's shared default bridge. Each workspace
+  // gets its own internal network, even when the legacy config says "bridge".
   const digest = crypto.createHash("sha256").update(String(workspaceId)).digest("hex").slice(0, 16);
   return `athide-net-${digest}`;
 }
