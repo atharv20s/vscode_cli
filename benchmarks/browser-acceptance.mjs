@@ -22,7 +22,9 @@ if (!allowed.includes(parsed.hostname) && !matchesConfiguredPreview) {
 }
 if (parsed.username || parsed.password) throw new Error("APP_URL must not embed credentials.");
 const baselineDir = path.resolve(process.env.VISUAL_BASELINE_DIR || "benchmarks/visual-baselines");
-const baselinePath = path.join(baselineDir, (process.env.VISUAL_BASELINE_NAME || "default") + ".png");
+const baselineName = process.env.VISUAL_BASELINE_NAME || "default";
+if (!/^[a-zA-Z0-9_-]{1,64}$/.test(baselineName)) throw new Error("VISUAL_BASELINE_NAME must be a simple filename.");
+const baselinePath = path.join(baselineDir, baselineName + ".png");
 const updateBaseline = process.env.UPDATE_VISUAL_BASELINES === "1";
 const threshold = Math.max(0, Math.min(1, Number(process.env.VISUAL_DIFF_THRESHOLD || 0.01)));
 const { chromium } = require("playwright");
