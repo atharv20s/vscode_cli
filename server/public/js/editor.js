@@ -303,19 +303,27 @@ class EditorManager {
       tabEl.classList.remove("tab-streaming");
     }
 
-    // Auto save to workspace on backend
+    // Auto save to workspace on backend with optimistic concurrency.
     try {
-      await fetch("/api/workspace/file", {
+      const tab = this.openTabs.get(filePath);
+      const saveResponse = await fetch("/api/workspace/file", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
+          ...(tab?.version ? { "If-Match": `"${tab.version}"` } : { "If-None-Match": "*" }),
         },
         body: JSON.stringify({
           path: filePath,
-          content: finalContent || this.openTabs.get(filePath)?.content || "",
+          content: finalContent || tab?.content || "",
         }),
       });
+      if (saveResponse.ok) {
+        const saved = await saveResponse.json().catch(() => ({}));
+        if (tab && saved.version) tab.version = saved.version;
+      } else if (saveResponse.status === 409 && window.app?.logTerminal) {
+        window.app.logTerminal(`Could not save ${filePath}: another collaborator changed it. Reload before retrying.`, "warning");
+      }
     } catch {}
 
     this.saveStateToCache();
