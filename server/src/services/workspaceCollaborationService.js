@@ -39,7 +39,7 @@ export async function resolveWorkspaceShare(token) {
     row = result.rows[0];
   } else {
     row = getDatabase().prepare(
-      "SELECT id,owner_user_id,workspace_id,permission,expires_at FROM workspace_shares WHERE token_hash=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now'))"
+      "SELECT id,owner_user_id,workspace_id,permission,expires_at FROM workspace_shares WHERE token_hash=? AND revoked_at IS NULL AND (expires_at IS NULL OR julianday(expires_at) > julianday('now'))"
     ).get(tokenHash);
   }
   return row ? { id: row.id, ownerUserId: row.owner_user_id, workspaceId: row.workspace_id, permission: row.permission, expiresAt: row.expires_at } : null;
