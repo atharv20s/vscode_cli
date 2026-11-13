@@ -225,6 +225,10 @@ export function initWebSocketServer(httpServer) {
     const shareProtocol = offeredProtocols.find(value => value.startsWith("ath-share."));
     const shareToken = shareProtocol ? shareProtocol.slice("ath-share.".length) : null;
     const share = shareToken ? await resolveWorkspaceShare(shareToken).catch(() => null) : null;
+    if (shareProtocol && !share) {
+      ws.close(4003, "Invalid or expired workspace collaboration link");
+      return;
+    }
     let user = null;
 
     if (token) {
