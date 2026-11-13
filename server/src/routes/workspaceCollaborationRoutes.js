@@ -1,15 +1,23 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
 import { createWorkspaceShare, listWorkspaceShares, revokeWorkspaceShare } from "../services/workspaceCollaborationService.js";
+import { listWorkspaceSessions } from "../services/workspaceSessionService.js";
 
 const router = Router();
 router.use(requireAuth);
 
 router.post("/shares", async (req, res) => {
   try {
+    const workspaceId = req.body?.workspaceId || "default";
+    if (workspaceId !== "default") {
+      const sessions = await listWorkspaceSessions(req.user.id);
+      if (!sessions.some(session => session.id === workspaceId)) {
+        return res.status(404).json({ error: "WorkspaceNotFound", message: "Workspace does not exist for this account." });
+      }
+    }
     const share = await createWorkspaceShare({
       ownerUserId: req.user.id,
-      workspaceId: req.body?.workspaceId || "default",
+      workspaceId,
       permission: req.body?.permission || "edit",
       expiresInHours: req.body?.expiresInHours ?? 168,
     });
