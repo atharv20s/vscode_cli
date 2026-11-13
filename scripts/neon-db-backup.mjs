@@ -13,7 +13,6 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
