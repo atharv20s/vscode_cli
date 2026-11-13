@@ -22,7 +22,6 @@ provider "google-beta" {
   region  = var.region
 }
 
-# Core GCP APIs to enable automatically
 locals {
   services = [
     "run.googleapis.com",
@@ -31,6 +30,9 @@ locals {
     "compute.googleapis.com",
     "dns.googleapis.com",
     "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "secretmanager.googleapis.com",
+    "sts.googleapis.com",
     "cloudresourcemanager.googleapis.com",
   ]
 }
