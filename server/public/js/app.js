@@ -316,6 +316,38 @@ class App {
       });
     }
 
+    const manageSharesBtn = document.getElementById("btn-manage-workspace-shares");
+    if (manageSharesBtn) {
+      manageSharesBtn.addEventListener("click", async () => {
+        manageSharesBtn.disabled = true;
+        try {
+          const response = await fetch("/api/workspace/collaboration/shares", {
+            headers: { Authorization: `Bearer ${this.token}` },
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.message || "Unable to load collaboration links.");
+          const active = (data.shares || []).filter(share => !share.revokedAt);
+          if (!active.length) {
+            alert("There are no active collaboration links for this workspace.");
+            return;
+          }
+          const summary = active.map(share => share.id + " · " + share.permission + " · expires " + (share.expiresAt || "never")).join("\\n");
+          const selected = prompt("Active invites (copy an ID to revoke it):\\n" + summary + "\\n\\nEnter the invite ID to revoke:");
+          if (!selected) return;
+          const revoke = await fetch("/api/workspace/collaboration/shares/" + encodeURIComponent(selected.trim()), {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${this.token}` },
+          });
+          if (!revoke.ok) throw new Error("Invite not found or already revoked.");
+          this.logTerminal("Revoked workspace collaboration invite.", "success");
+        } catch (error) {
+          this.logTerminal("Invite management failed: " + error.message, "error");
+        } finally {
+          manageSharesBtn.disabled = false;
+        }
+      });
+    }
+
     // Before Unload Session Guard & Cloud Sync Warning
     window.addEventListener("beforeunload", (e) => {
       const isGuest = !this.currentUser || this.currentUser.isGuest;
