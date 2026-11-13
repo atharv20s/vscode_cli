@@ -5,7 +5,9 @@ import { dockerWorkspaceRuntime } from "./dockerWorkspaceRuntime.js";
 import { buildRepositoryContext, formatRepositoryContext } from "./repoContextEngine.js";
 import { appendRepoTaskEvent, saveRepoContextRound, listRepoContextRounds } from "../db/repoAgentStore.js";
 import { config } from "../config/env.js";
-import { executeTaskGraph } from "./taskGraph.js";\nimport { worktreeManager } from "./worktreeManager.js";\nimport { createScopedWorkspaceService } from "./workspaceService.js";
+import { executeTaskGraph } from "./taskGraph.js";
+import { worktreeManager } from "./worktreeManager.js";
+import { createScopedWorkspaceService } from "./workspaceService.js";
 
 const PLANNER_TOOLS = ["read_file","list_files"];
 const CODER_TOOLS = ["read_file","write_file","edit_file","list_files","run_command"];
