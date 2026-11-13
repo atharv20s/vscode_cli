@@ -118,7 +118,8 @@ class PermissionEngine {
 
   _evaluatePolicy(resource, action, payload) {
     if (resource === "command" || action === "run_command" || action === "execute") return classifyCommandForPolicy(payload.command, { isolatedRepoAgent: payload.isolatedRepoAgent === true });
-    if (resource === "file") return classifyFileOperationForPolicy(action, payload.path, { isolatedRepoAgent: payload.isolatedRepoAgent === true });\n    if (resource === "git") {
+    if (resource === "file") return classifyFileOperationForPolicy(action, payload.path, { isolatedRepoAgent: payload.isolatedRepoAgent === true });
+    if (resource === "git") {
       if (action === "force-push") return "DENY";
       if (payload.isolatedRepoAgent) return ["push", "pull", "clone"].includes(action) ? "DENY" : "ALLOW";
       if (["push", "commit", "pull", "clone", "branch-create", "branch-delete", "branch-switch"].includes(action)) return "ASK";
