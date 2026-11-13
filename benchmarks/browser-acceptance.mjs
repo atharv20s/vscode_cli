@@ -44,7 +44,8 @@ try {
   const response = await page.goto(parsed.toString(),{waitUntil:"domcontentloaded",timeout:30000});
   if (!response || response.status() >= 400) throw new Error("Application returned HTTP " + (response?.status() ?? "no response"));
   if (new URL(page.url()).origin !== parsed.origin) throw new Error("Application redirected outside the approved origin.");
-  await page.waitForTimeout(500);\n  const title = await page.title();
+  await page.waitForTimeout(500);
+  const title = await page.title();
   if (!title.trim()) throw new Error("Application title is empty.");
   for (const selector of (process.env.REQUIRED_SELECTORS || "").split(",").map(x=>x.trim()).filter(Boolean)) {
     if (!await page.locator(selector).count()) throw new Error("Required selector not found: " + selector);
