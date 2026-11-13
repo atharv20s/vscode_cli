@@ -36,7 +36,7 @@ git merge-base --is-ancestor "$PREVIOUS_SHA" "$TARGET_SHA" || {
 health_check() {
   local api_json worker_json
   api_json="$(curl --fail --silent --show-error --max-time 15 "$API_HEALTH_URL")"
-  node -e 'const x=JSON.parse(process.argv[1]); if(x.status!=="ok" || x.database?.connected!==true) process.exit(1)' "$api_json"
+  node -e 'const x=JSON.parse(process.argv[1]); if(x.status!=="ok" || x.database?.connected!==true || x.database?.dialect!=="postgres") process.exit(1)' "$api_json"
   worker_json="$(curl --fail --silent --show-error --max-time 10 "$WORKER_HEALTH_URL")"
   node -e 'const x=JSON.parse(process.argv[1]); if(x.status!=="ok" || x.role!=="execution-worker" || !x.instanceId) process.exit(1)' "$worker_json"
   systemctl is-active --quiet "$API_UNIT"
@@ -48,7 +48,7 @@ rollback() {
   local failure_code=$?
   trap - ERR
   echo "Deployment failed; rolling back to $PREVIOUS_SHA" >&2
-  git checkout --detach "$PREVIOUS_SHA" || true
+  git reset --hard "$PREVIOUS_SHA" || true
   npm ci --prefix server || true
   npm run build --prefix server || true
   systemctl restart "$API_UNIT" "$EXECUTION_UNIT" "$REPO_AGENT_UNIT" || true
@@ -57,7 +57,7 @@ rollback() {
 }
 trap rollback ERR
 
-git checkout --detach "$TARGET_SHA"
+git merge --ff-only "$TARGET_SHA"
 npm ci --prefix server
 npm run build --prefix server
 systemctl restart "$API_UNIT" "$EXECUTION_UNIT" "$REPO_AGENT_UNIT"
