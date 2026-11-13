@@ -12,6 +12,15 @@ import { runMigrations } from "./migrator.js";
 
 const { Pool } = pg;
 
+export function createPostgresIdentity(connectionString, databaseName, databaseRole) {
+  let normalizedHost = "";
+  try {
+    normalizedHost = new URL(connectionString).hostname.toLowerCase().replace(/-pooler(?=\\.)/, "");
+  } catch {}
+  const material = [normalizedHost, databaseName || "", databaseRole || ""].join("/");
+  return crypto.createHash("sha256").update(material).digest("hex").slice(0, 24);
+}
+
 let pool = null;
 let poolIdentity = null;
 
