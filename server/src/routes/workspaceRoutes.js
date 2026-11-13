@@ -52,10 +52,17 @@ router.use(requireAuth, async (req, res, next) => {
         return res.status(403).json({ error: "WorkspaceShareScopeMismatch" });
       }
       req.workspaceAccess = share;
-      if (req.method !== "GET" && share.permission !== "edit") {
-        return res.status(403).json({ error: "WorkspaceReadOnly", message: "This collaboration link has read-only access." });
+      if (req.method !== "GET") {
+        if (share.permission !== "edit") {
+          return res.status(403).json({ error: "WorkspaceReadOnly", message: "This collaboration link has read-only access." });
+        }
+        if (req.method !== "POST" || req.path !== "/file") {
+          return res.status(403).json({ error: "WorkspaceOperationForbidden", message: "Collaborators may create or update files, but only the owner can move, delete, create folders or execute commands." });
+        }
+        if (!req.get("If-Match") && req.get("If-None-Match") !== "*") {
+          return res.status(428).json({ error: "WorkspaceVersionRequired", message: "Collaborative file writes require If-Match or If-None-Match: *." });
+        }
       }
-      if (req.path === "/exec") return res.status(403).json({ error: "WorkspaceExecutionForbidden", message: "Shared collaborators cannot execute workspace commands." });
       return next();
     } catch (error) {
       return res.status(503).json({ error: "WorkspaceShareUnavailable", message: "Workspace collaboration storage is unavailable." });
