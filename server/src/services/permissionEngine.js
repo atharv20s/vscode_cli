@@ -107,6 +107,7 @@ class PermissionEngine {
   }
 
   resolvePermission(permissionId, granted, reason = "", workspaceId = null) {
+    if (typeof granted !== "boolean" || typeof permissionId !== "string" || !permissionId) return false;
     const pending = this.pendingRequests.get(permissionId);
     if (pending && pending.workspaceId === workspaceId) {
       pending.resolve(granted, reason);
