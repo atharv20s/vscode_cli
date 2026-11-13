@@ -1,11 +1,14 @@
-# Google Cloud Run v2 Service — Scalable Serverless Multi-Instance Deployment
+# Cloud Run application service. The runtime receives secrets through Secret
+# Manager references rather than plaintext Terraform variables.
 resource "google_cloud_run_v2_service" "ath_ide_service" {
   provider = google
   name     = var.app_name
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = var.allow_public_access ? "INGRESS_TRAFFIC_ALL" : "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
+    service_account = google_service_account.runtime.email
+
     scaling {
       min_instance_count = 1
       max_instance_count = 10
@@ -33,21 +36,18 @@ resource "google_cloud_run_v2_service" "ath_ide_service" {
         name  = "PORT"
         value = "3001"
       }
-      env {
-        name  = "DATABASE_URL"
-        value = var.database_url
-      }
-      env {
-        name  = "REDIS_URL"
-        value = var.redis_url
-      }
-      env {
-        name  = "OPENROUTER_API_KEY"
-        value = var.openrouter_api_key
-      }
-      env {
-        name  = "JWT_SECRET"
-        value = var.jwt_secret
+
+      dynamic "env" {
+        for_each = google_secret_manager_secret.application
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = env.value.secret_id
+              version = "latest"
+            }
+          }
+        }
       }
 
       startup_probe {
@@ -75,12 +75,14 @@ resource "google_cloud_run_v2_service" "ath_ide_service" {
 
   depends_on = [
     google_project_service.enabled_apis,
-    google_artifact_registry_repository.docker_repo
+    google_artifact_registry_repository.docker_repo,
+    google_secret_manager_secret_iam_member.runtime_accessor,
   ]
 }
 
-# Allow unauthenticated public access so anyone can view the live site
+# Public invocation is opt-in; Cloud Run IAM and ingress remain private by default.
 resource "google_cloud_run_v2_service_iam_member" "public_access" {
+  count    = var.allow_public_access ? 1 : 0
   provider = google
   project  = var.project_id
   location = var.region
