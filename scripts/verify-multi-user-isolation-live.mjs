@@ -9,10 +9,10 @@
  * and removes both test files.
  */
 import crypto from "node:crypto";
-import "../server/src/config/env.js";
+import { config } from "../server/src/config/env.js";
 
-const baseUrl = new URL(process.env.WORKSPACE_API_URL || "");
-const jwtSecret = process.env.JWT_SECRET || "";
+const baseUrl = new URL(process.env.WORKSPACE_API_URL || config.publicUrl || "");
+const jwtSecret = process.env.JWT_SECRET || config.jwtSecret || "";
 if (!["https:", "http:"].includes(baseUrl.protocol)) {
   throw new Error("WORKSPACE_API_URL must be a valid HTTPS URL (HTTP is permitted only for local testing).");
 }
