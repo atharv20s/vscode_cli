@@ -19,6 +19,7 @@ RUN apk add --no-cache git bash chromium nss freetype harfbuzz ca-certificates t
 
 ENV NODE_ENV=production
 ENV PORT=3001
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Copy built node_modules and code
 COPY --from=builder /app/node_modules ./node_modules
