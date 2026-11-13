@@ -86,7 +86,8 @@ export function registerVerificationTools() {
         allowedTools: null,
       });
     }
-    const checksPassed = checks.length === 0 ? Boolean(args.browser_url) : results.length === checks.length && results.every(item => item.success);\n    const verified = checksPassed &&
+    const checksPassed = checks.length === 0 ? Boolean(args.browser_url) : results.length === checks.length && results.every(item => item.success);
+    const verified = checksPassed &&
       (!args.browser_url || browserResult?.success === true);
     const output = results.map(item => (item.success ? "PASS " : "FAIL ") + item.name + ": " + item.command + "\n" + item.output).join("\n\n");
     return {
