@@ -45,7 +45,8 @@ function parseDatabaseUrl(value, variableName) {
     PGUSER: decodeURIComponent(url.username),
     PGPASSWORD: decodeURIComponent(url.password),
     PGDATABASE: decodeURIComponent(url.pathname.slice(1)),
-    PGSSLMODE: "verify-full",
+    PGSSLMODE: process.env.PGSSLMODE || "verify-full",
+    PGSSLROOTCERT: process.env.PGSSLROOTCERT || "system",
   };
   const channelBinding = url.searchParams.get("channel_binding");
   if (channelBinding) env.PGCHANNELBINDING = channelBinding;

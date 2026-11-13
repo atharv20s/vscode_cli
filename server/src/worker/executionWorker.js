@@ -121,7 +121,7 @@ function workspaceRootFor(id) {
 async function readManagedManifest(root) {
   try {
     const parsed = JSON.parse(await fs.promises.readFile(path.join(root, ".ath-managed-files.json"), "utf8"));
-    return Array.isArray(parsed) ? parsed.filter(safeRelativePath) : [];
+    return Array.isArray(parsed) ? parsed.filter(safeRelativeWorkspacePath) : [];
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
     return [];
@@ -720,6 +720,8 @@ server.on("upgrade", async (req, socket, head) => {
 
   try {
     const root = workspaceRootFor(workspaceId);
+    await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
+    await restoreWorkspaceSnapshotIfEmpty(workspaceId, root);
     await dockerWorkspaceRuntime.ensureContainer(workspaceId, root);
     terminalWss.handleUpgrade(req, socket, head, ws => {
       attachPersistentTerminal(ws, { workspaceId, sessionId, cols, rows })
