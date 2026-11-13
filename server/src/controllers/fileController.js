@@ -6,7 +6,11 @@ import { getWorkspaceService } from "../services/workspaceService.js";
 import { config } from "../config/env.js";
 import { pullWorkspaceFromRemote, syncWorkspaceOnRemote } from "../services/remoteExecutionWorker.js";
 
-function workspaceForRequest(req) {\n  return getWorkspaceService(req.workspaceAccess?.ownerUserId || req.user.id, req.workspaceAccess?.workspaceId || req.get("X-Workspace-Id") || "default");\n}\n\nasync function pullRuntimeChanges(workspaceService) {
+function workspaceForRequest(req) {
+  return getWorkspaceService(req.workspaceAccess?.ownerUserId || req.user.id, req.workspaceAccess?.workspaceId || req.get("X-Workspace-Id") || "default");
+}
+
+async function pullRuntimeChanges(workspaceService) {
   if (config.executionRuntime !== "remote") return;
   await pullWorkspaceFromRemote({ workspaceId: workspaceService.workspaceId, workspaceDir: workspaceService.workspaceRoot });
 }
@@ -46,7 +50,7 @@ export async function listFiles(req, res) {
  * GET /api/workspace/file?path=src/main.js
  */
 export async function readFile(req, res) {
-  const workspaceService = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  const workspaceService = workspaceForRequest(req);
   const filePath = req.query.path;
   if (!filePath) {
     return res.status(400).json({ error: "BadRequest", message: "Missing 'path' query parameter" });
