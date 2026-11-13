@@ -5,10 +5,19 @@ function normalizeUrl(value) {
   let url;
   try { url = new URL(String(value || "")); } catch { throw new Error("A valid preview URL is required."); }
   if (!["http:","https:"].includes(url.protocol)) throw new Error("Only HTTP(S) preview URLs are supported.");
+  if (url.username || url.password) throw new Error("Preview URLs must not embed credentials.");
   const host = url.hostname.toLowerCase();
   const local = host === "localhost" || host === "127.0.0.1" || host === "::1";
-  if (!local && !/^(?:[a-z0-9-]+\.)*(?:preview|previews|localhost)$/i.test(host)) {
-    throw new Error("Browser verification is restricted to localhost or the configured preview hostname.");
+  let configured = false;
+  if (config.previewPublicUrl) {
+    try {
+      const preview = new URL(config.previewPublicUrl);
+      configured = preview.host.toLowerCase() === url.host.toLowerCase();
+    } catch {}
+  }
+  const previewSubdomain = /^(?:[a-z0-9-]+\\.)*(?:preview|previews)$/i.test(host);
+  if (!local && !configured && !previewSubdomain) {
+    throw new Error("Browser verification is restricted to localhost or the exact PREVIEW_PUBLIC_URL host.");
   }
   return url;
 }
