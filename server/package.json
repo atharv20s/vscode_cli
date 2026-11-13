@@ -21,7 +21,8 @@
     "db:status": "node src/db/migrator.js --status",
     "db:migrate:sqlite": "node ../scripts/migrate-sqlite-to-postgres.mjs",
     "db:backup": "node ../scripts/neon-db-backup.mjs backup",
-    "db:restore": "node ../scripts/neon-db-backup.mjs restore"
+    "db:restore": "node ../scripts/neon-db-backup.mjs restore",
+    "storage:verify-s3": "node ../scripts/verify-s3-live.mjs"
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0",
