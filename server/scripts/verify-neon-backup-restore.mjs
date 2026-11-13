@@ -54,8 +54,11 @@ async function inspectIdentity(client, url) {
     "SELECT current_database() AS database_name, current_user AS database_role"
   );
   const row = result.rows[0];
+  const host = new URL(url).hostname.toLowerCase();
+  const normalizedHost = host.replace(/-pooler(?=\\.)/, "");
   return {
-    host: new URL(url).hostname,
+    host,
+    normalizedHost,
     database: row.database_name,
     role: row.database_role,
     fingerprint: createPostgresIdentity(url, row.database_name, row.database_role),
@@ -100,8 +103,9 @@ function runBackup(operation, filePath, env) {
 
 const sourceIdentity = await withClient(sourceUrl, client => inspectIdentity(client, sourceUrl));
 const targetIdentity = await withClient(targetUrl, client => inspectIdentity(client, targetUrl));
-if (sourceIdentity.fingerprint === targetIdentity.fingerprint) {
-  throw new Error("Refusing restore: source and target resolve to the same database identity.");
+if (sourceIdentity.normalizedHost === targetIdentity.normalizedHost &&
+    sourceIdentity.database === targetIdentity.database) {
+  throw new Error("Refusing restore: source and target resolve to the same Neon endpoint and database, even if credentials/roles differ.");
 }
 
 const targetBefore = await withClient(targetUrl, async client => {
