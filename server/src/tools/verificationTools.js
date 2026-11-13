@@ -16,7 +16,7 @@ export function detectVerificationCommands(manifest, files = []) {
   if (scripts.lint) commands.push({ name: "lint", command: run("lint") });
   if (scripts.test) commands.push({
     name: "test",
-    command: manager === "npm" ? "CI=true npm test -- --runInBand" : manager + " test",
+    command: manager === "npm" ? "CI=true npm test" : manager + " test",
   });
   if (scripts.build) commands.push({ name: "build", command: run("build") });
   return commands.slice(0, 4);
@@ -44,8 +44,8 @@ export function registerVerificationTools() {
     const workspace = getWorkspaceServiceForContext(ctx);
     const manifestFile = await workspace.readFile("package.json").catch(() => null);
     const manifest = manifestFile?.content ? parseJson(manifestFile.content) : null;
-    const tree = await workspace.listFiles("").catch(() => []);
-    const paths = Array.isArray(tree) ? tree.map(item => typeof item === "string" ? item : item.path || item.name).filter(Boolean) : [];
+    const tree = await workspace.listDirectory(".").catch(() => ({ entries: [] }));
+    const paths = (tree.entries || []).map(item => item.name).filter(Boolean);
     let checks = detectVerificationCommands(manifest, paths);
     if (args.checks?.length) checks = checks.filter(item => args.checks.includes(item.name));
     if (!checks.length) return {
