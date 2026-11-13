@@ -53,3 +53,4 @@ jobs:
           node --check scripts/verify-s3-live.mjs
           node --check scripts/verify-s3-restore-live.mjs
           node --check scripts/verify-terminal-restart.mjs
+          node --check scripts/verify-multi-user-isolation-live.mjs
