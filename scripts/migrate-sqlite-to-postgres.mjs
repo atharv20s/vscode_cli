@@ -95,8 +95,11 @@ export async function migrateSqliteToPostgres({
   await pgClient.connect();
 
   const report = {};
+  let transactionOpen = false;
 
   try {
+    await pgClient.query("BEGIN");
+    transactionOpen = true;
     // 4. Migrate Users
     console.log("\n[Step 4] Migrating 'users' table...");
     const users = sqlite.prepare("SELECT * FROM users").all();
@@ -365,9 +368,11 @@ export async function migrateSqliteToPostgres({
       const sourceColumns = sqlite.prepare(`PRAGMA table_info("${table}")`).all().map(column => column.name);
       const targetColumns = new Map(targetColumnsResult.rows.map(column => [column.column_name, column]));
       const aliases = { evidence_json: "evidence" };
-      const mapping = sourceColumns
-        .map(source => ({ source, target: aliases[source] || source }))
-        .filter(item => targetColumns.has(item.target));
+      const mapping = sourceColumns.map(source => ({ source, target: aliases[source] || source }));
+      const unmappedColumns = mapping.filter(item => !targetColumns.has(item.target));
+      if (unmappedColumns.length) {
+        throw new Error("SQLite table '" + table + "' has columns missing from PostgreSQL: " + unmappedColumns.map(item => item.source).join(", ") + ".");
+      }
       if (!mapping.length) {
         throw new Error(`No compatible columns found for SQLite table '${table}'.`);
       }
@@ -435,6 +440,8 @@ export async function migrateSqliteToPostgres({
 
     const allVerified = !dryRun && Object.values(report).every(r => r.verified === true);
     if (dryRun) {
+      await pgClient.query("ROLLBACK");
+      transactionOpen = false;
       console.log("Dry run complete: no rows were migrated and no reconciliation was performed.");
       return { success: false, dryRun: true, report };
     }
@@ -443,8 +450,11 @@ export async function migrateSqliteToPostgres({
     }
 
     console.log("All tables reconciled and verified successfully!");
+    await pgClient.query("COMMIT");
+    transactionOpen = false;
     return { success: true, report };
   } finally {
+    if (transactionOpen) await pgClient.query("ROLLBACK").catch(() => {});
     sqlite.close();
     await pgClient.end().catch(() => {});
   }
