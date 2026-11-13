@@ -116,7 +116,13 @@ export async function executeTaskGraphDynamic(input, executor, options = {}) {
 
     const { task, result } = settled.value;
     if (typeof options.afterTask === "function") {
-      await options.afterTask(task, result, Object.fromEntries(results));
+      try {
+        await options.afterTask(task, result, Object.fromEntries(results));
+      } catch (error) {
+        // Do not leave sibling agents running after an integration failure.
+        await Promise.allSettled([...running.values()]);
+        throw error;
+      }
     }
     results.set(task.id, result);
     completedOrder.push(task.id);
