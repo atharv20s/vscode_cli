@@ -11,6 +11,8 @@ import crypto from "crypto";
 import { config } from "../config/env.js";
 
 export function workspaceNetworkName(workspaceId, override) {
+  // Disposable repository-agent tasks must never receive network access.
+  if (String(workspaceId || "").startsWith("repo-agent-")) return "none";
   // "none" is the only accepted override. Named network overrides are deliberately
   // ignored so a caller cannot accidentally put multiple users on one shared network.
   if (override === "none" || config.dockerWorkspaceNetwork === "none") return "none";
