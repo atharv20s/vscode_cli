@@ -5,6 +5,7 @@
  * Writes one small, uniquely keyed test snapshot and verifies its checksum on read.
  */
 import crypto from "node:crypto";
+import "../server/src/config/env.js";
 import {
   getWorkspaceSnapshot,
   isWorkspaceObjectStoreConfigured,
