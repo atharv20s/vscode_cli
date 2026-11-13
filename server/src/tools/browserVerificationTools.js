@@ -1,4 +1,5 @@
 import { registerTool } from "./index.js";
+import { config } from "../config/env.js";
 
 function normalizeUrl(value) {
   let url;
@@ -7,7 +8,7 @@ function normalizeUrl(value) {
   const host = url.hostname.toLowerCase();
   const local = host === "localhost" || host === "127.0.0.1" || host === "::1";
   if (!local && !/^(?:[a-z0-9-]+\.)*(?:preview|previews|localhost)$/i.test(host)) {
-    throw new Error("Browser verification is restricted to localhost or configured preview hostnames.");
+    throw new Error("Browser verification is restricted to localhost or the configured preview hostname.");
   }
   return url;
 }
