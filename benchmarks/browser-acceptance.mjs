@@ -26,7 +26,13 @@ const threshold = Math.max(0, Math.min(1, Number(process.env.VISUAL_DIFF_THRESHO
 const { chromium } = require("playwright");
 const browser = await chromium.launch({headless:true,args:["--no-sandbox","--disable-dev-shm-usage"]});
 const page = await browser.newPage({viewport:{width:1440,height:900},deviceScaleFactor:1});
-const errors = [];\nawait page.route("**/*", route => {\n  let target;\n  try { target = new URL(route.request().url()); } catch { return route.abort(); }\n  if (target.origin !== parsed.origin && !["data:","blob:"].includes(target.protocol)) return route.abort();\n  return route.continue();\n});
+const errors = [];
+await page.route("**/*", route => {
+  let target;
+  try { target = new URL(route.request().url()); } catch { return route.abort(); }
+  if (target.origin !== parsed.origin && !["data:","blob:"].includes(target.protocol)) return route.abort();
+  return route.continue();
+});
 page.on("pageerror", error => errors.push(String(error.message || error)));
 page.on("console", message => { if (message.type()==="error") errors.push(message.text()); });
 let failed = false;
