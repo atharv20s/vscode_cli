@@ -14,12 +14,12 @@ const benchmarkPath = path.join(repoRoot, "benchmarks/browser-acceptance.mjs");
 
 test("Playwright browser acceptance and visual baseline comparison", {
   skip: process.env.CI !== "true" ? "Runs in CI where Chromium can be provisioned." : false,
-  timeout: 120000,
+  timeout: 180000,
 }, async t => {
-  const install = spawnSync("npx", ["playwright", "install", "chromium"], {
+  const install = spawnSync("npx", ["playwright", "install", "--with-deps", "chromium"], {
     cwd: path.join(repoRoot, "server"),
     encoding: "utf8",
-    timeout: 90000,
+    timeout: 150000,
   });
   assert.equal(install.status, 0, "Playwright Chromium installation failed: " + (install.stderr || install.stdout));
 
