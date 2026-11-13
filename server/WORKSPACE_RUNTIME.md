@@ -78,10 +78,13 @@ execution-worker host with `WORKER_SHARED_SECRET` loaded from the worker
 service environment. It connects to the loopback worker API by default
 (`WORKER_LOCAL_URL=http://127.0.0.1:8081`), creates a disposable
 workspace/terminal, writes a unique marker into tmux, pauses while an operator
-restarts the Node execution worker service, then reconnects using the same
-terminal UUID and verifies the marker is replayed. Restart only the Node worker
-service; leave Docker and the workspace container running. The script then
-removes the exact random test container and local workspace directory. The
+restarts the systemd unit that runs `server/src/worker/executionWorker.js`
+(not the separate repository-agent worker unless it uses that entrypoint),
+then reconnects using the same terminal UUID and verifies the marker is
+replayed. Restart only the execution-worker Node process; leave Docker and the
+workspace container running, and confirm its `/healthz` endpoint is healthy
+before continuing. The script then removes the exact random test container
+and local workspace directory. The
 small S3 snapshot is retained for audit/lifecycle expiry. This is a manual
 acceptance test and does not test Docker daemon or VM restart.
 
