@@ -22,6 +22,7 @@
     "db:migrate:sqlite": "node ../scripts/migrate-sqlite-to-postgres.mjs",
     "db:backup": "node ../scripts/neon-db-backup.mjs backup",
     "db:restore": "node ../scripts/neon-db-backup.mjs restore",
+    "db:audit-migration-counts": "node scripts/audit-neon-migration-counts.mjs",
     "storage:verify-s3": "node ../scripts/verify-s3-live.mjs",
     "storage:verify-s3-restore": "node ../scripts/verify-s3-restore-live.mjs",
     "runtime:verify-terminal-restart": "node ../scripts/verify-terminal-restart.mjs"
