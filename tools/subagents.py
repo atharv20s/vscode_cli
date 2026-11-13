@@ -9,7 +9,8 @@ Subagents are autonomous agents that can:
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator
+from typing import Any
+import asyncio
 from enum import Enum
 
 from tools.base import Tool, ToolResult
@@ -31,6 +32,7 @@ class SubagentConfig:
     max_iterations: int = 10
     timeout_seconds: float = 120.0
     tools_enabled: list[str] | None = None
+    mode: str = "agent"
 
 
 @dataclass
@@ -74,34 +76,66 @@ class Subagent:
         self.messages: list[dict[str, str]] = []
     
     async def run(self, task: str) -> SubagentResult:
-        """
-        Run the subagent with a task.
-        
-        Args:
-            task: The task description
-            
-        Returns:
-            SubagentResult: The result of execution
-        """
-        # Initialize with system prompt
+        """Run a real child agent; never report placeholder success."""
         self.messages = [
             {"role": "system", "content": self.config.system_prompt},
             {"role": "user", "content": task},
         ]
-        
-        # This is a placeholder - actual implementation would:
-        # 1. Create LLM client
-        # 2. Run agentic loop with tools
-        # 3. Collect results
-        
-        # For now, return a placeholder
-        return SubagentResult(
-            success=True,
-            output=f"[Subagent {self.config.type.value}] Task received: {task}",
-            iterations=1,
-            tool_calls=[],
-        )
+        tool_events: list[dict[str, Any]] = []
+        final_text = ""
+        failure: str | None = None
+        iterations = 0
 
+        async def execute() -> None:
+            nonlocal final_text, failure, iterations
+            from Agent.core import Agent
+            from Agent.modes import AgentMode
+
+            try:
+                selected_mode = AgentMode(self.config.mode)
+            except ValueError:
+                selected_mode = AgentMode.AGENT
+
+            async with Agent(
+                system_prompt=self.config.system_prompt,
+                tools_enabled=True,
+                max_iterations=self.config.max_iterations,
+                mode=selected_mode,
+                allowed_tools=self.config.tools_enabled,
+            ) as agent:
+                async for event in agent.run(task):
+                    if event.type == AgentEventType.TEXT_COMPLETE:
+                        final_text = str(event.data.get("content") or "")
+                    elif event.type == AgentEventType.TOOL_EXECUTING:
+                        tool_events.append({
+                            "name": event.data.get("name"),
+                            "arguments": event.data.get("arguments", {}),
+                        })
+                    elif event.type == AgentEventType.AGENT_ERROR:
+                        failure = str(event.data.get("error") or "Child agent reported an error.")
+                iterations = agent.current_turn
+                self.messages = list(agent.messages)
+
+        try:
+            await asyncio.wait_for(execute(), timeout=max(1.0, self.config.timeout_seconds))
+        except asyncio.TimeoutError:
+            failure = f"Subagent timed out after {self.config.timeout_seconds:g} seconds."
+        except Exception as error:
+            failure = f"Subagent execution failed: {error}"
+
+        output = final_text.strip()
+        success = bool(output) and failure is None
+        if not success and not failure:
+            failure = "Subagent completed without a final response."
+        self.iterations = iterations
+        self.tool_calls = tool_events
+        return SubagentResult(
+            success=success,
+            output=output,
+            iterations=iterations,
+            tool_calls=tool_events,
+            error=failure,
+        )
 
 class ResearcherTool(Tool):
     """
@@ -147,11 +181,14 @@ class ResearcherTool(Tool):
         config = SubagentConfig(
             type=SubagentType.RESEARCHER,
             system_prompt=(
-                "You are a thorough researcher. "
-                "Investigate the topic, gather information, "
-                "and provide a comprehensive summary."
+                "You are a careful researcher. Use available search and read-only tools, "
+                "compare evidence, cite source URLs when present, distinguish facts from "
+                "uncertainty, and do not modify the workspace."
             ),
             max_iterations={"quick": 3, "standard": 5, "deep": 10}.get(depth, 5),
+            timeout_seconds=180.0 if depth == "deep" else 90.0,
+            tools_enabled=["read_file", "list_dir", "grep", "glob", "web_search", "fetch_url", "analyze_code"],
+            mode="ask",
         )
         
         subagent = Subagent(config)
@@ -197,10 +234,17 @@ class CoderTool(Tool):
         config = SubagentConfig(
             type=SubagentType.CODER,
             system_prompt=(
-                f"You are an expert {language} developer. "
-                "Write clean, well-documented, production-ready code."
+                f"You are an expert {language} engineer. Inspect existing code, make focused "
+                "changes, use explicit permissions for commands, and report actual verification."
             ),
-            max_iterations=5,
+            max_iterations=8,
+            timeout_seconds=180.0,
+            tools_enabled=[
+                "read_file", "list_dir", "grep", "glob", "analyze_code",
+                "find_definition", "find_usages", "write_file", "edit_file",
+                "shell", "git_status", "git_diff",
+            ],
+            mode="agent",
         )
         
         subagent = Subagent(config)
@@ -251,10 +295,17 @@ class TaskExecutorTool(Tool):
         config = SubagentConfig(
             type=SubagentType.EXECUTOR,
             system_prompt=(
-                "You are a task executor. "
-                "Break down tasks into steps and execute them methodically."
+                "You are an execution specialist. Work through the supplied steps, inspect "
+                "before editing, request approval for gated execution, and report exact results."
             ),
             max_iterations=10,
+            timeout_seconds=240.0,
+            tools_enabled=[
+                "read_file", "list_dir", "grep", "glob", "analyze_code",
+                "create_plan", "update_plan", "write_file", "edit_file",
+                "shell", "git_status", "git_diff",
+            ],
+            mode="agent",
         )
         
         subagent = Subagent(config)
