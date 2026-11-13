@@ -50,7 +50,7 @@ class EditorManager {
     try {
       const tabsArray = [];
       for (const [path, data] of this.openTabs.entries()) {
-        tabsArray.push({ path, content: data.content, isDirty: data.isDirty });
+        tabsArray.push({ path, content: data.content, isDirty: data.isDirty, version: data.version || null });
       }
       localStorage.setItem("ath_cached_editor_tabs", JSON.stringify(tabsArray));
       localStorage.setItem("ath_cached_active_tab", this.activeTab || "");
@@ -71,6 +71,7 @@ class EditorManager {
         tabs.forEach((tab) => {
           this.openTabs.set(tab.path, {
             content: tab.content,
+            version: tab.version || null,
             isDirty: tab.isDirty || false,
             language: this.detectLanguage(tab.path),
           });
