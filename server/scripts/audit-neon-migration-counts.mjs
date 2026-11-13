@@ -95,7 +95,21 @@ const [direct, pooled] = await Promise.all([
   inspectPostgres(directUrl),
   pooledUrl === directUrl ? Promise.resolve(null) : inspectPostgres(pooledUrl),
 ]);
-const identityMatches = !pooled || direct.identity === pooled.identity;
+const apiHealthUrl = process.env.API_HEALTH_URL || "";
+let apiIdentity = null;
+if (apiHealthUrl) {
+  const response = await fetch(apiHealthUrl, { signal: AbortSignal.timeout(15000) });
+  if (!response.ok) throw new Error("API health endpoint returned HTTP " + response.status);
+  const health = await response.json();
+  apiIdentity = health.database?.identity || null;
+}
+const workerIdentity = process.env.REPO_AGENT_WORKER_DATABASE_IDENTITY || null;
+const pooledIdentityMatches = !pooled || direct.identity === pooled.identity;
+const apiIdentityMatches = !apiIdentity || apiIdentity === direct.identity;
+const workerIdentityMatches = !workerIdentity || workerIdentity === direct.identity;
+const identityMatches = pooledIdentityMatches && apiIdentityMatches && workerIdentityMatches;
+const identityVerificationComplete = Boolean(apiIdentity && workerIdentity) &&
+  pooledIdentityMatches && apiIdentityMatches && workerIdentityMatches;
 const result = {
   audit: "neon-migration-counts-and-identity",
   readOnly: true,
@@ -118,6 +132,14 @@ const result = {
   sqliteSource: null,
   reconciliation: "not performed: set SQLITE_SOURCE_PATH to the original SQLite database file",
   identityMatches,
+  identityVerificationComplete,
+  identityChecks: {
+    pooledMatchesDirect: pooledIdentityMatches,
+    apiHealthIdentity: apiIdentity,
+    apiMatchesDirect: apiIdentity ? apiIdentityMatches : null,
+    repoAgentWorkerIdentity: workerIdentity,
+    workerMatchesDirect: workerIdentity ? workerIdentityMatches : null,
+  },
 };
 
 if (process.env.SQLITE_SOURCE_PATH) {
