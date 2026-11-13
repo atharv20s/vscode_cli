@@ -80,10 +80,11 @@ service environment. It connects to the loopback worker API by default
 workspace/terminal, writes a unique marker into tmux, pauses while an operator
 restarts the systemd unit that runs `server/src/worker/executionWorker.js`
 (not the separate repository-agent worker unless it uses that entrypoint),
-then reconnects using the same terminal UUID and verifies the marker is
-replayed. Restart only the execution-worker Node process; leave Docker and the
-workspace container running, and confirm its `/healthz` endpoint is healthy
-before continuing. The script then removes the exact random test container
+then checks that the worker's random `instanceId` changed, reconnects
+using the same terminal UUID, and verifies the marker is replayed. Restart only
+the execution-worker Node process; leave Docker and the workspace container
+running, and confirm its `/healthz` endpoint is healthy before continuing. The
+script then removes the exact random test container
 and local workspace directory. The
 small S3 snapshot is retained for audit/lifecycle expiry. This is a manual
 acceptance test and does not test Docker daemon or VM restart.
