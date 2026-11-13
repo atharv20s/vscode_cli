@@ -293,3 +293,20 @@ existing user's workspace.
 
 A passing result proves this restore path for the tested worker and bucket
 configuration. It does not prove recovery after a full VM or Docker daemon loss.
+
+
+### Deployed API multi-user isolation acceptance
+
+Run from a trusted operator machine with a production API URL and the API's
+existing JWT signing secret loaded into the environment:
+
+```bash
+WORKSPACE_API_URL=https://<api-host> JWT_SECRET=<from-api-secret-store> npm run security:verify-multi-user-isolation
+```
+
+The script creates two random synthetic JWT identities (no real account data
+is read), concurrently writes the same relative filename with different random
+contents, verifies each identity reads back only its own content, and deletes
+the two test files. It refuses to send tokens over non-local HTTP. The JWT
+secret is read from the environment and is never printed. Run only against an
+API environment where synthetic JWT identities are permitted by policy.
