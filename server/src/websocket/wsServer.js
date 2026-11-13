@@ -27,6 +27,7 @@ import { getPreviewService } from "../services/previewService.js";
 import { permissionEngine } from "../services/permissionEngine.js";
 import { LocalBackend } from "../services/backends/localBackend.js";
 import { eventBus, EVENT_TOPICS } from "./eventBus.js";
+import { resolveWorkspaceShare } from "../services/workspaceCollaborationService.js";
 import { createConversation, updateConversationMessages, getConversation, listConversations, findOrCreateUserSession } from "../db/database.js";
 
 /** Heartbeat interval in ms */
@@ -72,6 +73,23 @@ export function initWebSocketServer(httpServer) {
     if (!envelope.workspaceId) return;
     wss.clients.forEach(client => {
       if (client.workspaceId === envelope.workspaceId) sendMessage(client, type, payload);
+    });
+  };
+
+  const broadcastPresence = workspaceId => {
+    if (!workspaceId) return;
+    const peers = [...wss.clients]
+      .filter(client => client.workspaceId === workspaceId && client.readyState === 1)
+      .map(client => ({
+        connectionId: client.sessionId,
+        userId: client.actorUserId || client.userId,
+        username: client.collaboratorName || "Collaborator",
+        role: client.workspacePermission || "owner",
+      }));
+    wss.clients.forEach(client => {
+      if (client.workspaceId === workspaceId && client.readyState === 1) {
+        sendMessage(client, "collab.presence", { users: peers, count: peers.length });
+      }
     });
   };
 
@@ -158,6 +176,9 @@ export function initWebSocketServer(httpServer) {
     const offeredProtocols = String(req.headers["sec-websocket-protocol"] || "")
       .split(",").map(value => value.trim()).filter(Boolean);
     const token = offeredProtocols[0] === "ath-auth" ? offeredProtocols[1] : null;
+    const shareProtocol = offeredProtocols.find(value => value.startsWith("ath-share."));
+    const shareToken = shareProtocol ? shareProtocol.slice("ath-share.".length) : null;
+    const share = shareToken ? await resolveWorkspaceShare(shareToken).catch(() => null) : null;
     let user = null;
 
     if (token) {
@@ -167,13 +188,16 @@ export function initWebSocketServer(httpServer) {
       }
     }
 
-    if (!user && !config.isDev) {
+    if (!user && !share && !config.isDev) {
       ws.close(4001, "Authentication required");
       return;
     }
 
-    ws.userId = user?.id || ws.sessionId;
-    const requestedWorkspace = url.searchParams.get("workspace") || "default";
+    ws.actorUserId = user?.id || ws.sessionId;
+    ws.collaboratorName = user?.username || "Collaborator";
+    ws.workspacePermission = share?.permission || "owner";
+    ws.userId = share?.ownerUserId || user?.id || ws.sessionId;
+    const requestedWorkspace = share?.workspaceId || url.searchParams.get("workspace") || "default";
     try {
       await ensureWorkspaceSession(ws.userId, requestedWorkspace);
       ws.workspaceService = getWorkspaceService(ws.userId, requestedWorkspace);
@@ -183,6 +207,7 @@ export function initWebSocketServer(httpServer) {
     }
     ws.workspaceKey = requestedWorkspace;
     ws.workspaceId = ws.workspaceService.workspaceId;
+    broadcastPresence(ws.workspaceId);
     const requestedTerminalId = url.searchParams.get("terminalSessionId") || "";
     ws.terminalSessionId = /^[a-f0-9-]{36}$/i.test(requestedTerminalId) ? requestedTerminalId : crypto.randomUUID();
     ws.previewService = getPreviewService(ws.workspaceId);
@@ -216,6 +241,7 @@ export function initWebSocketServer(httpServer) {
       executionService.detachInteractive(ws.terminalSessionId, ws);
       try { ws.remoteTerminal?.close(); } catch {}
       removeConnection(ws);
+      broadcastPresence(ws.workspaceId);
     });
 
     ws.on("error", (err) => {
@@ -223,6 +249,7 @@ export function initWebSocketServer(httpServer) {
       executionService.detachInteractive(ws.terminalSessionId, ws);
       try { ws.remoteTerminal?.close(); } catch {}
       removeConnection(ws);
+      broadcastPresence(ws.workspaceId);
     });
 
     // Send welcome and metadata
@@ -250,6 +277,10 @@ async function handleMessage(ws, msg, user) {
       break;
 
     case "chat":
+      if (ws.workspacePermission !== "owner") {
+        sendMessage(ws, "error", { message: "AI agent execution is disabled for shared collaborators. Edit access is limited to workspace files." });
+        break;
+      }
       await handleChat(ws, payload, user);
       break;
 
@@ -334,12 +365,20 @@ async function handleMessage(ws, msg, user) {
 
     case "file_save":
     case "file.write":
+      if (ws.workspacePermission === "view") {
+        sendMessage(ws, "error", { message: "This workspace link is read-only." });
+        break;
+      }
       await handleFileSave(ws, payload);
       break;
 
     // Terminal Session Lifecycle
     case "terminal_init":
     case "terminal.init":
+      if (ws.workspacePermission !== "owner") {
+        sendMessage(ws, "error", { message: "Shared collaborators cannot open workspace terminals." });
+        break;
+      }
       if (config.executionRuntime === "remote") {
         try { ws.remoteTerminal?.close(); } catch {}
         const remote = await connectRemoteTerminal({
@@ -386,6 +425,10 @@ async function handleMessage(ws, msg, user) {
     case "terminal_input":
     case "terminal.input":
     case "terminal.keystroke":
+      if (ws.workspacePermission !== "owner") {
+        sendMessage(ws, "error", { message: "Shared collaborators cannot use workspace terminals." });
+        break;
+      }
       eventBus.publish(EVENT_TOPICS.TERMINAL_INPUT, {}, {
         sessionId: ws.terminalSessionId,
         workspaceId: ws.workspaceId,
@@ -560,7 +603,7 @@ async function handleFileRead(ws, payload) {
 
   try {
     const result = await ws.workspaceService.readFile(filePath);
-    sendMessage(ws, "file_content", { path: result.path, content: result.content });
+    sendMessage(ws, "file_content", { path: result.path, content: result.content, version: result.version });
   } catch (err) {
     sendMessage(ws, "error", { message: `File read failed: ${err.message}` });
   }
@@ -578,10 +621,11 @@ async function handleFileSave(ws, payload) {
 
   try {
     const result = await ws.workspaceService.writeFile(filePath, content, {
+      expectedVersion: payload?.expectedVersion,
       source: "ui",
-      actor: ws.userId,
+      actor: ws.actorUserId || ws.userId,
     });
-    sendMessage(ws, "file_saved", { path: result.path, size: result.size });
+    sendMessage(ws, "file_saved", { path: result.path, size: result.size, version: result.version });
   } catch (err) {
     sendMessage(ws, "error", { message: `File save failed: ${err.message}` });
   }
