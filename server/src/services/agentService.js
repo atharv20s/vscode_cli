@@ -313,44 +313,9 @@ export async function runAgent({
 
     if (gotError) break;
 
-    // If we got text and no tool calls → check if LLM generated code intended for a file
+    // A final text response ends the turn. Code must be written through
+    // explicit workspace tools, never guessed from arbitrary Markdown fences.
     if (textContent && pendingToolCalls.length === 0) {
-      // Find all code blocks in the assistant's response
-      const codeBlockRegex = /```(?:html|css|js|javascript|python|py|json|sh|bash)?\s*\n([\s\S]+?)```/g;
-      const blocks = [];
-      let m;
-      while ((m = codeBlockRegex.exec(textContent)) !== null) {
-        blocks.push(m[1].trim());
-      }
-
-      if (blocks.length > 0) {
-        // Find filename mentions in prompt or text
-        const requestedFileMatch = message.match(/(?:in|into|to|file|create|make)\s+[`"']?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)[`"']?/i);
-        const textFileMatches = Array.from(textContent.matchAll(/(?:file|named|in|into|created?)\s+[`"']?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)[`"']?/gi)).map(x => x[1].replace(/[`"']/g, ""));
-
-        // If user explicitly asked for a file (like pong.html), prioritize the largest matching code block
-        const targetFilename = requestedFileMatch ? requestedFileMatch[1].replace(/[`"']/g, "") : textFileMatches[0] || "index.html";
-        const targetCode = blocks.reduce((a, b) => (a.length > b.length ? a : b), blocks[0]);
-
-        logger.info("Auto-saving LLM code block to file", { targetFilename, len: targetCode.length });
-        onEvent({
-          type: "tool_start",
-          data: { id: `auto_${Date.now()}`, name: "write_file", args: { path: targetFilename } },
-        });
-
-        const result = await executeTool("write_file", { path: targetFilename, content: targetCode }, toolContext);
-
-        onEvent({
-          type: "tool_result",
-          data: {
-            id: `auto_${Date.now()}`,
-            name: "write_file",
-            success: result.success,
-            output: result.output || result.error,
-          },
-        });
-      }
-
       messages.push({ role: "assistant", content: textContent });
       onEvent({ type: "text_complete", data: { content: textContent } });
       break;
