@@ -270,6 +270,17 @@ export function initWebSocketServer(httpServer) {
  */
 async function handleMessage(ws, msg, user) {
   const { type, payload } = msg;
+  const ownerOnly = new Set([
+    "abort", "agent.command.stop", "permission.resolve", "permission_resolve",
+    "bridge.register", "bridge.output", "bridge.completed",
+    "preview.start", "preview_start", "preview.stop", "preview_stop",
+    "preview.restart", "preview_restart", "terminal.paste", "terminal_resize",
+    "terminal.resize", "terminal.command.submitted",
+  ]);
+  if (ws.workspacePermission !== "owner" && ownerOnly.has(type)) {
+    sendMessage(ws, "error", { message: "This action is available only to the workspace owner." });
+    return;
+  }
 
   switch (type) {
     case "ping":
