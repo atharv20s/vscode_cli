@@ -23,7 +23,8 @@
     "db:backup": "node ../scripts/neon-db-backup.mjs backup",
     "db:restore": "node ../scripts/neon-db-backup.mjs restore",
     "storage:verify-s3": "node ../scripts/verify-s3-live.mjs",
-    "runtime:verify-terminal-restart": "node ../scripts/verify-terminal-restart.mjs"
+    "runtime:verify-terminal-restart": "node ../scripts/verify-terminal-restart.mjs",
+    "security:verify-multi-user-isolation": "node ../scripts/verify-multi-user-isolation-live.mjs"
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0",
