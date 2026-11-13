@@ -46,5 +46,7 @@ jobs:
         working-directory: server
         run: npm test
 
-      - name: Validate SQLite-to-PostgreSQL migration script syntax
-        run: node --check scripts/migrate-sqlite-to-postgres.mjs
+      - name: Validate database maintenance scripts
+        run: |
+          node --check scripts/migrate-sqlite-to-postgres.mjs
+          node --check scripts/neon-db-backup.mjs
