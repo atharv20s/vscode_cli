@@ -15,7 +15,7 @@ const { Pool } = pg;
 export function createPostgresIdentity(connectionString, databaseName, databaseRole) {
   let normalizedHost = "";
   try {
-    normalizedHost = new URL(connectionString).hostname.toLowerCase().replace(/-pooler(?=\\.)/, "");
+    normalizedHost = new URL(connectionString).hostname.toLowerCase().replace(/-pooler(?=\.)/, "");
   } catch {}
   const material = [normalizedHost, databaseName || "", databaseRole || ""].join("/");
   return crypto.createHash("sha256").update(material).digest("hex").slice(0, 24);
@@ -75,7 +75,7 @@ export async function initPostgres(connectionString, options = {}) {
     const res = await client.query("SELECT CURRENT_TIMESTAMP AS now, current_database() AS database_name, current_user AS database_role;");
     let normalizedHost = "";
     try {
-      normalizedHost = new URL(connectionString).hostname.toLowerCase().replace(/-pooler(?=\.)/, "");
+    normalizedHost = new URL(connectionString).hostname.toLowerCase().replace(/-pooler(?=\.)/, "");
     } catch {}
     const identityMaterial = [normalizedHost, res.rows[0]?.database_name || "", res.rows[0]?.database_role || ""].join("/");
     poolIdentity = crypto.createHash("sha256").update(identityMaterial).digest("hex").slice(0, 24);
