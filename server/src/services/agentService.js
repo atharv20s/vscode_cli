@@ -179,6 +179,7 @@ export async function runAgent({
   systemPrompt,
   model,
   workspaceDir,
+  executionWorkspaceDir,
   workspaceId,
   userId,
   sessionId,
