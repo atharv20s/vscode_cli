@@ -187,6 +187,7 @@ class App {
     });
 
     window.wsClient.on("connected", (data) => {
+      if (data?.user) this.currentUser = data.user;
       if (data && data.workspace) {
         const workspacePathEl = document.getElementById("status-workspace-path");
         if (workspacePathEl) workspacePathEl.textContent = `WS: ${data.workspace}`;
@@ -336,8 +337,8 @@ class App {
             alert("There are no active collaboration links for this workspace.");
             return;
           }
-          const summary = active.map(share => share.id + " · " + share.permission + " · expires " + (share.expiresAt || "never")).join("\\n");
-          const selected = prompt("Active invites (copy an ID to revoke it):\\n" + summary + "\\n\\nEnter the invite ID to revoke:");
+          const summary = active.map(share => share.id + " · " + share.permission + " · expires " + (share.expiresAt || "never")).join("\n");
+          const selected = prompt("Active invites (copy an ID to revoke it):\n" + summary + "\n\nEnter the invite ID to revoke:");
           if (!selected) return;
           const revoke = await fetch("/api/workspace/collaboration/shares/" + encodeURIComponent(selected.trim()), {
             method: "DELETE",
