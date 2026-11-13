@@ -9,6 +9,9 @@ scripts/*.env
 *.key
 *.creds.json
 .worker_s3_creds.json
+backups/
+server/backups/
+*.athpg
 
 # Ignore everything by default
 /*
