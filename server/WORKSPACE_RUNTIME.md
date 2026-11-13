@@ -264,3 +264,29 @@ editor: simultaneous edits to the same file are serialized by version checks,
 and the later stale save must reload/merge rather than being automatically
 merged character-by-character. Validate with two real authenticated browsers,
 a disposable shared workspace, and Redis before production sign-off.
+
+
+### Live S3 restore acceptance (execution-worker host)
+
+The S3 read-back smoke test proves signed object upload/read and checksum
+validation, but it does not exercise the worker's actual restore path. For a
+full disposable-workspace drill, run from `server/` on the execution-worker
+host after loading the worker's existing environment:
+
+```bash
+npm run storage:verify-s3
+npm run storage:verify-s3-restore
+```
+
+The restore drill requires `WORKER_SHARED_SECRET` and the existing
+`WORKSPACE_OBJECT_STORE_*` configuration. It sends authenticated requests to
+the loopback worker API, creates a random 256-bit workspace identity, syncs a
+marker (thereby persisting the S3 snapshot), removes only that exact disposable
+local workspace directory, and calls the real `/v1/workspace/pull` endpoint.
+It verifies the marker both in the worker response and on disk. The local test
+directory is removed afterward; the tiny random-key S3 snapshot is retained for
+audit and can be expired by the bucket lifecycle policy. It never targets an
+existing user's workspace.
+
+A passing result proves this restore path for the tested worker and bucket
+configuration. It does not prove recovery after a full VM or Docker daemon loss.

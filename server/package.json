@@ -23,6 +23,7 @@
     "db:backup": "node ../scripts/neon-db-backup.mjs backup",
     "db:restore": "node ../scripts/neon-db-backup.mjs restore",
     "storage:verify-s3": "node ../scripts/verify-s3-live.mjs",
+    "storage:verify-s3-restore": "node ../scripts/verify-s3-restore-live.mjs",
     "runtime:verify-terminal-restart": "node ../scripts/verify-terminal-restart.mjs"
   },
   "dependencies": {
