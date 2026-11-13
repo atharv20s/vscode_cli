@@ -145,6 +145,8 @@ import { registerImageTools } from "./imageTools.js";
 import { registerPlanningTools } from "./planningTools.js";
 import { registerDiagnosticTools } from "./diagnosticTools.js";
 import { registerDocTools } from "./docTools.js";
+import { registerSpecialistTools } from "./specialistTools.js";
+import { registerVerificationTools } from "./verificationTools.js";
 
 /**
  * Initialize all built-in tools.
@@ -160,4 +162,6 @@ export function initializeTools() {
   registerPlanningTools();
   registerDiagnosticTools();
   registerDocTools();
+  registerSpecialistTools();
+  registerVerificationTools();
 }
