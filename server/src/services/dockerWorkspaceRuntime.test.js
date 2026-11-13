@@ -13,7 +13,15 @@ test("workspace network names are stable and isolated by workspace identity", ()
   }
 });
 
-test("Docker's shared bridge is never used as the implicit workspace network", () => {
-  const network = workspaceNetworkName("workspace-user-a", "bridge");
-  if (network !== "none") assert.match(network, /^athide-net-[a-f0-9]{16}$/);
+test("shared named network overrides cannot join separate workspaces", () => {
+  const first = workspaceNetworkName("workspace-user-a", "ath-ide-internal");
+  const second = workspaceNetworkName("workspace-user-b", "ath-ide-internal");
+  if (first !== "none") {
+    assert.notEqual(first, second);
+    assert.match(first, /^athide-net-[a-f0-9]{16}$/);
+  }
+});
+
+test("repo-agent network override none remains networkless", () => {
+  assert.equal(workspaceNetworkName("repo-agent-task", "none"), "none");
 });
