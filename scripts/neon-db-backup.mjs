@@ -82,7 +82,9 @@ async function backup(outputPath) {
     const result = await child.closed;
     if (result.code !== 0) throw new Error("pg_dump failed (" + result.code + "): " + child.stderr().trim());
     await fsp.appendFile(temporary, cipher.getAuthTag());
-    await fsp.rename(temporary, target);
+    // Hard-link publication is atomic and refuses to overwrite an older backup.
+    await fsp.link(temporary, target);
+    await fsp.unlink(temporary);
     console.log(JSON.stringify({ success: true, backup: target, database: database.database, host: database.host, encrypted: true }));
   } catch (error) {
     child.child.kill("SIGTERM");
