@@ -54,6 +54,7 @@ export default function Home() {
   const [repoBusy, setRepoBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<"chat" | "tasks">("chat");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const agentAbortRef = useRef<AbortController | null>(null);
   const clearPreview = useCallback(() => setPreviewUrl(""), []);
 
   const refreshFiles = useCallback(async (directory = ".") => {
@@ -234,6 +235,8 @@ export default function Home() {
     if (!message || busy) return;
     setPrompt("");
     setBusy(true);
+    const requestController = new AbortController();
+    agentAbortRef.current = requestController;
     setMessages(prev => [...prev, { role: "user", content: message }, { role: "assistant", content: "", activity: ["Request sent to the agent API"] }]);
     try {
       const safeEditorContext = activeFile &&
@@ -242,6 +245,7 @@ export default function Home() {
         : undefined;
       const response = await api.fetchWithAuth("/api/agent/chat", {
         method: "POST",
+        signal: requestController.signal,
         body: JSON.stringify({
           message, model, conversationId, mode,
           context: safeEditorContext ? { editor: safeEditorContext } : undefined,
@@ -274,6 +278,11 @@ export default function Home() {
             setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, content: item.content + delta } : item));
           } else if (event.type === "text_complete" && data.content) {
             setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, content: data.content } : item));
+          } else if (event.type === "verification_result") {
+            const detail = data.success && data.verified
+              ? "Workspace verification passed"
+              : "Verification incomplete or failed";
+            setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, activity: [...(item.activity || []), detail].slice(-16) } : item));
           } else if (event.type === "tool_start" || event.type === "tool_result" || event.type === "model_selected" || event.type === "usage") {
             const detail = event.type === "model_selected" ? "Model " + data.provider + "/" + data.model + " (" + data.tier + ")" :
               event.type === "usage" ? "Tokens " + (data.totalTokens || 0) :
@@ -298,8 +307,12 @@ export default function Home() {
       setCurrentDir(".");
       await loadConversations(false);
     } catch (error: any) {
-      setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, content: item.content + "\n\n" + error.message } : item));
-    } finally { setBusy(false); }
+      const message = error?.name === "AbortError" ? "Stopped by you." : error.message;
+      setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, content: item.content + "\n\n" + message } : item));
+    } finally {
+      if (agentAbortRef.current === requestController) agentAbortRef.current = null;
+      setBusy(false);
+    }
   };
 
   const createRepoTask = async (event: React.FormEvent) => {
@@ -395,8 +408,16 @@ export default function Home() {
               </div>)}
               <div ref={bottomRef}/>
             </div>
-            <form onSubmit={sendPrompt} className="p-3 border-t border-slate-800">
-              <textarea value={prompt} onChange={event => setPrompt(event.target.value)} placeholder="Ask ATH to inspect, build, debug or modify this workspace…" className="w-full h-24 resize-none bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs outline-none focus:border-indigo-500"/>
+            <form onSubmit={sendPrompt} className="p-3 border-t border-slate-800 bg-[#0d1422]">
+              {activeFile && <div className="flex items-center gap-1.5 mb-2 text-[10px] text-slate-500"><File size={11}/><span>Editor context available: {activeFile}</span><span className="text-slate-600">· up to 12 KB</span></div>}
+              <textarea
+                value={prompt}
+                onChange={event => setPrompt(event.target.value)}
+                onKeyDown={event => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
+                aria-label="Message ATH Agent"
+                placeholder="Ask ATH to inspect, build, debug or modify this workspace…"
+                className="w-full h-24 resize-none bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30"
+              />
               <div className="flex items-center justify-between gap-2 mt-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <select aria-label="Agent mode" value={mode} onChange={event => setMode(event.target.value as typeof mode)} disabled={busy}
@@ -410,7 +431,9 @@ export default function Home() {
                   </select>
                   <span className="text-[10px] text-slate-600 truncate">{configuredModels.length} models</span>
                 </div>
-                <button disabled={busy || !prompt.trim()} className="flex items-center gap-2 px-3 py-2 rounded bg-indigo-600 disabled:opacity-40 text-xs"><Send size={13}/>{busy ? "Working…" : "Send"}</button>
+                {busy
+                  ? <button type="button" onClick={() => agentAbortRef.current?.abort()} className="flex items-center gap-2 px-3 py-2 rounded border border-rose-700/60 text-rose-300 hover:bg-rose-500/10 text-xs"><X size={13}/>Stop</button>
+                  : <button disabled={!prompt.trim()} className="flex items-center gap-2 px-3 py-2 rounded bg-indigo-600 disabled:opacity-40 text-xs"><Send size={13}/>Send</button>}
               </div>
             </form>
           </> : <>
