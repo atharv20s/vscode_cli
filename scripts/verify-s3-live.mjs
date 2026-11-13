@@ -1,21 +1,44 @@
-import { putWorkspaceSnapshot, getWorkspaceSnapshot, isWorkspaceObjectStoreConfigured } from "/home/ubuntu/ath-ide/server/src/services/workspaceObjectStore.js";
+#!/usr/bin/env node
+/**
+ * Live S3-compatible workspace snapshot acceptance check.
+ * Run on the execution-worker host with its object-store environment.
+ * Writes one small, uniquely keyed test snapshot and verifies its checksum on read.
+ */
+import crypto from "node:crypto";
+import {
+  getWorkspaceSnapshot,
+  isWorkspaceObjectStoreConfigured,
+  putWorkspaceSnapshot,
+} from "../server/src/services/workspaceObjectStore.js";
 
-console.log("Configured:", isWorkspaceObjectStoreConfigured());
+if (!isWorkspaceObjectStoreConfigured()) {
+  throw new Error("Workspace object storage is not configured; set the WORKSPACE_OBJECT_STORE_* environment.");
+}
 
-const workspaceId = "c6899a5c1950473e93159cc9b571bfb521e2453e809f7a003dba6ffd3a9e13b4";
+const workspaceId = crypto.randomBytes(32).toString("hex");
+const marker = "ATH-IDE-S3-RESTORE-ACCEPTANCE:" + crypto.randomUUID();
 const snapshot = {
   version: 1,
-  timestamp: Date.now(),
-  files: [{ path: "README.md", content: "# Hello from ATH IDE Live S3 Snapshot", encoding: "utf8" }],
+  updatedAt: new Date().toISOString(),
+  files: [{
+    path: ".ath-acceptance/s3-roundtrip.txt",
+    content: Buffer.from(marker, "utf8").toString("base64"),
+  }],
 };
 
-console.log("1. Uploading snapshot to S3...");
-const upload = await putWorkspaceSnapshot(workspaceId, snapshot);
-console.log("   Upload result:", upload);
-
-console.log("2. Restoring snapshot from S3...");
+await putWorkspaceSnapshot(workspaceId, snapshot);
 const restored = await getWorkspaceSnapshot(workspaceId);
-console.log("   Restored file count:", restored.files.length);
-console.log("   Restored file path:", restored.files[0].path);
-console.log("   Restored file content:", restored.files[0].content);
+const restoredContent = Buffer.from(restored?.files?.[0]?.content || "", "base64").toString("utf8");
 
+if (restoredContent !== marker || restored?.integrity?.algorithm !== "sha256") {
+  throw new Error("S3 snapshot read-back did not match the uploaded marker and integrity metadata.");
+}
+
+console.log(JSON.stringify({
+  success: true,
+  operation: "s3-snapshot-upload-readback",
+  workspaceId,
+  restoredFiles: restored.files.length,
+  integrity: restored.integrity.algorithm,
+  note: "This verifies object upload/read and checksum validation. It does not replace deleting a disposable worker directory and exercising the worker restore endpoint.",
+}, null, 2));

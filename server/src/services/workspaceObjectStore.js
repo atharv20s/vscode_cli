@@ -63,8 +63,46 @@ export function isWorkspaceObjectStoreConfigured() {
   return Boolean(objectStoreConfig());
 }
 
+function validateWorkspaceId(workspaceId) {
+  if (typeof workspaceId !== "string" || !/^[a-f0-9]{64}$/.test(workspaceId)) {
+    throw new Error("Invalid workspace identity for object storage.");
+  }
+}
+
+function validateSnapshot(snapshot) {
+  if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.files) || snapshot.files.length > 4000) {
+    throw new Error("Stored workspace snapshot has an unsupported format.");
+  }
+  let totalBytes = 0;
+  const paths = new Set();
+  for (const file of snapshot.files) {
+    if (!file || typeof file.path !== "string" || !file.path || file.path.includes("\\") ||
+        file.path.startsWith("/") || file.path.split("/").some(part => !part || part === "." || part === "..") ||
+        typeof file.content !== "string") {
+      throw new Error("Workspace snapshot contains an unsafe file entry.");
+    }
+    if (paths.has(file.path)) throw new Error("Workspace snapshot contains duplicate file paths.");
+    paths.add(file.path);
+    const bytes = Buffer.from(file.content, "base64");
+    if (bytes.toString("base64") !== file.content || bytes.length > 2 * 1024 * 1024) {
+      throw new Error("Workspace snapshot contains invalid or oversized file content.");
+    }
+    totalBytes += bytes.length;
+    if (totalBytes > 12 * 1024 * 1024) throw new Error("Workspace snapshot exceeds the 12 MB persistence limit.");
+  }
+}
+
 export async function putWorkspaceSnapshot(workspaceId, snapshot) {
-  const body = Buffer.from(JSON.stringify(snapshot));
+  validateWorkspaceId(workspaceId);
+  validateSnapshot(snapshot);
+  const payload = { ...snapshot };
+  delete payload.integrity;
+  const canonicalBody = Buffer.from(JSON.stringify(payload));
+  const envelope = {
+    ...payload,
+    integrity: { algorithm: "sha256", digest: sha256(canonicalBody) },
+  };
+  const body = Buffer.from(JSON.stringify(envelope));
   const signed = signedRequest("PUT", "workspaces/" + workspaceId + "/snapshot.json", body);
   if (!signed) return false;
   const response = await fetch(signed.url, { method: "PUT", headers: signed.headers, body });
@@ -73,14 +111,24 @@ export async function putWorkspaceSnapshot(workspaceId, snapshot) {
 }
 
 export async function getWorkspaceSnapshot(workspaceId) {
+  validateWorkspaceId(workspaceId);
   const signed = signedRequest("GET", "workspaces/" + workspaceId + "/snapshot.json");
   if (!signed) return null;
   const response = await fetch(signed.url, { method: "GET", headers: signed.headers });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error("Workspace snapshot restore failed with HTTP " + response.status + ".");
   const snapshot = await response.json();
-  if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.files)) {
-    throw new Error("Stored workspace snapshot has an unsupported format.");
+  validateSnapshot(snapshot);
+  if (snapshot.integrity) {
+    const { integrity, ...payload } = snapshot;
+    if (integrity.algorithm !== "sha256" || !/^[a-f0-9]{64}$/i.test(integrity.digest || "")) {
+      throw new Error("Workspace snapshot integrity metadata is invalid.");
+    }
+    const expected = Buffer.from(sha256(Buffer.from(JSON.stringify(payload))), "hex");
+    const actual = Buffer.from(integrity.digest, "hex");
+    if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+      throw new Error("Workspace snapshot integrity check failed; refusing restore.");
+    }
   }
   return snapshot;
 }

@@ -118,6 +118,7 @@ app.get("/api/health", async (req, res) => {
       connected: Boolean(dbHealth.connected ?? dbHealth.ok),
       schemaVersion: dbHealth.schemaVersion ?? null,
       latencyMs: dbHealth.latencyMs ?? null,
+      identity: dbHealth.databaseIdentity ?? null,
     },
     mcp: getMcpStatus(),
     env: config.nodeEnv,

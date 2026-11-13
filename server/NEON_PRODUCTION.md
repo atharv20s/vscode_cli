@@ -4,17 +4,17 @@
 
 This document is an operator runbook, not evidence that a Neon project has been provisioned. Do not mark the database deployed until the connection, schema, application persistence, restart, and recovery checks below pass.
 
-## Important architecture audit (current main)
+## Current database architecture
 
-The application currently has two persistence paths:
+The current main branch has a PostgreSQL-backed application repository layer:
 
-- `server/src/db/database.js` is the primary synchronous SQLite store. Authentication, users, sessions, and conversations use this module.
-- `server/src/db/postgres.js` initializes a PostgreSQL schema and pool. The repository-agent task store and distributed repository-agent worker use PostgreSQL; LLM budget accounting can also use it.
-- The API currently catches an initial PostgreSQL connection failure and falls back to SQLite. That is unsafe for a multi-instance production deployment because the API can appear healthy while repository-agent durability is unavailable.
-- The schema is created at startup with `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE` statements. There is not yet a versioned, repeatable migration ledger for this schema.
-- The worker and API must use the same Neon database/branch. A local SQLite file on each host is not a shared database.
+- `server/src/db/database.js` routes user, authentication, session and conversation operations through the PostgreSQL pool when initialized. SQLite remains a local-development fallback.
+- Production startup is fail-closed: the API and repository-agent worker require `DATABASE_URL` and do not silently fall back to per-host SQLite.
+- `server/src/db/postgres.js` initializes the pool; `server/src/db/migrator.js` applies numbered, repeatable migrations using the direct URL.
+- The API and repository-agent worker must use the same Neon database/branch. The API health response reports a non-secret `database.identity` fingerprint; the repository-agent worker logs the same `databaseIdentity` at startup. The direct and pooled Neon hostnames normalize to the same fingerprint. Compare these values during deployment acceptance. This confirms configured endpoint/database/role identity, not worker recovery, multi-user isolation or backup restoration.
+- `scripts/migrate-sqlite-to-postgres.mjs` migrates non-internal SQLite tables transactionally and checks exact per-table row counts. It does not yet calculate row-by-row content checksums.
 
-**Consequently, provisioning Neon alone does not complete the application database migration.** The primary auth/session/conversation data path still needs a deliberate SQLite-to-PostgreSQL adapter and a verified data migration before SQLite can be retired.
+The operator has reported successful production health and a successful SQLite migration. A prior report showed 7 users/7 sessions while a later inspection showed 2/2; confirm both reports were taken against the same endpoint, database and branch before declaring data reconciliation complete.
 
 ## Neon project setup
 
@@ -59,25 +59,52 @@ After the adapter and migrations are implemented:
 5. Restart the API service and verify login/session/conversation reads.
 6. Restart the repository-agent worker and verify it can reclaim/continue a leased task from the shared database.
 7. Run two concurrent authenticated sessions and verify no cross-user reads or writes.
-8. Confirm the API and worker report the same database identity (safe metadata only, never credentials).
+8. Confirm the API `/api/health` `database.identity` and repository-agent worker startup `databaseIdentity` values match (safe fingerprint only, never credentials).
 9. Take a backup/export using the direct URL, restore into a separate Neon branch/database, and repeat the read checks.
 
-## Backup and recovery
+## Encrypted logical backup and restore
 
-- Configure Neon branch/history retention appropriate to the recovery objective and confirm the account's plan supports it.
-- Schedule logical exports with `pg_dump` using the direct URL and store encrypted backups outside the database project.
-- Define retention, restore ownership, and a recovery runbook. A backup is not verified until a restore has been performed.
-- Record recovery point objective (RPO) and recovery time objective (RTO), then run a restore drill before production sign-off.
+The repository now includes `scripts/neon-db-backup.mjs` and npm shortcuts:
+
+- `npm run db:backup` streams a PostgreSQL custom-format dump directly through AES-256-GCM encryption. It does not write an unencrypted dump to disk.
+- `npm run db:restore -- <archive.athpg>` decrypts and verifies the archive before piping it to `pg_restore`.
+- Both operations use libpq environment variables so the database password is not placed in the process argument list. TLS verification is forced to `verify-full`.
+- Restore intentionally omits `--clean`; it does not drop or overwrite existing objects. Restore only into a newly created, empty Neon branch/database.
+
+Generate a 32-byte key and store it in a secret manager (do not commit it or paste it into chat):
+
+```bash
+openssl rand -hex 32
+```
+
+Backup:
+
+```bash
+export DIRECT_DATABASE_URL='postgresql://...'
+export NEON_BACKUP_KEY='<64-hex-character-key>'
+npm run db:backup -- ./backups/neon-production.athpg
+```
+
+Restore drill into a separate, empty Neon branch/database:
+
+```bash
+export RESTORE_DATABASE_URL='postgresql://...'
+export RESTORE_CONFIRM_EMPTY_TARGET=YES
+export NEON_BACKUP_KEY='<same-64-hex-character-key>'
+npm run db:restore -- ./backups/neon-production.athpg
+```
+
+The host must have compatible `pg_dump` and `pg_restore` binaries installed. Store encrypted archives outside the Neon project, restrict access, define retention, and record the restore result, RPO and RTO. **Adding the utility is not evidence that a production backup or restore drill has run.**
 
 ## Current deployment status
 
-- Neon project/database: **Provisioned in `ap-southeast-1`; operator-provided live Neon E2E output previously verified user/session/conversation persistence. Re-run after the current migration changes.**
-- Production connection strings: **Lightsail API/worker service configuration and production-mode startup still require independent verification; do not infer production cutover from a local `.env` or Neon connectivity test.**
-- PostgreSQL schema initializer: **Completed — numbered versioned migrations (`server/src/db/migrations/001_initial_schema.sql` and `server/src/db/migrator.js`)**.
-- Repository-agent PostgreSQL persistence: **Implemented — uses shared pool and task leasing**.
-- Primary application records (auth/users/sessions/conversations): **PostgreSQL repository layer implemented with async boundaries and fail-closed production mode (`server/src/db/database.js`)**.
-- Migration & reconciliation tooling: **Expanded to all source tables with atomic import and exact per-table row-count checks; full row-content checksums and live migration execution remain pending (`scripts/migrate-sqlite-to-postgres.mjs`).**
-- Migration target safety: **Run against a fresh/empty target branch. Exact total-table row-count reconciliation intentionally fails if target tables already contain unrelated rows; it never truncates production data to force a match.**
-- API/worker restart and worker lease-recovery drills: **Pending on the production Lightsail services.**
-- Backup/restore: **Pending; no successful restore drill is claimed.**
-- Full production cutover: **Not signed off; requires the remaining acceptance checks and verified Lightsail service configuration.**
+- Neon project/database: **Provisioned in `ap-southeast-1`; operator-provided API health output reported PostgreSQL connected. This was not independently queried from this repository session.**
+- Production API/worker environment: **Operator reported updating Lightsail service environment files and restarting both services. Exact API/worker database identity and post-restart task recovery still need an acceptance run.**
+- PostgreSQL schema: **Implemented — numbered migrations and schema version ledger.**
+- Primary application records: **PostgreSQL repository adapter implemented; production signup/login/session/conversation acceptance tests still need a fresh disposable-Postgres run.**
+- SQLite migration: **Implemented — transactional all-table import and exact row-count reconciliation. Content checksums and resolution of the reported 7-versus-2 count difference remain outstanding.**
+- Multi-user isolation: **Owner-scoped workspace paths and container identities are implemented; CI isolation regression test is being added. Production concurrent-user test remains outstanding.**
+- Workspace object storage: **S3-compatible snapshots are implemented in the execution worker. Snapshot validation and SHA-256 integrity checks are now included. A real production restore drill remains required.**
+- Terminal recovery: **tmux-backed terminal sessions are implemented inside persistent workspace containers. Recovery after an execution-worker process restart depends on the Docker container remaining alive; container/VM restart recovery of arbitrary running processes is not guaranteed.**
+- Backup/restore: **Encrypted AES-256-GCM backup/restore utility is now included. No production backup or restore has yet been claimed.**
+- Production sign-off: **Pending real acceptance runs, verified recovery, and confirmation of consistent API/worker configuration.**
