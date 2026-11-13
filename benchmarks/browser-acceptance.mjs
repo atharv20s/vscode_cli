@@ -6,7 +6,9 @@
  * Set UPDATE_VISUAL_BASELINES=1 only when intentionally accepting a new UI.
  */
 import fs from "node:fs/promises";
-import path from "node:path";\nimport { createRequire } from "node:module";\nconst require = createRequire(new URL("../server/package.json", import.meta.url));
+import path from "node:path";
+import { createRequire } from "node:module";
+const require = createRequire(new URL("../server/package.json", import.meta.url));
 
 const appUrl = process.env.APP_URL;
 if (!appUrl) throw new Error("APP_URL is required.");
