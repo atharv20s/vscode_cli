@@ -44,6 +44,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // 1. Initialize Express App & HTTP Server
 const app = express();
+app.set("trust proxy", 1);
 const server = http.createServer(app);
 
 // 2. Security & Core Middleware
