@@ -41,6 +41,19 @@ export function classifyCommandForPolicy(command, { isolatedRepoAgent = false } 
   return "ASK";
 }
 
+export function classifyFileOperationForPolicy(action, inputPath = "") {
+  const filePath = String(inputPath || "").replace(/\\/g, "/").toLowerCase();
+  const secretPath = /(^|\\/)(\\.env(?:$|\\.)|id_rsa|id_ed25519|credentials(?:\\.json)?|\\.npmrc|\\.pypirc|\\.netrc|kubeconfig)(?:$|\\/)/i.test(filePath) ||
+    /\\.(pem|key|p12|pfx|tfstate)$/i.test(filePath);
+  if (action === "read" && secretPath) return "DENY";
+  if (action === "delete" || action === "delete_file") return "ASK";
+  const sensitiveProjectFile = /(^|\\/)\\.github\\/workflows\\//i.test(filePath) ||
+    /(^|\\/)(package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|pnpm-lock\\.yaml|yarn\\.lock|dockerfile|docker-compose[^/]*|\\.env(?:$|\\.)|\\.npmrc)$/i.test(filePath) ||
+    /(^|\\/)server\\/src\\/config\\/env\\.js$/i.test(filePath);
+  if ((action === "write" || action === "edit") && (secretPath || sensitiveProjectFile)) return "ASK";
+  return "ALLOW";
+}
+
 class PermissionEngine {
   constructor() {
     /** @type {Map<string, { resolve: Function, reject: Function, timer: any, descriptor: object }>} */
@@ -100,19 +113,7 @@ class PermissionEngine {
 
   _evaluatePolicy(resource, action, payload) {
     if (resource === "command" || action === "run_command" || action === "execute") return classifyCommandForPolicy(payload.command, { isolatedRepoAgent: payload.isolatedRepoAgent === true });
-    if (resource === "file") {
-      const filePath = String(payload.path || "").replace(/\\/g, "/").toLowerCase();
-      const secretPath = /(^|\\/)(\\.env(?:$|\\.)|id_rsa|id_ed25519|credentials(?:\\.json)?|\\.npmrc|\\.pypirc|\\.netrc|kubeconfig)(?:$|\\/)/i.test(filePath) ||
-        /\\.(pem|key|p12|pfx|tfstate)$/i.test(filePath);
-      if (action === "read" && secretPath) return "DENY";
-      if (action === "delete" || action === "delete_file") return "ASK";
-      const sensitiveProjectFile = /(^|\\/)\\.github\\/workflows\\//i.test(filePath) ||
-        /(^|\\/)(package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|pnpm-lock\\.yaml|yarn\\.lock|dockerfile|docker-compose[^/]*|\\.env(?:$|\\.)|\\.npmrc)$/i.test(filePath) ||
-        /(^|\\/)server\\/src\\/config\\/env\\.js$/i.test(filePath);
-      if ((action === "write" || action === "edit") && (secretPath || sensitiveProjectFile)) return "ASK";
-      return "ALLOW";
-    }
-    if (resource === "git") {
+    if (resource === "file") return classifyFileOperationForPolicy(action, payload.path);\n    if (resource === "git") {
       if (action === "force-push") return "DENY";
       if (["push", "commit", "pull", "branch-delete", "branch-switch"].includes(action)) return "ASK";
       return "ALLOW";
