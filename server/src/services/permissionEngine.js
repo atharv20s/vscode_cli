@@ -28,10 +28,13 @@ const SAFE_READ_ONLY_COMMANDS = [
   /^(node|npm|python|python3)\s+--version$/,
 ];
 
-export function classifyCommandForPolicy(command) {
+export function classifyCommandForPolicy(command, { isolatedRepoAgent = false } = {}) {
   if (typeof command !== "string" || !command.trim()) return "DENY";
   const cmd = command.trim();
   for (const pattern of DENY_COMMAND_PATTERNS) if (pattern.test(cmd)) return "DENY";
+  // Repo-agent jobs run in disposable per-task Docker workspaces with networking
+  // forcibly disabled. Permit build/test commands there; this cannot grant host access.
+  if (isolatedRepoAgent) return "ALLOW";
   // Never auto-approve shell composition, substitutions, redirects or multiline input.
   if (!/[\n\r;&|<>\u0060$]/.test(cmd) &&
       SAFE_READ_ONLY_COMMANDS.some(pattern => pattern.test(cmd))) return "ALLOW";
@@ -96,7 +99,7 @@ class PermissionEngine {
   }
 
   _evaluatePolicy(resource, action, payload) {
-    if (resource === "command" || action === "run_command" || action === "execute") return classifyCommandForPolicy(payload.command);
+    if (resource === "command" || action === "run_command" || action === "execute") return classifyCommandForPolicy(payload.command, { isolatedRepoAgent: payload.isolatedRepoAgent === true });
     if (resource === "file") return action === "delete" || action === "delete_file" ? "ASK" : "ALLOW";
     if (resource === "git" || resource === "github") {
       if (action === "force-push") return "DENY";
