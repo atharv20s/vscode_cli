@@ -350,3 +350,10 @@ The profile keeps Docker's normal syscall allow behavior while explicitly return
 New containers receive both `no-new-privileges` and the explicit seccomp profile. Existing containers are reused only when their inspected security options, read-only root filesystem and dropped capabilities match the required baseline; otherwise they are replaced using the current workspace bind mount. A missing profile prevents provisioning rather than silently falling back to Docker's implicit default.
 
 After installing the profile, rebuild/restart the worker and create a disposable workspace. Inspect it with `docker inspect` and verify `HostConfig.SecurityOpt` includes the expected seccomp path and no-new-privileges, `ReadonlyRootfs` is true, and `CapDrop` contains `ALL`. Do not treat a successful API health check as proof of these runtime properties.
+
+
+## Encrypted S3 workspace snapshots
+
+The workspace object-store client signs temporary STS credentials when WORKSPACE_OBJECT_STORE_SESSION_TOKEN (or AWS_SESSION_TOKEN) is set. Uploads request server-side encryption by default using AES256. Set WORKSPACE_OBJECT_STORE_SERVER_SIDE_ENCRYPTION=aws:kms together with WORKSPACE_OBJECT_STORE_KMS_KEY_ID to request a customer-managed KMS key; the worker identity needs narrowly scoped S3 access to workspaces/* and KMS encrypt/decrypt/data-key permissions for that key. The standalone terraform/aws-storage root provisions a private, versioned bucket, public-access blocking, TLS-only bucket policy, noncurrent-version retention and a worker IAM policy.
+
+The client still expects credentials in environment variables; it does not yet resolve EC2/ECS/EKS instance-role credentials automatically. Use short-lived STS credentials delivered through a protected secret mechanism, never long-lived keys in source control. Run the two S3 acceptance scripts on a test worker to verify upload/read-back and actual delete-then-worker-restore. Terraform validation is CI-only until an AWS plan is reviewed in the target account.
