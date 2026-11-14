@@ -21,7 +21,7 @@ This standalone Terraform root provisions a dedicated, private EC2 execution-wor
 ## Provision
 Run terraform init, terraform fmt -check, terraform validate and terraform plan from this directory. Review the plan, instance type, desired capacity, private subnet routing and expected monthly costs before terraform apply.
 
-After apply, configure the API with the private worker_endpoint output and the same HMAC secret. The worker NLB health check waits for /healthz. Inspect EC2 instance status, SSM registration, systemd logs and docker inspect before routing production traffic.
+After apply, configure the API with EXECUTION_RUNTIME=remote, the private worker_endpoint output as EXECUTION_WORKER_URL, and the same WORKER_SHARED_SECRET. Keep the API-to-worker route private and allow only the API security group to reach the NLB. The worker NLB health check waits for /healthz. Inspect EC2 instance status, SSM registration, systemd logs and docker inspect before routing production traffic.
 
 ## Cost and deployment warning
 The default configuration starts one t3.large instance, an internal NLB and an Auto Scaling Group. NAT data processing, EC2 hours, EBS, NLB capacity and S3/KMS charges are billed by AWS. This module is opt-in and no resources are created by CI or by opening a pull request. Do not apply it to production without reviewing cost, VPC connectivity, secret contents and the rollback plan.
