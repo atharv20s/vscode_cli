@@ -12,17 +12,29 @@ function objectStoreConfig() {
   const bucket = process.env.WORKSPACE_OBJECT_STORE_BUCKET || "";
   const accessKey = process.env.WORKSPACE_OBJECT_STORE_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || "";
   const secretKey = process.env.WORKSPACE_OBJECT_STORE_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || "";
+  const sessionToken = process.env.WORKSPACE_OBJECT_STORE_SESSION_TOKEN || process.env.AWS_SESSION_TOKEN || "";
   const region = process.env.WORKSPACE_OBJECT_STORE_REGION || "us-east-1";
   const endpoint = process.env.WORKSPACE_OBJECT_STORE_ENDPOINT || `https://s3.${region}.amazonaws.com`;
+  const encryption = (process.env.WORKSPACE_OBJECT_STORE_SERVER_SIDE_ENCRYPTION || "AES256").trim();
+  const kmsKeyId = process.env.WORKSPACE_OBJECT_STORE_KMS_KEY_ID || "";
   if (!bucket || !accessKey || !secretKey) {
     if ((process.env.WORKSPACE_OBJECT_STORE_REQUIRED || "false").toLowerCase() === "true") {
       throw new Error("Workspace object storage is required but bucket credentials are incomplete.");
     }
     return null;
   }
+  if (!["AES256", "aws:kms"].includes(encryption)) {
+    throw new Error("Workspace object storage encryption must be AES256 or aws:kms.");
+  }
+  if (kmsKeyId && encryption !== "aws:kms") {
+    throw new Error("A KMS key ID requires WORKSPACE_OBJECT_STORE_SERVER_SIDE_ENCRYPTION=aws:kms.");
+  }
+  if (encryption === "aws:kms" && !kmsKeyId) {
+    throw new Error("KMS encryption requires WORKSPACE_OBJECT_STORE_KMS_KEY_ID.");
+  }
   const base = new URL(endpoint);
   if (base.protocol !== "https:") throw new Error("Workspace object storage endpoint must use HTTPS.");
-  return { bucket, accessKey, secretKey, region, base };
+  return { bucket, accessKey, secretKey, sessionToken, region, base, encryption, kmsKeyId };
 }
 
 function signedRequest(method, key, body = Buffer.alloc(0)) {
@@ -36,8 +48,20 @@ function signedRequest(method, key, body = Buffer.alloc(0)) {
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
   const dateStamp = amzDate.slice(0, 8);
   const payloadHash = sha256(body);
-  const canonicalHeaders = "host:" + host + "\n" + "x-amz-content-sha256:" + payloadHash + "\n" + "x-amz-date:" + amzDate + "\n";
-  const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+  const headers = {
+    host,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-date": amzDate,
+    "content-type": "application/json",
+  };
+  if (config.sessionToken) headers["x-amz-security-token"] = config.sessionToken;
+  if (method === "PUT") {
+    headers["x-amz-server-side-encryption"] = config.encryption;
+    if (config.kmsKeyId) headers["x-amz-server-side-encryption-aws-kms-key-id"] = config.kmsKeyId;
+  }
+  const signedHeaders = Object.keys(headers).sort().join(";");
+  const canonicalHeaders = Object.keys(headers).sort()
+    .map(name => name + ":" + String(headers[name]).trim() + "\n").join("");
   const canonicalRequest = [method, pathname, "", canonicalHeaders, signedHeaders, payloadHash].join("\n");
   const scope = dateStamp + "/" + config.region + "/s3/aws4_request";
   const stringToSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256(canonicalRequest)].join("\n");
@@ -50,12 +74,7 @@ function signedRequest(method, key, body = Buffer.alloc(0)) {
     ", SignedHeaders=" + signedHeaders + ", Signature=" + signature;
   return {
     url: new URL(pathname, config.base.origin),
-    headers: {
-      "x-amz-date": amzDate,
-      "x-amz-content-sha256": payloadHash,
-      authorization,
-      "content-type": "application/json",
-    },
+    headers: { ...headers, authorization },
   };
 }
 
