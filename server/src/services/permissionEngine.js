@@ -54,14 +54,26 @@ export function classifyCommandForPolicy(command, options = {}) {
   return SAFE_READ_ONLY_COMMANDS.some(p => p.test(cmd)) ? "ALLOW" : "ASK";
 }
 
-export function classifyFileOperationForPolicy(action, filePath = "") {
+export function classifyFileOperationForPolicy(action, filePath = "", options = {}) {
   const normalized = String(filePath || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/{2,}/g, "/");
   if (!normalized || normalized.includes("\0")) return "DENY";
-  if (action === "read") return SECRET_PATH_PATTERNS.some(pattern => pattern.test(normalized)) ? "DENY" : "ALLOW";
-  if (["delete", "delete_file"].includes(action)) return "ASK";
-  if (["write", "edit", "create"].includes(action)) {
-    return SENSITIVE_WRITE_PATHS.some(pattern => pattern.test(normalized)) ? "ASK" : "ALLOW";
+  if (SECRET_PATH_PATTERNS.some(pattern => pattern.test(normalized))) return "DENY";
+  if (action === "read") return "ALLOW";
+
+  const isDelete = ["delete", "delete_file"].includes(action);
+  const isWrite = ["write", "edit", "create"].includes(action);
+  const sensitive = SENSITIVE_WRITE_PATHS.some(pattern => pattern.test(normalized));
+
+  if (options.isolatedRepoAgent) {
+    if (isDelete) return sensitive ? "ASK" : "ALLOW";
+    if (isWrite) {
+      if (/(^|\/)package(?:-lock)?\.json$/i.test(normalized)) return "ALLOW";
+      return sensitive ? "ASK" : "ALLOW";
+    }
   }
+
+  if (isDelete) return "ASK";
+  if (isWrite) return sensitive ? "ASK" : "ALLOW";
   return "ASK";
 }
 
