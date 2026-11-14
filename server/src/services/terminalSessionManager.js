@@ -87,6 +87,12 @@ class TerminalSessionManager {
       throw error;
     }
 
+    // The current Linux backend is deliberately non-interactive. Never fall
+    // through to LocalBackend when Linux isolation was explicitly selected.
+    if (config.executionRuntime === "linux") {
+      throw new Error("The Linux sandbox backend currently supports agent background commands only. Configure the isolated Docker PTY provider for interactive terminals.");
+    }
+
     // Do not spawn shells inside the shared API container in production. The
     // remote SSH adapter is not yet a per-user isolated runtime either.
     if (!config.isDev && config.executionRuntime !== "docker") {
