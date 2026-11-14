@@ -7,7 +7,9 @@ Identity Federation. No service-account JSON key is generated, output, or
 stored in GitHub Secrets. The provider condition is restricted to
 `var.github_repository` and `refs/heads/var.github_actions_branch`.
 
-Configure the deployment workflow with the Terraform output
+The repository's current production workflow targets AWS Lightsail and remains SSH-based. This Terraform identity is for the optional GCP infrastructure target; it does not change or deploy the current Lightsail production environment. No GCP deployment workflow is enabled by this PR.
+
+Configure a separate GCP deployment workflow with the Terraform output
 `workload_identity_provider`, the deployer service-account email and
 `permissions: id-token: write`. The deployer receives Artifact Registry
 writer, Cloud Run admin and GKE developer roles. Service Account User is

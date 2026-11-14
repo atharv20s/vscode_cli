@@ -1,6 +1,10 @@
 name: Terraform validation
 
 on:
+  push:
+    branches:
+      - "security/terraform-*"
+  workflow_dispatch:
   pull_request:
     paths:
       - "terraform/**"
