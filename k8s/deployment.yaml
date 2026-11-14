@@ -22,7 +22,6 @@ spec:
         app: ath-ide-core
     spec:
       serviceAccountName: ath-ide-sa
-      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -72,11 +71,6 @@ spec:
               port: 3001
             initialDelaySeconds: 10
             periodSeconds: 5
-          volumeMounts:
-            - name: workspaces-volume
-              mountPath: /workspace
-            - name: tmp-volume
-              mountPath: /tmp
           volumeMounts:
             - name: workspaces-volume
               mountPath: /workspace
