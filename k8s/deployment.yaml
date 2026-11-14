@@ -22,10 +22,24 @@ spec:
         app: ath-ide-core
     spec:
       serviceAccountName: ath-ide-sa
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: ath-ide-server
           image: ath-ide:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            privileged: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 3001
@@ -61,7 +75,17 @@ spec:
           volumeMounts:
             - name: workspaces-volume
               mountPath: /workspace
+            - name: tmp-volume
+              mountPath: /tmp
+          volumeMounts:
+            - name: workspaces-volume
+              mountPath: /workspace
+            - name: tmp-volume
+              mountPath: /tmp
       volumes:
+        - name: tmp-volume
+          emptyDir:
+            sizeLimit: 256Mi
         - name: workspaces-volume
           persistentVolumeClaim:
             claimName: ath-ide-workspaces-pvc
