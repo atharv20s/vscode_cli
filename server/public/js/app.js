@@ -95,6 +95,20 @@ class App {
   initWebSocket() {
     window.wsClient.connect(this.token);
 
+    window.wsClient.on("agent.lifecycle", (data) => {
+      const stage = String(data?.stage || "unknown").replaceAll("_", " ");
+      const detail = data?.toolName ? " · " + data.toolName : "";
+      if (data?.blocked) {
+        this.logTerminal("[Agent policy] Blocked at " + stage + detail, "error");
+        const state = document.getElementById("status-agent-state");
+        if (state) state.textContent = "Agent: Policy blocked";
+        return;
+      }
+      if (["before_tool", "after_tool", "on_error"].includes(data?.stage)) {
+        this.logTerminal("[Agent lifecycle] " + stage + detail, "info");
+      }
+    });
+
     // Agent Streaming Events
     window.wsClient.on("turn_start", (data) => {
       this.logTerminal(`[Agent] Turn ${data.turn}/${data.maxTurns} started...`, "info");
