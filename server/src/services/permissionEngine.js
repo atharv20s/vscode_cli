@@ -56,7 +56,7 @@ class PermissionEngine {
   async checkPermission({ resource, action, payload = {}, sessionId = null, turnId = null, workspaceId = "default", timeout = 60000 }) {
     const decision = this._evaluatePolicy(resource, action, payload);
     if (decision === "DENY") {
-      logger.warn(`PermissionEngine: DENIED ${resource}.${action}`, { workspaceId, command: payload.command });
+      logger.warn(`PermissionEngine: DENIED ${resource}.${action}`, { workspaceId, commandLength: typeof payload.command === "string" ? payload.command.length : 0 });
       return { granted: false, decision: "DENY", reason: `Operation blocked by security policy: ${resource}.${action}` };
     }
     if (decision === "ALLOW") return { granted: true, decision: "ALLOW" };
