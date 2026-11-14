@@ -12,6 +12,7 @@ This document separates repository implementation from production evidence. A me
 | Safety | Server-owned safety prompt, Python content screening, tool approval gates and permission engine | Adversarial prompt-injection suite and approval UX tests across every tool path |
 | Remote access | Strict SSH host-key checking and remote workspace path confinement | Verify host keys and run tests against a disposable remote worker |
 | Kubernetes | Restricted Pod Security, non-root, seccomp RuntimeDefault, dropped capabilities, read-only rootfs, ClusterIP service and PDB | Apply to a staging cluster and verify pods start with the production image/volumes |
+| AWS worker pool | Private EC2 Auto Scaling Group, internal NLB restricted to API SG, SSM-only administration, IMDSv2 instance role and encrypted EBS | Apply in a staging VPC with NAT, API SG and secret; verify bootstrap, SSM, target health and failover |
 | S3 storage | Versioned private bucket Terraform, TLS-only policy, SSE-S3/SSE-KMS, object integrity and STS session-token signing | Terraform plan/apply, then storage:verify-s3 and storage:verify-s3-restore |
 | Database recovery | Existing encrypted Neon backup/restore and identity/count audit scripts | Restore to a separate empty branch; compare API/worker DB identities and migration counts |
 
@@ -28,6 +29,6 @@ The production acceptance runner includes destructive actions only against rando
 
 ## Deployment boundary
 
-No AWS account resources, Kubernetes cluster resources, or Lightsail production services are changed by CI or by opening this PR. The AWS storage Terraform module is a standalone opt-in root; review its plan in the intended account before apply. The S3 client currently consumes environment-delivered static or STS credentials and does not yet resolve EC2/ECS/EKS role credentials automatically.
+No AWS account resources, Kubernetes cluster resources, or Lightsail production services are changed by CI or by opening this PR. The AWS storage and worker Terraform modules are standalone opt-in roots; review both plans in the intended account before apply. The S3 client supports environment-delivered STS credentials and EC2 IMDSv2 instance-role credentials; ECS/EKS role credential providers are not implemented.
 
 Production readiness requires successful CI on the final merge commit, a reviewed staging rollout, live Linux enforcement acceptance, S3 restore, database restore, concurrent multi-user isolation, terminal reconnect and browser end-to-end acceptance.
