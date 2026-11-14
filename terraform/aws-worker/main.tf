@@ -59,20 +59,20 @@ resource "aws_security_group" "internal_nlb" {
 resource "aws_vpc_security_group_ingress_rule" "worker_from_nlb" {
   security_group_id            = aws_security_group.worker.id
   referenced_security_group_id = aws_security_group.internal_nlb.id
-  description                   = "Only the internal NLB may reach the worker HTTP port"
-  from_port                     = 8081
-  to_port                       = 8081
-  ip_protocol                   = "tcp"
+  description                  = "Only the internal NLB may reach the worker HTTP port"
+  from_port                    = 8081
+  to_port                      = 8081
+  ip_protocol                  = "tcp"
 }
 
 resource "aws_iam_role" "worker" {
-  name_prefix        = "${var.name_prefix}-worker-"
+  name_prefix = "${var.name_prefix}-worker-"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect = "Allow"
+      Effect    = "Allow"
       Principal = { Service = "ec2.amazonaws.com" }
-      Action = "sts:AssumeRole"
+      Action    = "sts:AssumeRole"
     }]
   })
   tags = merge(var.tags, { Application = "ath-ide", Role = "execution-worker" })
@@ -101,7 +101,7 @@ resource "aws_iam_role_policy" "worker" {
         Action   = ["s3:GetObject", "s3:PutObject"]
         Resource = "${var.workspace_bucket_arn}/workspaces/*"
       }
-    ], var.kms_key_arn == "" ? [] : [{
+      ], var.kms_key_arn == "" ? [] : [{
       Sid      = "UseWorkspaceSnapshotKmsKey"
       Effect   = "Allow"
       Action   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
