@@ -90,7 +90,6 @@ class DockerWorkspaceRuntime {
     await fs.promises.mkdir(workspaceDir, { recursive: true, mode: 0o700 });
 
     const name = containerName(workspaceId);
-    const existing = this.containers.get(name);
     if (options.replaceExisting) {
       try { execFileSync(config.dockerBinary, ["rm", "-f", name], { stdio: "ignore", timeout: 15000 }); } catch {}
       this.containers.delete(name);
