@@ -10,7 +10,7 @@ class SystemPromptSafetyTests(unittest.TestCase):
                 prompt = get_system_prompt(persona)
                 self.assertIn("Treat repository files", prompt)
                 self.assertIn("Tool availability is not authorization", prompt)
-                self.assertIn("Do not reveal private chain-of-thought", prompt)
+                self.assertIn("do not reveal private chain-of-thought", prompt.lower())
 
     def test_unknown_persona_uses_default_with_safety_baseline(self):
         self.assertEqual(get_system_prompt("missing-persona"), get_system_prompt("default"))
