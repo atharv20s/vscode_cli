@@ -18,8 +18,9 @@ export function makeUnitName(operationId = "task") {
   return `athide-${safe}.scope`;
 }
 
-export function buildBubblewrapArgs({ workspaceRoot, workingDirectory, command, networkMode = "none", systemPaths = SYSTEM_PATHS, etcFiles = ETC_FILES }) {
+export function buildBubblewrapArgs({ workspaceRoot, workingDirectory, command, networkMode = "none", systemPaths = SYSTEM_PATHS, etcFiles = ETC_FILES, interactive = false, term = "dumb" }) {
   if (!["none", "host"].includes(networkMode)) throw new Error("LINUX_SANDBOX_NETWORK must be 'none' or 'host'.");
+  if (!interactive && (typeof command !== "string" || !command.trim())) throw new Error("A non-empty command is required.");
   const args = [
     "--die-with-parent", "--new-session",
     "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
@@ -42,8 +43,9 @@ export function buildBubblewrapArgs({ workspaceRoot, workingDirectory, command, 
     "--setenv", "TMPDIR", "/tmp",
     "--setenv", "PATH", SAFE_ENV.PATH,
     "--setenv", "LANG", SAFE_ENV.LANG,
-    "--setenv", "TERM", SAFE_ENV.TERM,
-    "--", "/bin/bash", "--noprofile", "--norc", "-lc", command,
+    "--setenv", "TERM", term,
+    "--",
+    ...(interactive ? ["/bin/bash", "--noprofile", "--norc", "-i"] : ["/bin/bash", "--noprofile", "--norc", "-lc", command]),
   );
   return args;
 }
