@@ -13,6 +13,9 @@ test("S3-compatible workspace snapshots are signed and round-trip through the ob
     "WORKSPACE_OBJECT_STORE_SECRET_ACCESS_KEY",
     "WORKSPACE_OBJECT_STORE_REGION",
     "WORKSPACE_OBJECT_STORE_ENDPOINT",
+    "WORKSPACE_OBJECT_STORE_SESSION_TOKEN",
+    "WORKSPACE_OBJECT_STORE_SERVER_SIDE_ENCRYPTION",
+    "WORKSPACE_OBJECT_STORE_KMS_KEY_ID",
   ];
   const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
   const originalFetch = globalThis.fetch;
@@ -25,6 +28,9 @@ test("S3-compatible workspace snapshots are signed and round-trip through the ob
     process.env.WORKSPACE_OBJECT_STORE_SECRET_ACCESS_KEY = "test-secret";
     process.env.WORKSPACE_OBJECT_STORE_REGION = "us-east-1";
     process.env.WORKSPACE_OBJECT_STORE_ENDPOINT = "https://objects.example.test";
+    process.env.WORKSPACE_OBJECT_STORE_SESSION_TOKEN = "test-session-token";
+    process.env.WORKSPACE_OBJECT_STORE_SERVER_SIDE_ENCRYPTION = "aws:kms";
+    process.env.WORKSPACE_OBJECT_STORE_KMS_KEY_ID = "arn:aws:kms:us-east-1:123456789012:key/test";
     globalThis.fetch = async (url, options) => {
       calls.push({ url: String(url), options });
       if (options.method === "PUT") {
@@ -47,6 +53,10 @@ test("S3-compatible workspace snapshots are signed and round-trip through the ob
       /integrity check failed/
     );
     assert.match(calls[0].options.headers.authorization, /^AWS4-HMAC-SHA256 /);
+    assert.equal(calls[0].options.headers["x-amz-security-token"], "test-session-token");
+    assert.equal(calls[0].options.headers["x-amz-server-side-encryption"], "aws:kms");
+    assert.equal(calls[0].options.headers["x-amz-server-side-encryption-aws-kms-key-id"], "arn:aws:kms:us-east-1:123456789012:key/test");
+    assert.match(calls[0].options.headers.authorization, /SignedHeaders=[^,]*x-amz-security-token/);
     assert.equal(calls[0].options.headers["x-amz-content-sha256"].length, 64);
     assert.match(calls[0].url, /ath-workspaces\/workspaces\/a{64}\/snapshot\.json$/);
   } finally {
