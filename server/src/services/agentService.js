@@ -74,7 +74,7 @@ Use read_file/list_files to understand code; write_file/edit_file/delete_file fo
  * Run trusted in-process lifecycle hooks with metadata only. Hook decisions
  * can deny a request/tool, but can never grant tool permissions.
  */
-async function runLifecycle(stage, metadata) {
+async function runLifecycle(stage, metadata, onEvent) {
   const result = await runAgentHooks(stage, metadata);
   onEvent?.({
     type: "agent.lifecycle",
@@ -333,12 +333,12 @@ export async function runAgent({
       userId, workspaceId, sessionId, turnId: currentTurnId,
       iteration, model: model || null, toolCount: tools.length,
     };
-    const requestGate = await runLifecycle("before_request", requestMetadata);
+    const requestGate = await runLifecycle("before_request", requestMetadata, onEvent);
     if (requestGate.blocked) {
       onEvent({ type: "error", data: { message: requestGate.reason || "Agent request blocked by lifecycle policy." } });
       break;
     }
-    await runLifecycle("on_stream_start", requestMetadata);
+    await runLifecycle("on_stream_start", requestMetadata, onEvent);
 
     // Call LLM
     try {
@@ -385,11 +385,11 @@ export async function runAgent({
       },
       });
     } catch (error) {
-      await runLifecycle("on_error", { ...requestMetadata, errorCode: error.code || "LLM_REQUEST_FAILED" });
+      await runLifecycle("on_error", { ...requestMetadata, errorCode: error.code || "LLM_REQUEST_FAILED" }, onEvent);
       throw error;
     }
-    await runLifecycle("on_stream_end", requestMetadata);
-    await runLifecycle("after_request", requestMetadata);
+    await runLifecycle("on_stream_end", requestMetadata, onEvent);
+    await runLifecycle("after_request", requestMetadata, onEvent);
 
     if (signal?.aborted) {
       onEvent({ type: "done", data: { totalTokens, iterations: iteration, aborted: true } });
@@ -468,7 +468,7 @@ export async function runAgent({
           toolName: tc.name, toolCallId: tc.id,
           argumentKeys: Object.keys(args || {}).slice(0, 40),
         };
-        const toolGate = await runLifecycle("before_tool", toolMetadata);
+        const toolGate = await runLifecycle("before_tool", toolMetadata, onEvent);
         const toolStartedAt = Date.now();
         let result;
         if (toolGate.blocked) {
@@ -477,7 +477,7 @@ export async function runAgent({
           try {
             result = await executeTool(tc.name, args, toolContext);
           } catch (error) {
-            await runLifecycle("on_error", { ...toolMetadata, errorCode: error.code || "TOOL_EXECUTION_FAILED" });
+            await runLifecycle("on_error", { ...toolMetadata, errorCode: error.code || "TOOL_EXECUTION_FAILED" }, onEvent);
             throw error;
           }
         }
@@ -485,7 +485,7 @@ export async function runAgent({
           ...toolMetadata,
           success: result?.success === true,
           durationMs: Date.now() - toolStartedAt,
-        });
+        }, onEvent);
         if (result.success && ["write_file","edit_file","delete_file"].includes(tc.name)) {
           mutationCount++;
         }
