@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "safety/**"
+      - "prompts/**"
       - ".github/workflows/python-safety.yml"
 
 permissions:
@@ -17,5 +18,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run content filter tests
-        run: python -m unittest safety.test_filter
+      - name: Run content filter and prompt safety tests
+        run: python -m unittest safety.test_filter prompts.test_system
