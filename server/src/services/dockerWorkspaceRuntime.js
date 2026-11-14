@@ -116,7 +116,8 @@ class DockerWorkspaceRuntime {
       const inspected = JSON.parse(raw)[0];
       const mount = inspected?.Mounts?.find(item => item.Destination === "/workspace");
       const configuredSecurity = inspected?.HostConfig?.SecurityOpt || [];
-      const securityIsCurrent = securityOptions.every(option => configuredSecurity.includes(option));
+      const securityIsCurrent = configuredSecurity.some(option => option === "no-new-privileges:true" || option === "no-new-privileges") &&
+        configuredSecurity.includes(`seccomp=${seccompProfile}`);
       if (mount && path.resolve(mount.Source) === path.resolve(workspaceDir) &&
           inspected?.NetworkSettings?.Networks?.[network] && securityIsCurrent &&
           inspected?.HostConfig?.ReadonlyRootfs === true &&
