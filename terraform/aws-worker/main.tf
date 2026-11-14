@@ -102,10 +102,10 @@ resource "aws_iam_role_policy" "worker" {
         Resource = "${var.workspace_bucket_arn}/workspaces/*"
       }
       ], var.kms_key_arn == "" ? [] : [{
-      Sid      = "UseWorkspaceSnapshotKmsKey"
-      Effect   = "Allow"
-      Action   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
-      Resource = var.kms_key_arn
+        Sid      = "UseWorkspaceSnapshotKmsKey"
+        Effect   = "Allow"
+        Action   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = var.kms_key_arn
     }])
   })
 }
