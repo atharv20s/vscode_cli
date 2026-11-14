@@ -83,6 +83,17 @@ class ExecutionService {
     timeout = 45000,
     signal = null,
   }) {
+    // Linux-native execution uses bubblewrap namespaces inside a systemd
+    // user scope with cgroup CPU/memory/PID limits. It fails closed when the
+    // required host primitives are unavailable.
+    if (config.executionRuntime === "linux") {
+      const { linuxSandboxBackend } = await import("./backends/linuxSandboxBackend.js");
+      const result = await linuxSandboxBackend.execute({
+        workspaceId, workspaceDir, cwd, command, timeout, signal, operationId,
+      });
+      return { ...result, operationId };
+    }
+
     // Cloud Run delegates execution to a separately isolated Linux worker.
     if (config.executionRuntime === "remote") {
       const { executeOnRemoteWorker } = await import("./remoteExecutionWorker.js");
