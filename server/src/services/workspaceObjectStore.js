@@ -17,9 +17,12 @@ function objectStoreConfig() {
   const sessionToken = process.env.WORKSPACE_OBJECT_STORE_SESSION_TOKEN || process.env.AWS_SESSION_TOKEN || "";
   const useEc2Role = (process.env.WORKSPACE_OBJECT_STORE_USE_EC2_ROLE || "false").toLowerCase() === "true";
   const region = process.env.WORKSPACE_OBJECT_STORE_REGION || "us-east-1";
-  const endpoint = process.env.WORKSPACE_OBJECT_STORE_ENDPOINT || `https://s3.${region}.amazonaws.com`;
+  const customEndpoint = process.env.WORKSPACE_OBJECT_STORE_ENDPOINT || "";
+  const endpoint = customEndpoint || `https://s3.${region}.amazonaws.com`;
   const encryption = (process.env.WORKSPACE_OBJECT_STORE_SERVER_SIDE_ENCRYPTION || "AES256").trim();
   const kmsKeyId = process.env.WORKSPACE_OBJECT_STORE_KMS_KEY_ID || "";
+  if (!/^[a-z0-9-]{3,32}$/.test(region)) throw new Error("Workspace object storage region is invalid.");
+  if (useEc2Role && customEndpoint) throw new Error("Custom object storage endpoints are not allowed with EC2 instance-role credentials.");
   if (!bucket || (!useEc2Role && (!accessKey || !secretKey))) {
     if ((process.env.WORKSPACE_OBJECT_STORE_REQUIRED || "false").toLowerCase() === "true") {
       throw new Error("Workspace object storage is required but bucket credentials are incomplete.");
