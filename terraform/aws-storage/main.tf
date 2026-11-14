@@ -95,6 +95,33 @@ data "aws_iam_policy_document" "workspace_bucket_transport" {
       values   = ["false"]
     }
   }
+
+  statement {
+    sid       = "DenyUploadsWithoutConfiguredEncryption"
+    effect    = "Deny"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.workspace_snapshots.arn}/*"]
+    condition {
+      test     = "StringNotEquals"
+      variable = "s3:x-amz-server-side-encryption"
+      values   = [var.kms_key_arn == "" ? "AES256" : "aws:kms"]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.kms_key_arn == "" ? [] : [var.kms_key_arn]
+    content {
+      sid       = "DenyUploadsUsingUnexpectedKmsKey"
+      effect    = "Deny"
+      actions   = ["s3:PutObject"]
+      resources = ["${aws_s3_bucket.workspace_snapshots.arn}/*"]
+      condition {
+        test     = "StringNotEquals"
+        variable = "s3:x-amz-server-side-encryption-aws-kms-key-id"
+        values   = [statement.value]
+      }
+    }
+  }
 }
 
 resource "aws_s3_bucket_policy" "workspace_snapshots" {
