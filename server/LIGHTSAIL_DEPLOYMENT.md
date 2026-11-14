@@ -140,3 +140,10 @@ production deploy is a separate manual workflow and requires the exact
 `DEPLOY` confirmation plus configured SSH credentials and a verified host.
 
 No production deployment is performed by CI or by merging a pull request.
+
+
+### Execution-worker systemd hardening
+
+The checked-in `scripts/ath-ide-worker.service` now runs with a restrictive umask, bounded file descriptors, private temporary storage, read-only system paths, read-only home paths, kernel/control-group protection, no-new-privileges, and a restricted address-family set. It explicitly requires the local Docker socket and the `docker` supplementary group. Docker-group membership is effectively root-equivalent; use a dedicated worker host and never expose the Docker socket over TCP.
+
+The default workspace root should remain under `/var/lib/ath-ide/worker`, outside the protected home directory. If `WORKSPACE_ROOT` is changed to a path under `/home` or another protected location, update the unit with a narrowly scoped `ReadWritePaths=` exception and review it before enabling. After installing the seccomp profile and updated unit, run `systemctl daemon-reload`, restart only in a controlled maintenance window, then inspect a newly created disposable container with `docker inspect`. Unit hardening does not itself prove container seccomp, namespace, or cgroup enforcement.
