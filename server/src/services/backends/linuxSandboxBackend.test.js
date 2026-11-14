@@ -11,12 +11,15 @@ test("builds an isolated namespace command with network disabled by default", ()
     workingDirectory: "/workspace/project",
     command: "npm test",
     systemPaths: ["/usr", "/bin"],
+    etcFiles: [],
   });
   assert.ok(args.includes("--unshare-user"));
   assert.ok(args.includes("--unshare-pid"));
   assert.ok(args.includes("--unshare-net"));
   assert.ok(!args.includes("--share-net"));
   assert.ok(args.includes("--clearenv"));
+  assert.ok(!args.includes("/etc/shadow"));
+  assert.ok(!args.includes("--ro-bind") || !args.includes("/etc"));
   assert.ok(args.includes("/srv/workspaces/user-a"));
   assert.ok(args.includes("npm test"));
 });
@@ -35,7 +38,7 @@ test("host networking is an explicit, validated administrator setting", () => {
 });
 
 test("unit names cannot contain arbitrary shell or systemd syntax", () => {
-  assert.equal(makeUnitName("task/$(id);bad"), "athide-task----id--bad.scope");
+  assert.equal(makeUnitName("task/$(id);bad"), "athide-task---id--bad.scope");
 });
 
 test("workspace cwd must resolve inside the assigned workspace", async () => {
