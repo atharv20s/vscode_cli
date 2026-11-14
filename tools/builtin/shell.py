@@ -21,7 +21,7 @@ def _resolve_remote_workspace(remote_workspace: str, working_dir: str | None) ->
     if not isinstance(remote_workspace, str) or not remote_workspace.startswith("/"):
         raise ValueError("Remote workspace must be an absolute Linux path.")
     root = posixpath.normpath(remote_workspace)
-    requested = (working_dir or ".").replace("\\\\", "/")
+    requested = (working_dir or ".").replace(chr(92), "/")
     target = posixpath.normpath(requested if requested.startswith("/") else posixpath.join(root, requested))
     try:
         common = posixpath.commonpath([root, target])
