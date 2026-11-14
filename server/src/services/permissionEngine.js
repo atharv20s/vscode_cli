@@ -21,18 +21,30 @@ const SAFE_READ_ONLY_COMMANDS = [
   /^(node|npm|python|python3)\s+--version$/,
 ];
 const SECRET_PATH_PATTERNS = [
-  /(^|\/)\.env(?:\.|$)/i, /(^|\/)(id_rsa|id_ed25519|.*\.pem|.*\.key)$/i,
-  /(^|\/)\.aws\/credentials$/i, /(^|\/)terraform\.tfstate(?:\.|$)/i,
+  /(^|\\/)\\.env(?:\\.|$)/i,
+  /(^|\\/)(id_rsa|id_ed25519|.*\\.pem|.*\\.key)$/i,
+  /(^|\\/)\\.aws\\/credentials$/i,
+  /(^|\\/)terraform\\.tfstate(?:\\.|$)/i,
+  /(^|\\/)\\.npmrc$/i, /(^|\\/)\\.netrc$/i, /(^|\\/)\\.pypirc$/i,
+  /(^|\\/)\\.git-credentials$/i, /(^|\\/)authorized_keys$/i, /(^|\\/)known_hosts$/i,
+  /(^|\\/)etc\\/shadow$/i, /(^|\\/)proc\\/\\d+\\/environ$/i,
+];
+const SECRET_COMMAND_PATH_PATTERNS = [
+  /(?:^|[\\s"'\x60])(?:[^\\s"'\x60]+\\/)?\\.env(?:\\.[^\\s"'\x60]+)?(?:$|[\\s"'\x60])/i,
+  /(?:^|[\\s"'\x60])(?:[^\\s"'\x60]+\\/)?(?:id_rsa|id_ed25519|\\.aws\\/credentials|\\.npmrc|\\.netrc|\\.git-credentials)(?:$|[\\s"'\x60])/i,
+  /(?:^|[\\s"'\x60])(?:[^\\s"'\x60]+\\/)?terraform\\.tfstate(?:$|[\\s"'\x60])/i,
+  /(?:^|[\\s"'\x60])\\/etc\\/shadow(?:$|[\\s"'\x60])/i,
 ];
 const SENSITIVE_WRITE_PATHS = [
-  /^package(?:-lock)?\.json$/i, /^Dockerfile$/i,
-  /^\.github\/workflows\//i, /(^|\/)server\/src\/config\//i,
+  /(^|\\/)package(?:-lock)?\\.json$/i, /(^|\\/)Dockerfile$/i,
+  /(^|\\/)\\.github\\/workflows\\//i, /(^|\\/)server\\/src\\/config\\//i,
+  /(^|\\/)terraform\\//i, /(^|\\/)server\\/src\\/services\\/permissionEngine\\.js$/i,
 ];
 
 export function classifyCommandForPolicy(command, options = {}) {
   if (typeof command !== "string" || !command.trim()) return "DENY";
   const cmd = command.trim();
-  if (DENY_COMMAND_PATTERNS.some(p => p.test(cmd))) return "DENY";
+  if (DENY_COMMAND_PATTERNS.some(p => p.test(cmd)) || SECRET_COMMAND_PATH_PATTERNS.some(p => p.test(cmd))) return "DENY";
   if (options.isolatedRepoAgent) {
     if (/\b(git\s+(push|remote|config)|npm\s+publish|curl|wget|ssh|scp|sftp|nc|netcat|ftp)\b/i.test(cmd)) return "DENY";
     if (/^(npm|pnpm|yarn)\s+(install|ci|test|run\s+(build|test|lint))(\s|$)/i.test(cmd) ||
@@ -43,11 +55,14 @@ export function classifyCommandForPolicy(command, options = {}) {
 }
 
 export function classifyFileOperationForPolicy(action, filePath = "") {
-  const normalized = String(filePath || "").replace(/\\/g, "/").replace(/^\.\//, "");
-  if (action === "read" && SECRET_PATH_PATTERNS.some(p => p.test(normalized))) return "DENY";
+  const normalized = String(filePath || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/{2,}/g, "/");
+  if (!normalized || normalized.includes("\0")) return "DENY";
+  if (action === "read") return SECRET_PATH_PATTERNS.some(pattern => pattern.test(normalized)) ? "DENY" : "ALLOW";
   if (["delete", "delete_file"].includes(action)) return "ASK";
-  if (["write", "edit", "create"].includes(action) && SENSITIVE_WRITE_PATHS.some(p => p.test(normalized))) return "ASK";
-  return "ALLOW";
+  if (["write", "edit", "create"].includes(action)) {
+    return SENSITIVE_WRITE_PATHS.some(pattern => pattern.test(normalized)) ? "ASK" : "ALLOW";
+  }
+  return "ASK";
 }
 
 class PermissionEngine {
