@@ -22,4 +22,4 @@ jobs:
       - name: Compile relevant modules
         run: python -m compileall -q tools config
       - name: Run SSH boundary tests
-        run: python -m unittest tests.test_python_shell_ssh -v
+        run: python -m unittest discover -s tests -p 'test_python_shell_ssh.py' -v
