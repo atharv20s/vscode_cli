@@ -91,7 +91,7 @@ class TerminalSessionManager {
     // Do not spawn shells inside the shared API container in production. The
     // remote SSH adapter is not yet a per-user isolated runtime either.
     if (!config.isDev && !["docker", "linux"].includes(config.executionRuntime)) {
-      throw new Error("Isolated Linux workspace runtime is not configured. Set EXECUTION_RUNTIME=docker on a worker with Docker Engine access.");
+      throw new Error("Isolated workspace runtime is not configured. Set EXECUTION_RUNTIME=docker or linux on a worker with the required sandbox runtime.");
     }
 
     const session = {
