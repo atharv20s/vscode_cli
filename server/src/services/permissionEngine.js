@@ -22,12 +22,12 @@ const SAFE_READ_ONLY_COMMANDS = [
 ];
 const SECRET_PATH_PATTERNS = [
   /(^|\/)\.env(?:\.|$)/i,
-  /(^|\/)(id_rsa|id_ed25519|.*\.pem|.*\.key)$/i,
+  /(^|\/)(id_rsa|id_ed25519|id_ecdsa|.*\.pem|.*\.key)$/i,
   /(^|\/)\.aws\/credentials$/i,
   /(^|\/)terraform\.tfstate(?:\.|$)/i,
   /(^|\/)\.npmrc$/i, /(^|\/)\.netrc$/i, /(^|\/)\.pypirc$/i,
   /(^|\/)\.git-credentials$/i, /(^|\/)authorized_keys$/i, /(^|\/)known_hosts$/i,
-  /(^|\/)etc\/shadow$/i, /(^|\/)proc\/\d+\/environ$/i,
+  /(^|\/)etc\/shadow$/i, /(^|\/)proc\/(self|\d+)\/environ$/i,
 ];
 const SECRET_COMMAND_PATH_PATTERNS = [
   /(?:^|[\s"'\x60])(?:[^\s"'\x60]+\/)?\.env(?:\.[^\s"'\x60]+)?(?:$|[\s"'\x60])/i,
