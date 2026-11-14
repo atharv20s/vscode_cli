@@ -28,13 +28,21 @@ resource "google_service_account" "gke_nodes" {
 
 resource "google_project_iam_member" "deployer_bindings" {
   for_each = toset([
-    "roles/artifactregistry.writer",
     "roles/run.admin",
     "roles/container.developer",
   ])
   project = var.project_id
   role    = each.key
   member  = "serviceAccount:${google_service_account.github_actions_sa.email}"
+}
+
+
+resource "google_artifact_registry_repository_iam_member" "deployer_writer" {
+  project    = var.project_id
+  location   = var.region
+  repository = google_artifact_registry_repository.docker_repo.name
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${google_service_account.github_actions_sa.email}"
 }
 
 resource "google_service_account_iam_member" "deployer_can_act_as_runtime" {
@@ -80,4 +88,10 @@ resource "google_service_account_iam_member" "github_workload_identity" {
   service_account_id = google_service_account.github_actions_sa.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${google_iam_workload_identity_pool.github.workload_identity_pool_id}/attribute.repository/${var.github_repository}"
+}
+
+resource "google_service_account_iam_member" "deployer_can_act_as_gke_nodes" {
+  service_account_id = google_service_account.gke_nodes.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.github_actions_sa.email}"
 }
