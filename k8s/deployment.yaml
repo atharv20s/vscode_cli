@@ -47,6 +47,10 @@ spec:
               value: "kafka-service.ath-ide.svc.cluster.local:9092"
             - name: NODE_ENV
               value: "production"
+            - name: HOME
+              value: "/tmp"
+            - name: WORKSPACE_ROOT
+              value: "/workspace"
           envFrom:
             - configMapRef:
                 name: ath-ide-config
