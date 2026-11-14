@@ -7,6 +7,8 @@ import asyncio
 import os
 import shlex
 import subprocess
+import posixpath
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,43 @@ from tools.base import Tool, ToolResult
 from config.config import get_config
 
 
+def _resolve_remote_workspace(remote_workspace: str, working_dir: str | None) -> str:
+    """Resolve a requested directory without allowing workspace escape."""
+    if not isinstance(remote_workspace, str) or not remote_workspace.startswith("/"):
+        raise ValueError("Remote workspace must be an absolute Linux path.")
+    root = posixpath.normpath(remote_workspace)
+    requested = (working_dir or ".").replace("\\\\", "/")
+    target = posixpath.normpath(requested if requested.startswith("/") else posixpath.join(root, requested))
+    try:
+        common = posixpath.commonpath([root, target])
+    except ValueError as exc:
+        raise ValueError("Remote working directory is outside the configured workspace.") from exc
+    if common != root:
+        raise ValueError("Remote working directory is outside the configured workspace.")
+    return target
+
+
+def _validate_remote_ssh_config(cfg: Any) -> tuple[str, str, int]:
+    host = cfg.remote_host
+    username = cfg.remote_user
+    port = cfg.remote_port
+    if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9.:%_-]+", host) or host.startswith("-"):
+        raise ValueError("Invalid remote SSH host.")
+    if not isinstance(username, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", username):
+        raise ValueError("Invalid remote SSH username.")
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError("Remote SSH port must be between 1 and 65535.")
+    return host, username, port
+
+
+def _build_remote_payload(command: str, remote_cwd: str, container: str = "") -> str:
+    quoted_cwd = shlex.quote(remote_cwd)
+    inner = f"mkdir -p {quoted_cwd} && cd {quoted_cwd} && {command}"
+    if container:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", container):
+            raise ValueError("Invalid Docker container name or ID.")
+        return f"docker exec -i {container} bash -lc {shlex.quote(inner)}"
+    return f"bash -lc {shlex.quote(inner)}"
 class ShellTool(Tool):
     """
     Execute shell commands.
@@ -92,36 +131,17 @@ class ShellTool(Tool):
     ) -> ToolResult:
         """Execute command inside the remote Oracle Cloud VM / Docker sandbox over SSH."""
         try:
-            # 1. Resolve remote directory
-            remote_base = cfg.remote_workspace.rstrip("/")
-            if working_dir:
-                clean_wd = working_dir.replace("\\", "/").strip("/")
-                if clean_wd.startswith("/"):
-                    remote_cwd = clean_wd
-                else:
-                    remote_cwd = f"{remote_base}/{clean_wd}"
-            else:
-                remote_cwd = remote_base
-
-            # 2. Build remote command string
-            # Ensure remote workspace exists before executing
-            if cfg.remote_docker_container:
-                # Execute inside a specific Docker container on the OCI VM
-                escaped_cmd = command.replace('"', '\\"').replace('$', '\\$')
-                remote_payload = (
-                    f"docker exec -i {cfg.remote_docker_container} "
-                    f"bash -c \"mkdir -p '{remote_cwd}' && cd '{remote_cwd}' && {escaped_cmd}\""
-                )
-            else:
-                # Execute natively on the OCI Linux host
-                remote_payload = f"mkdir -p '{remote_cwd}' && cd '{remote_cwd}' && {command}"
-
+            # Validate the target and keep every requested directory under the
+            # configured workspace before constructing a remote shell command.
+            host, username, port = _validate_remote_ssh_config(cfg)
+            remote_cwd = _resolve_remote_workspace(cfg.remote_workspace, working_dir)
+            remote_payload = _build_remote_payload(command, remote_cwd, cfg.remote_docker_container)
             # 3. Construct SSH argument list
             ssh_args = [
                 "ssh",
-                "-p", str(cfg.remote_port),
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null",
+                "-p", str(port),
+                "-o", "StrictHostKeyChecking=yes",
+                "-o", "UpdateHostKeys=yes",
                 "-o", "LogLevel=ERROR",
                 "-o", "ConnectTimeout=10",
                 "-o", "BatchMode=yes",
@@ -133,7 +153,7 @@ class ShellTool(Tool):
                     key_path = os.path.abspath(key_path)
                 ssh_args.extend(["-i", key_path])
 
-            target = f"{cfg.remote_user}@{cfg.remote_host}"
+            target = f"{username}@{host}"
             ssh_args.append(target)
             ssh_args.append(remote_payload)
 
