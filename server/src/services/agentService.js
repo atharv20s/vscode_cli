@@ -22,7 +22,7 @@ import { ContextSelector } from "./contextSelector.js";
 import { getWorkspaceService } from "./workspaceService.js";
 import { selectSkills, formatSkills } from "./skillRegistry.js";
 import { buildRepositoryContext, formatRepositoryContext } from "./repoContextEngine.js";
-import { runAgentHooks } from "./agentLifecycleHooks.js";
+import { registerAgentHook, runAgentHooks } from "./agentLifecycleHooks.js";
 
 /** Default system prompt */
 const DEFAULT_SYSTEM_PROMPT = `You are ATH Agent, an autonomous software engineering agent operating inside ATH IDE.
@@ -69,6 +69,27 @@ Use read_file/list_files to understand code; write_file/edit_file/delete_file fo
 - Do not silently remove tests, weaken assertions or hide failures.
 - For high-impact actions (deleting substantial data, publishing, pushing, production migrations or spending money), explain the impact and obtain confirmation when needed.
 - If a required tool is unavailable, say exactly what is blocked and offer a safe alternative.`;
+
+// Built-in production hooks: enforce any per-turn tool allowlist and record
+// safe lifecycle metadata. These hooks cannot grant permissions.
+registerAgentHook("before_request", async ({ toolCount }) => {
+  if (!Number.isInteger(toolCount) || toolCount < 0 || toolCount > 128) {
+    return { block: true, reason: "Agent request exceeded the configured tool budget." };
+  }
+}, { id: "agent-request-tool-budget", priority: 1000, critical: true });
+
+registerAgentHook("before_tool", async ({ toolName, allowedTools }) => {
+  if (Array.isArray(allowedTools) && !allowedTools.includes(toolName)) {
+    return { block: true, reason: "Tool is not in this turn's server-approved allowlist." };
+  }
+}, { id: "agent-tool-allowlist", priority: 1000, critical: true });
+
+registerAgentHook("after_tool", async ({ toolName, success, durationMs }) => {
+  logger.info("Agent tool lifecycle completed", {
+    toolName, success: success === true,
+    durationMs: Number.isFinite(durationMs) ? durationMs : null,
+  });
+}, { id: "agent-tool-audit", priority: -100 });
 
 /**
  * Run trusted in-process lifecycle hooks with metadata only. Hook decisions
@@ -467,6 +488,7 @@ export async function runAgent({
           userId, workspaceId, sessionId, turnId: currentTurnId,
           toolName: tc.name, toolCallId: tc.id,
           argumentKeys: Object.keys(args || {}).slice(0, 40),
+          allowedTools: Array.isArray(allowedTools) ? allowedTools : null,
         };
         const toolGate = await runLifecycle("before_tool", toolMetadata, onEvent);
         const toolStartedAt = Date.now();
