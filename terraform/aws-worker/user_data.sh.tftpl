@@ -54,7 +54,7 @@ fi
 
 git clone --depth 1 --branch "${repository_branch}" "${repository_url}" /home/ubuntu/ath-ide
 chown -R ubuntu:ubuntu /home/ubuntu/ath-ide
-npm ci --prefix /home/ubuntu/ath-ide/server
+runuser -u ubuntu -- env HOME=/home/ubuntu npm ci --prefix /home/ubuntu/ath-ide/server
 docker build -f /home/ubuntu/ath-ide/server/Dockerfile.workspace -t "${workspace_image}" /home/ubuntu/ath-ide
 
 bash /home/ubuntu/ath-ide/scripts/install-worker-security.sh
