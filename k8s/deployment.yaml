@@ -96,7 +96,7 @@ metadata:
   labels:
     app: ath-ide-core
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   sessionAffinity: ClientIP
   sessionAffinityConfig:
     clientIP:
