@@ -24,5 +24,9 @@ registerAgentHook("before_tool", async ({ toolName }) => {
 }, { id: "worker-shell-policy", critical: true });
 ```
 
+The production agent registers built-in critical hooks for the per-turn tool
+budget and server-approved tool allowlist, plus a post-tool audit hook that
+records tool name, success and duration without arguments or output.
+
 The hook registry is not a sandbox. Hooks must be trusted server code and
 must not evaluate repository content or model-generated JavaScript.
