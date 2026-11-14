@@ -186,7 +186,6 @@ export async function runAgent({
   images = [],
   context,
   conversationHistory = [],
-  systemPrompt,
   model,
   workspaceDir,
   executionWorkspaceDir,
@@ -251,7 +250,7 @@ export async function runAgent({
   // System prompt
   messages.push({
     role: "system",
-    content: (systemPrompt || DEFAULT_SYSTEM_PROMPT) + skillContext + (repositoryContext ? "\n\n## Relevant existing codebase context\n" + repositoryContext : "") + contextBlock,
+    content: DEFAULT_SYSTEM_PROMPT + skillContext + (repositoryContext ? "\n\n## Relevant existing codebase context\n" + repositoryContext : "") + contextBlock,
   });
 
   // Conversation history
