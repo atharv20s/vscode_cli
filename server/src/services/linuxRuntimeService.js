@@ -23,6 +23,13 @@ export function parseCpuMax(contents = "") {
   return Math.round((q / p) * 1000) / 1000;
 }
 
+export function parsePidsLimit(contents = "") {
+  const value = String(contents).trim();
+  if (!value || value === "max") return null;
+  const limit = Number(value);
+  return Number.isSafeInteger(limit) && limit >= 0 ? limit : null;
+}
+
 export function parseByteLimit(contents = "") {
   const value = String(contents).trim();
   if (!value || value === "max") return null;
@@ -79,7 +86,7 @@ export async function getLinuxRuntimeDiagnostics(options = {}) {
     const match = status.match(new RegExp("^" + key + ":\\s*(\\d+)", "m"));
     return match ? Number(match[1]) : null;
   };
-  const pidsLimit = pidsMax.trim() === "max" ? null : Number.isSafeInteger(Number(pidsMax.trim())) ? Number(pidsMax.trim()) : null;
+  const pidsLimit = parsePidsLimit(pidsMax);
 
   return {
     supported: true,
