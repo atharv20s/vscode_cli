@@ -5,7 +5,8 @@ import { config } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
 import { eventBus, EVENT_TOPICS } from "../../websocket/eventBus.js";
 
-const SYSTEM_PATHS = ["/usr", "/usr/local", "/bin", "/sbin", "/lib", "/lib64", "/etc"];
+const SYSTEM_PATHS = ["/usr", "/usr/local", "/bin", "/sbin", "/lib", "/lib64"];
+const ETC_FILES = ["/etc/hosts", "/etc/resolv.conf", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf", "/etc/ld.so.cache", "/etc/ssl/certs/ca-certificates.crt"];
 const SAFE_ENV = {
   PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
   LANG: "C.UTF-8",
@@ -17,7 +18,7 @@ export function makeUnitName(operationId = "task") {
   return `athide-${safe}.scope`;
 }
 
-export function buildBubblewrapArgs({ workspaceRoot, workingDirectory, command, networkMode = "none", systemPaths = SYSTEM_PATHS }) {
+export function buildBubblewrapArgs({ workspaceRoot, workingDirectory, command, networkMode = "none", systemPaths = SYSTEM_PATHS, etcFiles = ETC_FILES }) {
   if (!["none", "host"].includes(networkMode)) throw new Error("LINUX_SANDBOX_NETWORK must be 'none' or 'host'.");
   const args = [
     "--die-with-parent", "--new-session",
@@ -27,6 +28,8 @@ export function buildBubblewrapArgs({ workspaceRoot, workingDirectory, command, 
   else args.push("--share-net");
 
   for (const mountPath of systemPaths) args.push("--ro-bind", mountPath, mountPath);
+  args.push("--dir", "/etc", "--dir", "/etc/ssl", "--dir", "/etc/ssl/certs");
+  for (const file of etcFiles) args.push("--ro-bind", file, file);
   args.push(
     "--proc", "/proc",
     "--dev", "/dev",
@@ -50,7 +53,7 @@ async function resolveWorkspacePaths(workspaceDir, cwd) {
   const root = await realpath(workspaceDir);
   const rootStat = await stat(root);
   if (!rootStat.isDirectory()) throw new Error("Workspace root is not a directory.");
-  const requestedCwd = cwd || root;
+  const requestedCwd = cwd ? (path.isAbsolute(cwd) ? cwd : path.resolve(root, cwd)) : root;
   const workingDirectory = await realpath(requestedCwd);
   const cwdStat = await stat(workingDirectory);
   if (!cwdStat.isDirectory()) throw new Error("Command working directory is not a directory.");
@@ -100,7 +103,12 @@ class LinuxSandboxBackend {
         workingDirectory,
         command,
         networkMode: config.linuxSandbox.networkMode,
-        systemPaths: SYSTEM_PATHS,
+        systemPaths: await Promise.all(SYSTEM_PATHS.map(async mountPath => {
+          try { await this.fsAccess(mountPath); return mountPath; } catch { return null; }
+        })).then(paths => paths.filter(Boolean)),
+        etcFiles: await Promise.all(ETC_FILES.map(async file => {
+          try { await this.fsAccess(file); return file; } catch { return null; }
+        })).then(paths => paths.filter(Boolean)),
       }),
     ];
 
