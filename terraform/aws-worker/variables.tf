@@ -30,7 +30,7 @@ variable "api_security_group_id" {
 }
 
 variable "worker_secret_arn" {
-  description = "Secrets Manager secret ARN containing WORKER_SHARED_SECRET and temporary S3 credential environment values"
+  description = "Secrets Manager secret ARN containing WORKER_SHARED_SECRET and any additional non-S3 worker environment values"
   type        = string
 }
 
