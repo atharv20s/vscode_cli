@@ -27,11 +27,74 @@ class App {
     this.setupEventListeners();
     this.initResizers();
     this.initWebSocket();
+    this.initLinuxRuntimeUI();
     this.initPreviewUI();
     this.restoreChatFromCache();
     await this.loadWorkspaceFiles();
     await this.loadMcpServers();
     this.checkAuthStatus();
+  }
+
+  initLinuxRuntimeUI() {
+    const trigger = document.getElementById("linux-runtime-trigger");
+    const panel = document.getElementById("linux-runtime-panel");
+    const indicator = document.getElementById("linux-runtime-indicator");
+    if (!trigger || !panel) return;
+
+    const set = (id, value) => {
+      const element = document.getElementById(id);
+      if (element) element.textContent = value == null || value === "" ? "Unknown" : String(value);
+    };
+    const formatBytes = value => {
+      if (!Number.isFinite(value) || value < 0) return "Unknown";
+      const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+      let amount = value, unit = 0;
+      while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
+      return amount.toFixed(amount >= 10 || unit === 0 ? 0 : 1) + " " + units[unit];
+    };
+    const refresh = async () => {
+      set("linux-runtime-status", "Checking worker runtime…");
+      if (indicator) indicator.dataset.state = "loading";
+      try {
+        const response = await fetch("/api/runtime/linux", {
+          headers: { Authorization: "Bearer " + this.token },
+        });
+        const data = await response.json();
+        if (!response.ok || !data.supported) {
+          set("linux-runtime-status", data.reason || "Linux diagnostics are unavailable on this worker.");
+          if (indicator) indicator.dataset.state = "unknown";
+          return;
+        }
+        set("linux-runtime-status", "Connected · process-scoped diagnostics");
+        set("linux-runtime-kernel", data.kernel?.release);
+        set("linux-runtime-arch", data.kernel?.architecture);
+        set("linux-runtime-cgroup", data.isolation?.cgroupVersion ? "v" + data.isolation.cgroupVersion : "Unknown");
+        set("linux-runtime-cpu", data.limits?.cpuCores == null ? "No reported limit" : data.limits.cpuCores + " cores");
+        set("linux-runtime-memory", data.limits?.memoryBytes == null ? "No reported limit" : formatBytes(data.limits.memoryBytes));
+        set("linux-runtime-pids", data.limits?.processCount == null ? "No reported limit" : data.limits.processCount);
+        set("linux-runtime-seccomp", data.isolation?.seccompMode == null ? "Unknown" : data.isolation.seccompMode === 2 ? "Filter mode" : data.isolation.seccompMode);
+        set("linux-runtime-nnp", data.isolation?.noNewPrivileges ? "Enabled" : "Not detected");
+        const namespaces = Object.entries(data.isolation?.namespaces || {}).filter(([, available]) => available).map(([name]) => name);
+        set("linux-runtime-namespaces", namespaces.length ? namespaces.join(", ") : "None detected");
+        if (indicator) indicator.dataset.state = "ready";
+      } catch {
+        set("linux-runtime-status", "Unable to reach the authenticated runtime diagnostics endpoint.");
+        if (indicator) indicator.dataset.state = "unknown";
+      }
+    };
+
+    trigger.addEventListener("click", async () => {
+      panel.hidden = !panel.hidden;
+      trigger.setAttribute("aria-expanded", String(!panel.hidden));
+      if (!panel.hidden) await refresh();
+    });
+    document.getElementById("linux-runtime-refresh")?.addEventListener("click", refresh);
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape" && !panel.hidden) {
+        panel.hidden = true;
+        trigger.setAttribute("aria-expanded", "false");
+      }
+    });
   }
 
   /**
@@ -108,6 +171,7 @@ class App {
         this.logTerminal("[Agent lifecycle] " + stage + detail, "info");
       }
     });
+
 
     // Agent Streaming Events
     window.wsClient.on("turn_start", (data) => {
