@@ -25,3 +25,19 @@ test("shared named network overrides cannot join separate workspaces", () => {
 test("repo-agent network override none remains networkless", () => {
   assert.equal(workspaceNetworkName("repo-agent-task", "none"), "none");
 });
+
+
+import path from "node:path";
+import { workspaceSeccompProfilePath, workspaceSecurityOptions } from "./dockerWorkspaceRuntime.js";
+
+test("workspace seccomp profile path is absolute and configurable", () => {
+  assert.equal(workspaceSeccompProfilePath({ DOCKER_SECCOMP_PROFILE: "/opt/ath/seccomp.json" }), "/opt/ath/seccomp.json");
+  assert.equal(path.isAbsolute(workspaceSeccompProfilePath({})), true);
+});
+
+test("workspace security options require an absolute explicit seccomp profile", () => {
+  assert.deepEqual(workspaceSecurityOptions("/etc/ath-ide/seccomp-workspace.json"), [
+    "no-new-privileges", "seccomp=/etc/ath-ide/seccomp-workspace.json",
+  ]);
+  assert.throws(() => workspaceSecurityOptions("relative/profile.json"), /absolute/);
+});
