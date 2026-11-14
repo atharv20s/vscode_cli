@@ -24,7 +24,9 @@ jobs:
           terraform_version: "1.9.8"
       - name: Format
         working-directory: terraform/aws-storage
-        run: terraform fmt -check -recursive
+        run: |
+          terraform fmt -diff -recursive
+          terraform fmt -check -recursive
       - name: Initialize without backend
         working-directory: terraform/aws-storage
         run: terraform init -backend=false -input=false
