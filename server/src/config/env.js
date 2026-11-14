@@ -84,6 +84,19 @@ export const config = {
   dockerWorkspaceUid: parseInt(process.env.DOCKER_WORKSPACE_UID || "1000", 10),
   dockerWorkspaceGid: parseInt(process.env.DOCKER_WORKSPACE_GID || "1000", 10),
 
+  // Linux-native sandbox backend: systemd user scopes enforce cgroup limits;
+  // bubblewrap supplies per-task namespaces and filesystem boundaries.
+  linuxSandbox: {
+    systemdRunBinary: process.env.LINUX_SYSTEMD_RUN_BIN || "systemd-run",
+    systemctlBinary: process.env.LINUX_SYSTEMCTL_BIN || "systemctl",
+    bubblewrapBinary: process.env.LINUX_BWRAP_BIN || "bwrap",
+    memoryMax: process.env.LINUX_SANDBOX_MEMORY_MAX || "2G",
+    cpuQuota: process.env.LINUX_SANDBOX_CPU_QUOTA || "200%",
+    tasksMax: Math.max(16, parseInt(process.env.LINUX_SANDBOX_TASKS_MAX || "256", 10)),
+    networkMode: (process.env.LINUX_SANDBOX_NETWORK || "none").toLowerCase(),
+    maxOutputBytes: Math.max(65536, parseInt(process.env.LINUX_SANDBOX_MAX_OUTPUT_BYTES || "1048576", 10)),
+  },
+
   // Workspace persistence and safety limits. Production should use a durable shared mount.
   workspaceStorageRoot: process.env.WORKSPACE_STORAGE_ROOT ? path.resolve(process.env.WORKSPACE_STORAGE_ROOT) : "",
   workspaceQuotaBytes: Math.max(10 * 1024 * 1024, parseInt(process.env.WORKSPACE_QUOTA_BYTES || "268435456", 10)),
