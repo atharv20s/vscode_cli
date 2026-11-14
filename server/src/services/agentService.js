@@ -427,11 +427,27 @@ export async function runAgent({
       // verifier runs declared project scripts in the same scoped workspace;
       // its evidence is fed back to the LLM before it writes the final answer.
       if (persistWorkspaceMeta && codeTask && mutationCount > verifiedMutationCount && tools.some(tool => tool.function.name === "verify_workspace")) {
-        const verification = await executeTool("verify_workspace", {}, {
-          ...toolContext,
-          allowedTools: null,
-          turnId: currentTurnId + "_verification",
-        });
+        const verificationMetadata = {
+          userId, workspaceId, sessionId, turnId: currentTurnId + "_verification",
+          toolName: "verify_workspace",
+          toolCallId: "automatic-verification",
+          argumentKeys: [],
+          allowedTools: Array.isArray(allowedTools) ? allowedTools : null,
+          iteration,
+        };
+        const verificationStartedAt = Date.now();
+        const verificationGate = await runLifecycle("before_tool", verificationMetadata, onEvent);
+        const verification = verificationGate.blocked
+          ? { success: false, error: verificationGate.reason || "Automatic verification blocked by lifecycle policy." }
+          : await executeTool("verify_workspace", {}, {
+              ...toolContext,
+              turnId: currentTurnId + "_verification",
+            });
+        await runLifecycle("after_tool", {
+          ...verificationMetadata,
+          success: verification.success === true,
+          durationMs: Date.now() - verificationStartedAt,
+        }, onEvent);
         verifiedMutationCount = mutationCount;
         const report = verification.success
           ? "Automatic workspace verification passed. Evidence:\\n" + (verification.output || "All detected checks passed.")
