@@ -6,6 +6,7 @@ This standalone Terraform root provisions a dedicated, private EC2 execution-wor
 - EC2 instances have no public IP and no inbound SSH rule. Operator access is through Systems Manager Session Manager.
 - IMDSv2 is required, metadata hop limit is one, and instance metadata tags are disabled.
 - The worker security group accepts port 8081 only from the internal NLB security group; the NLB accepts traffic only from the API security group.
+- The worker process belongs to the Docker group, which is effectively host-root access. Treat each worker instance as a privileged security boundary; never co-locate untrusted application services or expose the Docker socket.
 - The worker uses a dedicated instance role. It can read one Secrets Manager bootstrap secret and read/write only the workspace snapshot prefix in the S3 bucket. Optional KMS access is limited to the configured key.
 - Root EBS storage is encrypted gp3. The worker bootstrap installs the explicit deny-by-default seccomp profile and hardened systemd unit.
 - Auto Scaling uses a CPU target tracking policy; the default pool is 1 to 5 instances.
