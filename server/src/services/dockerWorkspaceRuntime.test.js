@@ -28,6 +28,8 @@ test("repo-agent network override none remains networkless", () => {
 
 
 import path from "node:path";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { workspaceSeccompProfilePath, workspaceSecurityOptions } from "./dockerWorkspaceRuntime.js";
 
 test("workspace seccomp profile path is absolute and configurable", () => {
@@ -40,4 +42,18 @@ test("workspace security options require an absolute explicit seccomp profile", 
     "no-new-privileges", "seccomp=/etc/ath-ide/seccomp-workspace.json",
   ]);
   assert.throws(() => workspaceSecurityOptions("relative/profile.json"), /absolute/);
+});
+
+
+test("workspace seccomp profile retains Docker deny-by-default rules and adds explicit high-risk denials", () => {
+  const profilePath = fileURLToPath(new URL("../../security/seccomp-workspace.json", import.meta.url));
+  const profile = JSON.parse(fs.readFileSync(profilePath, "utf8"));
+  assert.equal(profile.defaultAction, "SCMP_ACT_ERRNO");
+  assert.ok(Array.isArray(profile.syscalls));
+  const explicitlyDenied = profile.syscalls.find(rule =>
+    rule.action === "SCMP_ACT_ERRNO" &&
+    ["ptrace", "mount", "setns", "bpf", "userfaultfd"].every(name => rule.names.includes(name))
+  );
+  assert.ok(explicitlyDenied, "high-risk syscall deny rule must be present");
+  assert.ok(profile.syscalls.some(rule => rule.action === "SCMP_ACT_ALLOW" && rule.names.includes("execve")));
 });
