@@ -94,8 +94,6 @@ class DockerWorkspaceRuntime {
     if (options.replaceExisting) {
       try { execFileSync(config.dockerBinary, ["rm", "-f", name], { stdio: "ignore", timeout: 15000 }); } catch {}
       this.containers.delete(name);
-    } else if (existing?.workspaceDir === workspaceDir) {
-      return name;
     }
 
     const docker = config.dockerBinary;
