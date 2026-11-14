@@ -84,8 +84,8 @@ resource "aws_iam_role_policy_attachment" "ssm" {
 }
 
 resource "aws_iam_role_policy" "worker" {
-  name = "${var.name_prefix}-worker-runtime"
-  role = aws_iam_role.worker.id
+  name   = "${var.name_prefix}-worker-runtime"
+  role   = aws_iam_role.worker.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = concat([
@@ -116,12 +116,12 @@ resource "aws_iam_instance_profile" "worker" {
 }
 
 resource "aws_lb" "worker" {
-  name               = substr("${var.name_prefix}-worker", 0, 32)
-  internal           = true
-  load_balancer_type = "network"
-  ip_address_type    = "ipv4"
-  subnets            = var.private_subnet_ids
-  security_groups    = [aws_security_group.internal_nlb.id]
+  name                             = substr("${var.name_prefix}-worker", 0, 32)
+  internal                         = true
+  load_balancer_type               = "network"
+  ip_address_type                  = "ipv4"
+  subnets                          = var.private_subnet_ids
+  security_groups                  = [aws_security_group.internal_nlb.id]
   enable_cross_zone_load_balancing = true
 
   tags = merge(var.tags, { Application = "ath-ide", Role = "execution-worker" })
@@ -159,9 +159,9 @@ resource "aws_lb_listener" "worker" {
 }
 
 resource "aws_launch_template" "worker" {
-  name_prefix   = "${var.name_prefix}-worker-"
-  image_id      = data.aws_ssm_parameter.al2023_ami.value
-  instance_type = var.instance_type
+  name_prefix            = "${var.name_prefix}-worker-"
+  image_id               = data.aws_ssm_parameter.al2023_ami.value
+  instance_type          = var.instance_type
   update_default_version = true
 
   iam_instance_profile {
@@ -188,13 +188,13 @@ resource "aws_launch_template" "worker" {
   }
 
   user_data = base64encode(templatefile("${path.module}/user_data.sh.tftpl", {
-    aws_region       = var.aws_region
-    repository_url   = var.repository_url
+    aws_region        = var.aws_region
+    repository_url    = var.repository_url
     repository_branch = var.repository_branch
     worker_secret_arn = var.worker_secret_arn
-    workspace_bucket = var.workspace_bucket_name
-    kms_key_id       = var.kms_key_arn
-    workspace_image  = var.workspace_image
+    workspace_bucket  = var.workspace_bucket_name
+    kms_key_id        = var.kms_key_arn
+    workspace_image   = var.workspace_image
   }))
 
   tag_specifications {
