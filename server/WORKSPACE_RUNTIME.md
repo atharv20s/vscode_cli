@@ -338,14 +338,14 @@ JWT identities are permitted by policy.
 
 ## Explicit seccomp enforcement for workspace containers
 
-Workspace provisioning now fails closed unless the Docker worker host has a readable seccomp profile at `/etc/ath-ide/seccomp-workspace.json` (override with `DOCKER_SECCOMP_PROFILE`). Install the repository profile as a root-owned, non-writable file before starting the worker:
+Workspace provisioning now fails closed unless the Docker worker host has a readable deny-by-default seccomp profile at `/etc/ath-ide/seccomp-workspace.json` (override with `DOCKER_SECCOMP_PROFILE`). Install the repository profile as a root-owned, non-writable file before starting the worker:
 
 ```bash
 sudo install -d -o root -g root -m 0755 /etc/ath-ide
 sudo install -o root -g root -m 0644 server/security/seccomp-workspace.json /etc/ath-ide/seccomp-workspace.json
 ```
 
-The profile keeps Docker's normal syscall allow behavior while explicitly returning EPERM for high-risk kernel interfaces including namespace/mount manipulation, ptrace/process-memory access, kernel module loading, BPF, perf events, userfaultfd and keyring operations. It is defense in depth, not a substitute for a VM boundary or host hardening. The Docker daemon must support the profile's declared architectures; validate on each worker architecture before rollout.
+The profile is based on Moby's upstream Docker default seccomp profile, preserving its deny-by-default (SCMP_ACT_ERRNO) allowlist and architecture rules, then adding explicit EPERM denials for high-risk interfaces including namespace/mount manipulation, ptrace/process-memory access, kernel module loading, BPF, perf events, userfaultfd and keyring operations. Do not replace this with a default-allow profile. When updating the upstream baseline, review the diff and rerun the container compatibility and adversarial tests. It is defense in depth, not a substitute for a VM boundary or host hardening. The Docker daemon must support the profile's declared architectures; validate on each worker architecture before rollout.
 
 New containers receive both `no-new-privileges` and the explicit seccomp profile. Existing containers are reused only when their inspected security options, read-only root filesystem and dropped capabilities match the required baseline; otherwise they are replaced using the current workspace bind mount. A missing profile prevents provisioning rather than silently falling back to Docker's implicit default.
 
