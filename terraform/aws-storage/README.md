@@ -24,7 +24,7 @@ If using KMS, provision and review the key policy separately and pass its ARN as
 - WORKSPACE_OBJECT_STORE_ACCESS_KEY_ID and WORKSPACE_OBJECT_STORE_SECRET_ACCESS_KEY: rotated credentials for the worker identity.
 - WORKSPACE_OBJECT_STORE_SESSION_TOKEN: STS session token when using temporary credentials.
 
-The current object-store client signs S3-compatible requests directly and supports static or STS temporary credentials. It does not yet obtain credentials from EC2/ECS/EKS role metadata automatically. Do not put long-lived AWS keys in source control or GitHub workflow files; use an approved secret delivery mechanism until role-provider integration is deployed.
+The object-store client signs S3-compatible requests directly and supports static/STS credentials plus opt-in EC2 instance-role credentials through IMDSv2. The private worker module enables this role mode, so no static S3 keys are placed in the worker bootstrap secret. ECS/EKS credential providers are not implemented. Do not put long-lived AWS keys in source control or GitHub workflow files.
 
 ## Restore acceptance
 After worker environment is configured, run npm run storage:verify-s3 and npm run storage:verify-s3-restore from the server package on the worker host. The latter deletes only a random disposable workspace it creates itself, then exercises the real worker pull/restore endpoint. Run these against the intended test bucket and worker during a controlled window.
