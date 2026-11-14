@@ -84,8 +84,8 @@ resource "aws_iam_role_policy_attachment" "ssm" {
 }
 
 resource "aws_iam_role_policy" "worker" {
-  name   = "${var.name_prefix}-worker-runtime"
-  role   = aws_iam_role.worker.id
+  name = "${var.name_prefix}-worker-runtime"
+  role = aws_iam_role.worker.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = concat([
