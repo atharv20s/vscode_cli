@@ -104,25 +104,11 @@ resource "aws_s3_bucket_policy" "workspace_snapshots" {
 
 data "aws_iam_policy_document" "workspace_worker" {
   statement {
-    sid       = "ListWorkspaceSnapshots"
-    effect    = "Allow"
-    actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.workspace_snapshots.arn]
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values   = ["workspaces/*"]
-    }
-  }
-
-  statement {
     sid    = "ReadWriteWorkspaceSnapshots"
     effect = "Allow"
     actions = [
       "s3:GetObject",
       "s3:PutObject",
-      "s3:DeleteObject",
-      "s3:GetObjectVersion",
     ]
     resources = ["${aws_s3_bucket.workspace_snapshots.arn}/workspaces/*"]
   }
@@ -132,7 +118,7 @@ data "aws_iam_policy_document" "workspace_worker" {
     content {
       sid       = "UseWorkspaceSnapshotKmsKey"
       effect    = "Allow"
-      actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+      actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
       resources = [statement.value]
     }
   }
