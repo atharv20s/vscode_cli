@@ -18,7 +18,9 @@ jobs:
         with:
           terraform_version: 1.9.8
       - name: Format
-        run: terraform fmt -check -recursive terraform
+        run: |
+          terraform fmt -diff -recursive terraform
+          terraform fmt -check -recursive terraform
       - name: Initialize without backend
         run: terraform -chdir=terraform init -backend=false -input=false
       - name: Validate

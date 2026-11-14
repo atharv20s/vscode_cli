@@ -1,0 +1,25 @@
+name: Kubernetes Security Manifests
+
+on:
+  pull_request:
+    paths:
+      - "k8s/**"
+      - "scripts/validate-k8s-security.rb"
+      - ".github/workflows/k8s-security.yml"
+  push:
+    branches: [main]
+    paths:
+      - "k8s/**"
+      - "scripts/validate-k8s-security.rb"
+      - ".github/workflows/k8s-security.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Kubernetes security posture
+        run: ruby scripts/validate-k8s-security.rb

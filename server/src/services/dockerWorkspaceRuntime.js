@@ -11,6 +11,18 @@ import path from "path";
 import crypto from "crypto";
 import { config } from "../config/env.js";
 
+export function workspaceSeccompProfilePath(env = process.env) {
+  const configured = env.DOCKER_SECCOMP_PROFILE || "/etc/ath-ide/seccomp-workspace.json";
+  return path.resolve(configured);
+}
+
+export function workspaceSecurityOptions(profilePath) {
+  if (typeof profilePath !== "string" || !path.isAbsolute(profilePath)) {
+    throw new Error("An absolute Docker seccomp profile path is required.");
+  }
+  return ["no-new-privileges", `seccomp=${profilePath}`];
+}
+
 export function workspaceNetworkName(workspaceId, override) {
   // Disposable repository-agent tasks must never receive network access.
   if (String(workspaceId || "").startsWith("repo-agent-")) return "none";
@@ -78,15 +90,20 @@ class DockerWorkspaceRuntime {
     await fs.promises.mkdir(workspaceDir, { recursive: true, mode: 0o700 });
 
     const name = containerName(workspaceId);
-    const existing = this.containers.get(name);
     if (options.replaceExisting) {
       try { execFileSync(config.dockerBinary, ["rm", "-f", name], { stdio: "ignore", timeout: 15000 }); } catch {}
       this.containers.delete(name);
-    } else if (existing?.workspaceDir === workspaceDir) {
-      return name;
     }
 
     const docker = config.dockerBinary;
+    const seccompProfile = workspaceSeccompProfilePath();
+    const securityOptions = workspaceSecurityOptions(seccompProfile);
+    try {
+      const profileStat = await fs.promises.stat(seccompProfile);
+      if (!profileStat.isFile()) throw new Error("not a regular file");
+    } catch {
+      throw new Error(`Required workspace seccomp profile is missing or unreadable: ${seccompProfile}. Install it on the Docker worker host; refusing to start an unprofiled workspace.`);
+    }
     if (!options.replaceExisting) try {
       const raw = execFileSync(docker, ["inspect", name], {
         encoding: "utf8",
@@ -95,8 +112,13 @@ class DockerWorkspaceRuntime {
       });
       const inspected = JSON.parse(raw)[0];
       const mount = inspected?.Mounts?.find(item => item.Destination === "/workspace");
+      const configuredSecurity = inspected?.HostConfig?.SecurityOpt || [];
+      const securityIsCurrent = configuredSecurity.some(option => option === "no-new-privileges:true" || option === "no-new-privileges") &&
+        configuredSecurity.includes(`seccomp=${seccompProfile}`);
       if (mount && path.resolve(mount.Source) === path.resolve(workspaceDir) &&
-          inspected?.NetworkSettings?.Networks?.[network]) {
+          inspected?.NetworkSettings?.Networks?.[network] && securityIsCurrent &&
+          inspected?.HostConfig?.ReadonlyRootfs === true &&
+          inspected?.HostConfig?.CapDrop?.includes("ALL")) {
         if (!inspected.State?.Running) {
           execFileSync(docker, ["start", name], { stdio: "ignore", timeout: 15000 });
         }
@@ -128,7 +150,7 @@ class DockerWorkspaceRuntime {
         "--cpus", "1",
         "--pids-limit", "256",
         "--cap-drop", "ALL",
-        "--security-opt", "no-new-privileges",
+        ...securityOptions.flatMap(option => ["--security-opt", option]),
         "--read-only",
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
         "--user", `${uid}:${gid}`,

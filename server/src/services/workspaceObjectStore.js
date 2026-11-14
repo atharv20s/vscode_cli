@@ -8,26 +8,92 @@ function hmac(key, value, encoding) {
   return crypto.createHmac("sha256", key).update(value).digest(encoding);
 }
 
+let cachedEc2Credentials = null;
+
 function objectStoreConfig() {
   const bucket = process.env.WORKSPACE_OBJECT_STORE_BUCKET || "";
   const accessKey = process.env.WORKSPACE_OBJECT_STORE_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || "";
   const secretKey = process.env.WORKSPACE_OBJECT_STORE_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || "";
+  const sessionToken = process.env.WORKSPACE_OBJECT_STORE_SESSION_TOKEN || process.env.AWS_SESSION_TOKEN || "";
+  const useEc2Role = (process.env.WORKSPACE_OBJECT_STORE_USE_EC2_ROLE || "false").toLowerCase() === "true";
   const region = process.env.WORKSPACE_OBJECT_STORE_REGION || "us-east-1";
-  const endpoint = process.env.WORKSPACE_OBJECT_STORE_ENDPOINT || `https://s3.${region}.amazonaws.com`;
-  if (!bucket || !accessKey || !secretKey) {
+  const customEndpoint = process.env.WORKSPACE_OBJECT_STORE_ENDPOINT || "";
+  const endpoint = customEndpoint || `https://s3.${region}.amazonaws.com`;
+  const encryption = (process.env.WORKSPACE_OBJECT_STORE_SERVER_SIDE_ENCRYPTION || "AES256").trim();
+  const kmsKeyId = process.env.WORKSPACE_OBJECT_STORE_KMS_KEY_ID || "";
+  if (!/^[a-z0-9-]{3,32}$/.test(region)) throw new Error("Workspace object storage region is invalid.");
+  if (useEc2Role && customEndpoint) throw new Error("Custom object storage endpoints are not allowed with EC2 instance-role credentials.");
+  if (!bucket || (!useEc2Role && (!accessKey || !secretKey))) {
     if ((process.env.WORKSPACE_OBJECT_STORE_REQUIRED || "false").toLowerCase() === "true") {
       throw new Error("Workspace object storage is required but bucket credentials are incomplete.");
     }
     return null;
   }
+  if (!["AES256", "aws:kms"].includes(encryption)) {
+    throw new Error("Workspace object storage encryption must be AES256 or aws:kms.");
+  }
+  if (kmsKeyId && encryption !== "aws:kms") {
+    throw new Error("A KMS key ID requires WORKSPACE_OBJECT_STORE_SERVER_SIDE_ENCRYPTION=aws:kms.");
+  }
+  if (encryption === "aws:kms" && !kmsKeyId) {
+    throw new Error("KMS encryption requires WORKSPACE_OBJECT_STORE_KMS_KEY_ID.");
+  }
   const base = new URL(endpoint);
   if (base.protocol !== "https:") throw new Error("Workspace object storage endpoint must use HTTPS.");
-  return { bucket, accessKey, secretKey, region, base };
+  return { bucket, accessKey, secretKey, sessionToken, useEc2Role, region, base, encryption, kmsKeyId };
 }
 
-function signedRequest(method, key, body = Buffer.alloc(0)) {
+async function resolveObjectStoreCredentials(config) {
+  if (!config.useEc2Role) {
+    return { accessKey: config.accessKey, secretKey: config.secretKey, sessionToken: config.sessionToken };
+  }
+  if (cachedEc2Credentials && Date.parse(cachedEc2Credentials.expiration) > Date.now() + 5 * 60 * 1000) {
+    return cachedEc2Credentials;
+  }
+
+  const metadataBase = "http://169.254.169.254/latest";
+  const tokenResponse = await fetch(metadataBase + "/api/token", {
+    method: "PUT",
+    headers: { "X-aws-ec2-metadata-token-ttl-seconds": "21600" },
+    redirect: "error",
+    signal: AbortSignal.timeout(1500),
+  });
+  if (!tokenResponse.ok) throw new Error("Unable to obtain an IMDSv2 token for the S3 worker role.");
+  const metadataToken = (await tokenResponse.text()).trim();
+  if (!metadataToken || metadataToken.length > 4096) throw new Error("IMDSv2 returned an invalid metadata token.");
+
+  const headers = { "X-aws-ec2-metadata-token": metadataToken };
+  const roleResponse = await fetch(metadataBase + "/meta-data/iam/security-credentials/", {
+    headers, redirect: "error", signal: AbortSignal.timeout(1500),
+  });
+  if (!roleResponse.ok) throw new Error("Unable to discover the EC2 instance role for workspace storage.");
+  const roleName = (await roleResponse.text()).trim();
+  if (!/^[A-Za-z0-9+=,.@_-]{1,128}$/.test(roleName)) throw new Error("EC2 metadata returned an invalid instance role name.");
+
+  const credentialResponse = await fetch(metadataBase + "/meta-data/iam/security-credentials/" + encodeURIComponent(roleName), {
+    headers, redirect: "error", signal: AbortSignal.timeout(1500),
+  });
+  if (!credentialResponse.ok) throw new Error("Unable to retrieve temporary EC2 role credentials.");
+  const value = await credentialResponse.json();
+  const expiration = typeof value.Expiration === "string" ? value.Expiration : "";
+  if (value.Code !== "Success" || typeof value.AccessKeyId !== "string" ||
+      typeof value.SecretAccessKey !== "string" || typeof value.Token !== "string" ||
+      !Number.isFinite(Date.parse(expiration)) || Date.parse(expiration) <= Date.now() + 60 * 1000) {
+    throw new Error("EC2 instance role returned incomplete or expired credentials.");
+  }
+  cachedEc2Credentials = {
+    accessKey: value.AccessKeyId,
+    secretKey: value.SecretAccessKey,
+    sessionToken: value.Token,
+    expiration,
+  };
+  return cachedEc2Credentials;
+}
+
+async function signedRequest(method, key, body = Buffer.alloc(0)) {
   const config = objectStoreConfig();
   if (!config) return null;
+  const credentials = await resolveObjectStoreCredentials(config);
   const encodedBucket = encodeURIComponent(config.bucket);
   const encodedKey = key.split("/").map(encodeURIComponent).join("/");
   const pathname = (config.base.pathname.replace(/\/$/, "") + "/" + encodedBucket + "/" + encodedKey).replace(/\/+/g, "/");
@@ -36,26 +102,33 @@ function signedRequest(method, key, body = Buffer.alloc(0)) {
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
   const dateStamp = amzDate.slice(0, 8);
   const payloadHash = sha256(body);
-  const canonicalHeaders = "host:" + host + "\n" + "x-amz-content-sha256:" + payloadHash + "\n" + "x-amz-date:" + amzDate + "\n";
-  const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+  const headers = {
+    host,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-date": amzDate,
+    "content-type": "application/json",
+  };
+  if (credentials.sessionToken) headers["x-amz-security-token"] = credentials.sessionToken;
+  if (method === "PUT") {
+    headers["x-amz-server-side-encryption"] = config.encryption;
+    if (config.kmsKeyId) headers["x-amz-server-side-encryption-aws-kms-key-id"] = config.kmsKeyId;
+  }
+  const signedHeaders = Object.keys(headers).sort().join(";");
+  const canonicalHeaders = Object.keys(headers).sort()
+    .map(name => name + ":" + String(headers[name]).trim() + "\n").join("");
   const canonicalRequest = [method, pathname, "", canonicalHeaders, signedHeaders, payloadHash].join("\n");
   const scope = dateStamp + "/" + config.region + "/s3/aws4_request";
   const stringToSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256(canonicalRequest)].join("\n");
-  const dateKey = hmac("AWS4" + config.secretKey, dateStamp);
+  const dateKey = hmac("AWS4" + credentials.secretKey, dateStamp);
   const regionKey = hmac(dateKey, config.region);
   const serviceKey = hmac(regionKey, "s3");
   const signingKey = hmac(serviceKey, "aws4_request");
   const signature = hmac(signingKey, stringToSign, "hex");
-  const authorization = "AWS4-HMAC-SHA256 Credential=" + config.accessKey + "/" + scope +
+  const authorization = "AWS4-HMAC-SHA256 Credential=" + credentials.accessKey + "/" + scope +
     ", SignedHeaders=" + signedHeaders + ", Signature=" + signature;
   return {
     url: new URL(pathname, config.base.origin),
-    headers: {
-      "x-amz-date": amzDate,
-      "x-amz-content-sha256": payloadHash,
-      authorization,
-      "content-type": "application/json",
-    },
+    headers: { ...headers, authorization },
   };
 }
 
@@ -103,7 +176,7 @@ export async function putWorkspaceSnapshot(workspaceId, snapshot) {
     integrity: { algorithm: "sha256", digest: sha256(canonicalBody) },
   };
   const body = Buffer.from(JSON.stringify(envelope));
-  const signed = signedRequest("PUT", "workspaces/" + workspaceId + "/snapshot.json", body);
+  const signed = await signedRequest("PUT", "workspaces/" + workspaceId + "/snapshot.json", body);
   if (!signed) return false;
   const response = await fetch(signed.url, { method: "PUT", headers: signed.headers, body });
   if (!response.ok) throw new Error("Workspace snapshot upload failed with HTTP " + response.status + ".");
@@ -112,7 +185,7 @@ export async function putWorkspaceSnapshot(workspaceId, snapshot) {
 
 export async function getWorkspaceSnapshot(workspaceId) {
   validateWorkspaceId(workspaceId);
-  const signed = signedRequest("GET", "workspaces/" + workspaceId + "/snapshot.json");
+  const signed = await signedRequest("GET", "workspaces/" + workspaceId + "/snapshot.json");
   if (!signed) return null;
   const response = await fetch(signed.url, { method: "GET", headers: signed.headers });
   if (response.status === 404) return null;

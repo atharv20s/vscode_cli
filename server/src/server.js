@@ -33,6 +33,7 @@ import { streamChatCompletion } from "./services/llmService.js";
 import { getWorkspaceService } from "./services/workspaceService.js";
 import { proxyRemotePreview, proxyRemotePreviewUpgrade } from "./services/remoteExecutionWorker.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
+import { getLinuxRuntimeDiagnostics } from "./services/linuxRuntimeService.js";
 
 // Routes
 import authRoutes from "./routes/authRoutes.js";
@@ -131,6 +132,19 @@ app.get("/api/health", async (req, res) => {
 app.get("/api/health/metrics", requireAuth, async (req, res) => {
   const { systemHealthService } = await import("./services/systemHealthService.js");
   res.json(systemHealthService.getMetrics());
+});
+
+
+// Authenticated, process-scoped Linux runtime diagnostics. This endpoint reads
+// procfs/cgroup metadata only; it never executes commands or exposes host secrets.
+app.get("/api/runtime/linux", requireAuth, async (_req, res) => {
+  try {
+    const diagnostics = await getLinuxRuntimeDiagnostics();
+    return res.status(diagnostics.supported ? 200 : 501).json(diagnostics);
+  } catch (error) {
+    logger.error("Linux runtime diagnostics failed", { error: error.message });
+    return res.status(503).json({ error: "LinuxRuntimeDiagnosticsUnavailable" });
+  }
 });
 
 // Compilation & Execution Queue Status endpoint

@@ -1,0 +1,22 @@
+name: Python safety tests
+
+on:
+  pull_request:
+    paths:
+      - "safety/**"
+      - "prompts/**"
+      - ".github/workflows/python-safety.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run content filter and prompt safety tests
+        run: python -m unittest safety.test_filter prompts.test_system

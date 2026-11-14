@@ -1,16 +1,37 @@
 [Unit]
 Description=ATH IDE Isolated Docker Execution Worker
-After=network.target docker.service
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
 
 [Service]
 Type=simple
 User=ubuntu
+SupplementaryGroups=docker
 WorkingDirectory=/home/ubuntu/ath-ide/server
 EnvironmentFile=/etc/ath-ide/worker.env
+ExecStartPre=/usr/bin/test -S /var/run/docker.sock
 ExecStart=/usr/bin/node src/worker/executionWorker.js
-Restart=always
-RestartSec=3
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+KillSignal=SIGTERM
+UMask=0077
+LimitNOFILE=65536
+
+# The Docker socket is a privileged host boundary. Run this unit only on a
+# dedicated worker host and never expose the Docker daemon over TCP.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target
-

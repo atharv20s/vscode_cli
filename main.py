@@ -26,6 +26,7 @@ from ui import TUI, get_console
 from context.memory import ProjectMemory
 from config.models import MODELS, get_model
 from config.config import Config
+from tools.base import ToolConfirmation
 
 console = get_console()
 
@@ -60,6 +61,16 @@ class CLI:
         # Apply mode settings
         self._apply_mode_settings()
     
+    def _approve_tool(self, tool, arguments: dict[str, Any]) -> bool:
+        """Display an explicit approval prompt for tools with side effects."""
+        command = arguments.get("command") if isinstance(arguments, dict) else None
+        confirmation = ToolConfirmation(
+            tool_name=tool.name,
+            description=tool.description,
+            command=command if isinstance(command, str) else None,
+            risk_level="critical" if tool.name == "shell" else "high",
+        )
+        return self.tui.handle_confirmation(confirmation)
     def _apply_mode_settings(self) -> None:
         """Apply mode-specific settings."""
         try:
@@ -102,6 +113,7 @@ class CLI:
             model=self.model,
             max_iterations=(self.mode_config.max_iterations if hasattr(self, 'mode_config') else None),
             auto_verify=(self.mode_config.auto_verify if hasattr(self, 'mode_config') else None),
+            approval_callback=self._approve_tool,
         ) as agent:
             self.agent = agent
             await self._process_message(message)
@@ -128,6 +140,7 @@ class CLI:
             model=self.model,
             max_iterations=(self.mode_config.max_iterations if hasattr(self, 'mode_config') else None),
             auto_verify=(self.mode_config.auto_verify if hasattr(self, 'mode_config') else None),
+            approval_callback=self._approve_tool,
         ) as agent:
             self.agent = agent
             

@@ -334,3 +334,31 @@ random contents, verifies each identity reads back only its own content, and
 deletes both test files. It refuses to send tokens over non-local HTTP. The
 secret is never printed. Run only against an API environment where synthetic
 JWT identities are permitted by policy.
+
+
+## Explicit seccomp enforcement for workspace containers
+
+Workspace provisioning now fails closed unless the Docker worker host has a readable deny-by-default seccomp profile at `/etc/ath-ide/seccomp-workspace.json` (override with `DOCKER_SECCOMP_PROFILE`). Install the repository profile as a root-owned, non-writable file before starting the worker:
+
+```bash
+sudo install -d -o root -g root -m 0755 /etc/ath-ide
+sudo install -o root -g root -m 0644 server/security/seccomp-workspace.json /etc/ath-ide/seccomp-workspace.json
+```
+
+The profile is based on Moby's upstream Docker default seccomp profile, preserving its deny-by-default (SCMP_ACT_ERRNO) allowlist and architecture rules, then adding explicit EPERM denials for high-risk interfaces including namespace/mount manipulation, ptrace/process-memory access, kernel module loading, BPF, perf events, userfaultfd and keyring operations. Do not replace this with a default-allow profile. When updating the upstream baseline, review the diff and rerun the container compatibility and adversarial tests. It is defense in depth, not a substitute for a VM boundary or host hardening. The Docker daemon must support the profile's declared architectures; validate on each worker architecture before rollout.
+
+New containers receive both `no-new-privileges` and the explicit seccomp profile. Existing containers are reused only when their inspected security options, read-only root filesystem and dropped capabilities match the required baseline; otherwise they are replaced using the current workspace bind mount. A missing profile prevents provisioning rather than silently falling back to Docker's implicit default.
+
+After installing the profile, rebuild/restart the worker and create a disposable workspace. Inspect it with `docker inspect` and verify `HostConfig.SecurityOpt` includes the expected seccomp path and no-new-privileges, `ReadonlyRootfs` is true, and `CapDrop` contains `ALL`. Do not treat a successful API health check as proof of these runtime properties.
+
+
+## Encrypted S3 workspace snapshots
+
+The workspace object-store client signs temporary STS credentials when WORKSPACE_OBJECT_STORE_SESSION_TOKEN (or AWS_SESSION_TOKEN) is set. Uploads request server-side encryption by default using AES256. Set WORKSPACE_OBJECT_STORE_SERVER_SIDE_ENCRYPTION=aws:kms together with WORKSPACE_OBJECT_STORE_KMS_KEY_ID to request a customer-managed KMS key; the worker identity needs narrowly scoped S3 access to workspaces/* and KMS encrypt/decrypt/data-key permissions for that key. The standalone terraform/aws-storage root provisions a private, versioned bucket, public-access blocking, TLS-only bucket policy, noncurrent-version retention and a worker IAM policy.
+
+The client supports short-lived STS credentials from environment variables and an opt-in EC2 instance-role provider using IMDSv2. The AWS worker Terraform module enables the EC2 role provider, keeping static S3 keys out of the worker secret. ECS/EKS credential providers are not implemented. Never put long-lived AWS keys in source control. Run the two S3 acceptance scripts on a test worker to verify upload/read-back and actual delete-then-worker-restore. Terraform validation is CI-only until an AWS plan is reviewed in the target account.
+
+
+### Live Docker enforcement acceptance
+
+On the Linux worker after installing the seccomp profile and workspace image, run `npm run runtime:verify-workspace-security` from the server directory. The script creates one uniquely named disposable container, checks the Docker daemon's inspected seccomp/no-new-privileges/read-only-rootfs/capability/network/memory/PID settings, then checks the process reports `Seccomp: 2` and `NoNewPrivs: 1`. It always attempts to remove only that generated container. This validates the host's Docker enforcement path independently of API telemetry; it does not test kernel escape resistance or prove every workspace creation route is wired to this runtime.
