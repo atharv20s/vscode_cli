@@ -21,24 +21,24 @@ const SAFE_READ_ONLY_COMMANDS = [
   /^(node|npm|python|python3)\s+--version$/,
 ];
 const SECRET_PATH_PATTERNS = [
-  /(^|\\/)\\.env(?:\\.|$)/i,
-  /(^|\\/)(id_rsa|id_ed25519|.*\\.pem|.*\\.key)$/i,
-  /(^|\\/)\\.aws\\/credentials$/i,
-  /(^|\\/)terraform\\.tfstate(?:\\.|$)/i,
-  /(^|\\/)\\.npmrc$/i, /(^|\\/)\\.netrc$/i, /(^|\\/)\\.pypirc$/i,
-  /(^|\\/)\\.git-credentials$/i, /(^|\\/)authorized_keys$/i, /(^|\\/)known_hosts$/i,
-  /(^|\\/)etc\\/shadow$/i, /(^|\\/)proc\\/\\d+\\/environ$/i,
+  /(^|\/)\.env(?:\.|$)/i,
+  /(^|\/)(id_rsa|id_ed25519|.*\.pem|.*\.key)$/i,
+  /(^|\/)\.aws\/credentials$/i,
+  /(^|\/)terraform\.tfstate(?:\.|$)/i,
+  /(^|\/)\.npmrc$/i, /(^|\/)\.netrc$/i, /(^|\/)\.pypirc$/i,
+  /(^|\/)\.git-credentials$/i, /(^|\/)authorized_keys$/i, /(^|\/)known_hosts$/i,
+  /(^|\/)etc\/shadow$/i, /(^|\/)proc\/\d+\/environ$/i,
 ];
 const SECRET_COMMAND_PATH_PATTERNS = [
-  /(?:^|[\\s"'\x60])(?:[^\\s"'\x60]+\\/)?\\.env(?:\\.[^\\s"'\x60]+)?(?:$|[\\s"'\x60])/i,
-  /(?:^|[\\s"'\x60])(?:[^\\s"'\x60]+\\/)?(?:id_rsa|id_ed25519|\\.aws\\/credentials|\\.npmrc|\\.netrc|\\.git-credentials)(?:$|[\\s"'\x60])/i,
-  /(?:^|[\\s"'\x60])(?:[^\\s"'\x60]+\\/)?terraform\\.tfstate(?:$|[\\s"'\x60])/i,
-  /(?:^|[\\s"'\x60])\\/etc\\/shadow(?:$|[\\s"'\x60])/i,
+  /(?:^|[\s"'\x60])(?:[^\s"'\x60]+\/)?\.env(?:\.[^\s"'\x60]+)?(?:$|[\s"'\x60])/i,
+  /(?:^|[\s"'\x60])(?:[^\s"'\x60]+\/)?(?:id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials)(?:$|[\s"'\x60])/i,
+  /(?:^|[\s"'\x60])(?:[^\s"'\x60]+\/)?terraform\.tfstate(?:$|[\s"'\x60])/i,
+  /(?:^|[\s"'\x60])\/etc\/shadow(?:$|[\s"'\x60])/i,
 ];
 const SENSITIVE_WRITE_PATHS = [
-  /(^|\\/)package(?:-lock)?\\.json$/i, /(^|\\/)Dockerfile$/i,
-  /(^|\\/)\\.github\\/workflows\\//i, /(^|\\/)server\\/src\\/config\\//i,
-  /(^|\\/)terraform\\//i, /(^|\\/)server\\/src\\/services\\/permissionEngine\\.js$/i,
+  /(^|\/)package(?:-lock)?\.json$/i, /(^|\/)Dockerfile$/i,
+  /(^|\/)\.github\/workflows\//i, /(^|\/)server\/src\/config\//i,
+  /(^|\/)terraform\//i, /(^|\/)server\/src\/services\/permissionEngine\.js$/i,
 ];
 
 export function classifyCommandForPolicy(command, options = {}) {
