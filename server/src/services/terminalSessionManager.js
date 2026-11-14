@@ -13,6 +13,7 @@ import { sendMessage } from "../websocket/connectionManager.js";
 import { LocalBackend } from "./backends/localBackend.js";
 import { RemoteSSHBackend } from "./backends/remoteSSHBackend.js";
 import { DockerBackend } from "./backends/dockerBackend.js";
+import { LinuxPtyBackend } from "./backends/linuxPtyBackend.js";
 
 /**
  * Terminal Lifecycle States
@@ -79,7 +80,7 @@ class TerminalSessionManager {
     const cols = options.cols || 80;
     const rows = options.rows || 24;
     const workspaceId = options.workspaceId || "default";
-    const backendType = config.executionRuntime === "docker" ? "docker" : (options.backendType || (options.remoteHost ? "remote_ssh" : "local"));
+    const backendType = config.executionRuntime === "docker" ? "docker" : config.executionRuntime === "linux" ? "linux" : (options.backendType || (options.remoteHost ? "remote_ssh" : "local"));
     const userSessions = Array.from(this.sessions.values()).filter(item => item.userId === (options.userId || null) && item.state !== "exited" && item.state !== "error");
     if (userSessions.length >= config.terminalMaxSessionsPerUser) {
       const error = new Error("Terminal session limit reached for this account.");
@@ -89,8 +90,8 @@ class TerminalSessionManager {
 
     // Do not spawn shells inside the shared API container in production. The
     // remote SSH adapter is not yet a per-user isolated runtime either.
-    if (!config.isDev && config.executionRuntime !== "docker") {
-      throw new Error("Isolated Linux workspace runtime is not configured. Set EXECUTION_RUNTIME=docker on a worker with Docker Engine access.");
+    if (!config.isDev && !["docker", "linux"].includes(config.executionRuntime)) {
+      throw new Error("Isolated workspace runtime is not configured. Set EXECUTION_RUNTIME=docker or linux on a worker with the required sandbox runtime.");
     }
 
     const session = {
@@ -114,6 +115,21 @@ class TerminalSessionManager {
     this._emitStateChange(session, "connecting");
 
     try {
+      if (backendType === "linux") {
+        const backend = new LinuxPtyBackend();
+        session.backendInstance = backend;
+        const ptyProcess = await backend.spawnShell({
+          sessionId, workspaceId, workspaceDir: cwd, cols, rows, ws: options.ws,
+          onData: data => this._handleSessionOutput(sessionId, data),
+          onExit: code => this._handleSessionExit(sessionId, code),
+        });
+        session.pid = ptyProcess?.pid || null;
+        session.state = "ready";
+        this._emitStateChange(session, "ready");
+        logger.info("TerminalSessionManager: Isolated Linux PTY session ready", { sessionId });
+        return session;
+      }
+
       if (backendType === "docker") {
         const backend = new DockerBackend();
         session.backendInstance = backend;
