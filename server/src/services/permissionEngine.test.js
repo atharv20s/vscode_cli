@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyCommandForPolicy, classifyFileOperationForPolicy } from "./permissionEngine.js";
+import { classifyCommandForPolicy, classifyFileOperationForPolicy, permissionEngine } from "./permissionEngine.js";
 
 test("only narrow read-only inspection commands are auto-allowed", () => {
   for (const command of [
@@ -22,7 +22,6 @@ test("state-changing, network and unknown commands require approval", () => {
     "python -c 'print(1)'",
     "curl https://example.com",
     "git push origin main",
-    "cat .env",
     "bash -c 'echo hello'",
     "echo hello",
     "git status && curl https://example.com",
@@ -38,6 +37,9 @@ test("high-impact destructive commands are denied", () => {
     "drop database production",
     "sudo reboot",
     "cat /var/run/docker.sock",
+    "cat .env",
+    "cat ~/.aws/credentials",
+    "cat /etc/shadow",
   ]) assert.equal(classifyCommandForPolicy(command), "DENY", command);
 });
 
@@ -70,4 +72,32 @@ test("sensitive project configuration changes require approval", () => {
   }
   assert.equal(classifyFileOperationForPolicy("edit", "src/App.jsx"), "ALLOW");
   assert.equal(classifyFileOperationForPolicy("delete", "src/App.jsx"), "ASK");
+});
+
+test("additional credential paths and unknown file actions fail closed", () => {
+  for (const secretPath of [
+    ".npmrc", ".netrc", ".pypirc", ".git-credentials",
+    ".ssh/authorized_keys", ".ssh/known_hosts",
+    "etc/shadow", "proc/123/environ",
+  ]) assert.equal(classifyFileOperationForPolicy("read", secretPath), "DENY", secretPath);
+  assert.equal(classifyFileOperationForPolicy("write", "nested/.github/workflows/deploy.yml"), "ASK");
+  assert.equal(classifyFileOperationForPolicy("write", "terraform/main.tf"), "ASK");
+  assert.equal(classifyFileOperationForPolicy("unknown", "src/App.jsx"), "ASK");
+});
+
+test("permission approvals cannot be resolved by another workspace", async () => {
+  const pending = permissionEngine.checkPermission({
+    resource: "command",
+    action: "run_command",
+    payload: { command: "echo approval-test" },
+    workspaceId: "workspace-owner",
+    timeout: 5000,
+  });
+  const [request] = permissionEngine.listPendingRequests();
+  assert.ok(request?.permissionId);
+  assert.equal(permissionEngine.resolvePermission(request.permissionId, true, "wrong workspace", "other-workspace"), false);
+  assert.equal(permissionEngine.resolvePermission(request.permissionId, true, "approved", "workspace-owner"), true);
+  const result = await pending;
+  assert.equal(result.granted, true);
+  assert.equal(result.decision, "ASK");
 });
