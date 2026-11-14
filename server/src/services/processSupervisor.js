@@ -11,6 +11,7 @@ import { spawn, exec } from "child_process";
 import { logger } from "../config/logger.js";
 import { config } from "../config/env.js";
 import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
+import { buildStrictSSHOptions, resolveRemoteWorkspacePath, shellQuote, validateDockerContainer, validateSSHHost, validateSSHUsername } from "./sshSecurity.js";
 
 /**
  * Cross-platform process tree killer.
@@ -106,39 +107,25 @@ class ProcessSupervisor {
     // Check if remote Oracle Cloud (OCI) sandbox execution is enabled
     if (config.remoteSandbox?.enabled && config.remoteSandbox?.host) {
       const rs = config.remoteSandbox;
-      const remoteBase = (rs.workspace || "/home/ubuntu/agent-workspace").replace(/\/$/, "");
-      let remoteCwd = remoteBase;
-
-      if (cwd && cwd !== config.workspaceRoot) {
-        const rel = path.relative(config.workspaceRoot, cwd).replace(/\\/g, "/");
-        if (rel && !rel.startsWith("..")) {
-          remoteCwd = `${remoteBase}/${rel}`;
-        }
-      }
-
+      const remoteBase = rs.workspace || "/home/ubuntu/agent-workspace";
+      validateSSHHost(rs.host);
+      const remoteUser = validateSSHUsername(rs.user || "ubuntu");
+      const relativeWorkspacePath = cwd && cwd !== config.workspaceRoot ? path.relative(config.workspaceRoot, cwd).replaceAll("\\", "/") : ".";
+      if (relativeWorkspacePath.startsWith("../") || relativeWorkspacePath === ".." || path.isAbsolute(relativeWorkspacePath)) throw new Error("Requested working directory is outside the configured workspace.");
+      const remoteCwd = resolveRemoteWorkspacePath(remoteBase, relativeWorkspacePath);
+      const remoteCommand = "mkdir -p " + shellQuote(remoteCwd) + " && cd " + shellQuote(remoteCwd) + " && " + command;
       let remotePayload;
       if (rs.dockerContainer) {
-        const escaped = command.replace(/"/g, '\\"').replace(/\$/g, '\\$');
-        remotePayload = `docker exec -i ${rs.dockerContainer} bash -c "mkdir -p '${remoteCwd}' && cd '${remoteCwd}' && ${escaped}"`;
+        const container = validateDockerContainer(rs.dockerContainer);
+        remotePayload = "docker exec -i " + container + " bash -lc " + shellQuote(remoteCommand);
       } else {
-        remotePayload = `mkdir -p '${remoteCwd}' && cd '${remoteCwd}' && ${command}`;
+        remotePayload = "bash -lc " + shellQuote(remoteCommand);
       }
 
       shellExecutable = isWindows ? "ssh.exe" : "ssh";
-      shellArgs = [
-        "-p", String(rs.port || 22),
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "LogLevel=ERROR",
-        "-o", "ConnectTimeout=10",
-        "-o", "BatchMode=yes",
-      ];
-
-      if (rs.keyPath) {
-        shellArgs.push("-i", rs.keyPath);
-      }
-
-      shellArgs.push(`${rs.user || "ubuntu"}://${rs.host}`.replace("://", "@"), remotePayload);
+      shellArgs = buildStrictSSHOptions({ port: rs.port || 22, connectTimeout: 10 });
+      if (rs.keyPath) shellArgs.push("-i", rs.keyPath);
+      shellArgs.push(remoteUser + "@" + rs.host, remotePayload);
       logger.info(`ProcessSupervisor: Routing [${operationId}] to Oracle Cloud Sandbox (${rs.host}): ${command}`);
     } else if (isWindows) {
       if (shell === "wsl") {
