@@ -4,7 +4,7 @@ locals {
     database_url       = "${var.app_name}-database-url"
     redis_url          = "${var.app_name}-redis-url"
     openrouter_api_key = "${var.app_name}-openrouter-api-key"
-    jwt_secret          = "${var.app_name}-jwt-secret"
+    jwt_secret         = "${var.app_name}-jwt-secret"
   }
 }
 
@@ -45,7 +45,7 @@ resource "google_secret_manager_secret_iam_member" "runtime_access" {
     database_url       = google_secret_manager_secret.database_url.secret_id
     redis_url          = google_secret_manager_secret.redis_url.secret_id
     openrouter_api_key = google_secret_manager_secret.openrouter_api_key.secret_id
-    jwt_secret          = google_secret_manager_secret.jwt_secret.secret_id
+    jwt_secret         = google_secret_manager_secret.jwt_secret.secret_id
   }
   secret_id = each.value
   role      = "roles/secretmanager.secretAccessor"
