@@ -96,6 +96,9 @@ class LinuxSandboxBackend {
       `--property=MemoryMax=${config.linuxSandbox.memoryMax}`,
       `--property=CPUQuota=${config.linuxSandbox.cpuQuota}`,
       `--property=TasksMax=${config.linuxSandbox.tasksMax}`,
+      "--property=NoNewPrivileges=yes",
+      "--property=RestrictSUIDSGID=yes",
+      "--property=LockPersonality=yes",
       "--",
       config.linuxSandbox.bubblewrapBinary,
       ...buildBubblewrapArgs({
