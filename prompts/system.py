@@ -216,7 +216,7 @@ def get_system_prompt(persona: str = "default") -> str:
         - concise: Extremely brief responses
     """
     base_prompt = SYSTEM_PROMPTS.get(persona, SYSTEM_PROMPTS["default"])
-    return base_prompt + "\\n\\n" + SAFETY_BASELINE
+    return base_prompt + "\n\n" + SAFETY_BASELINE
 
 
 def list_personas() -> list[str]:
