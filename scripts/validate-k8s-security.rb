@@ -33,6 +33,12 @@ containers.each do |container|
   abort "#{container["name"]}: writable /tmp must be mounted separately" unless mounts.any? { |mount| mount["mountPath"] == "/tmp" && mount["name"] == "tmp-volume" }
 end
 
+service = load_yaml.call("k8s/deployment.yaml").find { |doc| doc["kind"] == "Service" && doc.dig("metadata", "name") == "ath-ide-service" }
+abort "Backend Service must remain ClusterIP behind the Ingress" unless service && service.dig("spec", "type") == "ClusterIP"
+
+pdb = load_yaml.call("k8s/pod-disruption-budget.yaml").find { |doc| doc["kind"] == "PodDisruptionBudget" }
+abort "PodDisruptionBudget must preserve at least one backend replica" unless pdb && pdb.dig("spec", "minAvailable").to_i >= 1
+
 tmp_volume = Array(pod["volumes"]).find { |volume| volume["name"] == "tmp-volume" }
 abort "A bounded emptyDir must back /tmp" unless tmp_volume && tmp_volume.dig("emptyDir", "sizeLimit")
 puts "Kubernetes security manifests validated: restricted namespace, non-root pod, RuntimeDefault seccomp, no privilege escalation, read-only rootfs, dropped capabilities and bounded /tmp."
