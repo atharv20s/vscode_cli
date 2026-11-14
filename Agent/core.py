@@ -317,7 +317,7 @@ class Agent:
                                 # Run the project's CLI test suite (fallback to test_cli_features.py)
                                 yield AgentEvent.tool_executing("run_auto_tests", {})
                                 test_cmd = "python test_cli_features.py"
-                                test_result = await self.registry.execute("shell", command=test_cmd)
+                                test_result = await self._execute_tool("shell", {"command": test_cmd})
                                 if test_result.success:
                                     yield AgentEvent.tool_result(
                                         tool_id=f"auto_tests_{tc.id}",
