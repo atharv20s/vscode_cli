@@ -8,6 +8,7 @@
  */
 
 import { spawn, exec } from "child_process";
+import path from "node:path";
 import { logger } from "../config/logger.js";
 import { config } from "../config/env.js";
 import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
