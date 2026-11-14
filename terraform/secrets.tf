@@ -10,25 +10,33 @@ locals {
 
 resource "google_secret_manager_secret" "database_url" {
   secret_id = local.runtime_secret_ids.database_url
-  replication { auto {} }
+  replication {
+    auto {}
+  }
   depends_on = [google_project_service.enabled_apis]
 }
 
 resource "google_secret_manager_secret" "redis_url" {
   secret_id = local.runtime_secret_ids.redis_url
-  replication { auto {} }
+  replication {
+    auto {}
+  }
   depends_on = [google_project_service.enabled_apis]
 }
 
 resource "google_secret_manager_secret" "openrouter_api_key" {
   secret_id = local.runtime_secret_ids.openrouter_api_key
-  replication { auto {} }
+  replication {
+    auto {}
+  }
   depends_on = [google_project_service.enabled_apis]
 }
 
 resource "google_secret_manager_secret" "jwt_secret" {
   secret_id = local.runtime_secret_ids.jwt_secret
-  replication { auto {} }
+  replication {
+    auto {}
+  }
   depends_on = [google_project_service.enabled_apis]
 }
 
