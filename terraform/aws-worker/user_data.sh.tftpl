@@ -2,13 +2,15 @@
 set -Eeuo pipefail
 
 dnf update -y
-dnf install -y docker git python3 jq curl awscli
+dnf install -y docker git python3 jq curl awscli gcc-c++ make
 curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
 dnf install -y nodejs
 systemctl enable --now docker
 
-id ubuntu >/dev/null 2>&1 || useradd --create-home --uid 1000 ubuntu
+id ubuntu >/dev/null 2>&1 || useradd --create-home ubuntu
 usermod -aG docker ubuntu
+WORKER_UID="$(id -u ubuntu)"
+WORKER_GID="$(id -g ubuntu)"
 install -d -o root -g root -m 0755 /etc/ath-ide
 install -d -o ubuntu -g ubuntu -m 0700 /var/lib/ath-ide/worker
 
@@ -29,7 +31,7 @@ for key, value in data.items():
     print(key + "=" + chr(34) + value + chr(34))
 ' > /etc/ath-ide/worker.env
 
-cat >> /etc/ath-ide/worker.env <<'ENV'
+cat >> /etc/ath-ide/worker.env <<ENV
 NODE_ENV=production
 EXECUTION_RUNTIME=docker
 WORKER_PORT=8081
@@ -39,8 +41,8 @@ WORKSPACE_OBJECT_STORE_REQUIRED=true
 WORKSPACE_OBJECT_STORE_USE_EC2_ROLE=true
 WORKSPACE_OBJECT_STORE_SERVER_SIDE_ENCRYPTION=${kms_key_id == "" ? "AES256" : "aws:kms"}
 DOCKER_WORKSPACE_IMAGE=${workspace_image}
-DOCKER_WORKSPACE_UID=1000
-DOCKER_WORKSPACE_GID=1000
+DOCKER_WORKSPACE_UID=${WORKER_UID}
+DOCKER_WORKSPACE_GID=${WORKER_GID}
 DOCKER_WORKSPACE_NETWORK=none
 REPO_AGENT_NETWORK=none
 DOCKER_SECCOMP_PROFILE=/etc/ath-ide/seccomp-workspace.json
