@@ -148,6 +148,13 @@ export function validateConfig() {
   const warnings = [];
   const errors = [];
 
+  if (config.executionRuntime === "linux" && process.platform !== "linux") {
+    errors.push("EXECUTION_RUNTIME=linux requires a Linux worker host.");
+  }
+  if (config.executionRuntime === "linux" && !["none", "host"].includes(config.linuxSandbox.networkMode)) {
+    errors.push("LINUX_SANDBOX_NETWORK must be none or host.");
+  }
+
   if (config.executionRuntime === "remote" && !config.previewPublicUrl) {
     warnings.push("PREVIEW_PUBLIC_URL is not set; remote previews are disabled until a separate preview origin is configured.");
   }
