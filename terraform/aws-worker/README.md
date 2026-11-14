@@ -20,7 +20,7 @@ This standalone Terraform root provisions a dedicated, private EC2 execution-wor
 - The worker API must be reachable from the API over the private NLB. Set EXECUTION_WORKER_URL to the module output and WORKER_SHARED_SECRET to the same protected value on the API.
 
 ## Provision
-Run terraform init, terraform fmt -check, terraform validate and terraform plan from this directory. Review the plan, instance type, desired capacity, private subnet routing and expected monthly costs before terraform apply.
+Configure a remote, encrypted and access-controlled Terraform backend before production use; the module does not configure a shared state backend. Run terraform init, terraform fmt -check, terraform validate and terraform plan from this directory. Review the plan, instance type, desired capacity, private subnet routing and expected monthly costs before terraform apply.
 
 After apply, configure the API with EXECUTION_RUNTIME=remote, the private worker_endpoint output as EXECUTION_WORKER_URL, and the same WORKER_SHARED_SECRET. Keep the API-to-worker route private and allow only the API security group to reach the NLB. The worker NLB health check waits for /healthz. Inspect EC2 instance status, SSM registration, systemd logs and docker inspect before routing production traffic.
 
