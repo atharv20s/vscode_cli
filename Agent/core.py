@@ -5,13 +5,15 @@ Core Agent implementation with async context manager and tool calling support.
 from __future__ import annotations
 
 import json
-from typing import AsyncGenerator, Any
+import inspect
+from typing import AsyncGenerator, Any, Callable
 from Agent.events import AgentEvent, AgentEventType, ToolCall
 from CLIENT.response import StreamEventType
 from CLIENT.llm import LLMClient
 from prompts.system import get_system_prompt
 from tools import setup_tools, ToolRegistry, get_registry
 from config.settings import get_settings, load_agents_md
+from tools.base import ToolResult
 
 
 class Agent:
@@ -38,6 +40,7 @@ class Agent:
         max_iterations: int | None = None,
         auto_verify: bool | None = None,
         model: str | None = None,
+        approval_callback: Callable[[Any, dict[str, Any]], Any] | None = None,
     ):
         """Initialize the Agent.
         
@@ -57,6 +60,7 @@ class Agent:
         self.registry: ToolRegistry | None = None
         self.current_turn: int = 0
         self.model = model  # Store model selection
+        self.approval_callback = approval_callback
         # Whether to automatically run verification after write/edit tools
         self.auto_verify: bool = bool(auto_verify) if auto_verify is not None else False
         
@@ -111,6 +115,25 @@ class Agent:
                 "'async with Agent() as agent:'"
             )
 
+    async def _execute_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        """Execute a tool only after its declared side-effect policy is satisfied."""
+        if not self.registry:
+            return ToolResult.fail("Tool registry is not initialized.")
+        tool = self.registry.get(name)
+        if tool is None:
+            return await self.registry.execute(name, **arguments)
+        if getattr(tool, "requires_confirmation", False):
+            if self.approval_callback is None:
+                return ToolResult.fail("Execution denied: this tool requires explicit user approval, but no approval handler is configured.")
+            try:
+                approved = self.approval_callback(tool, arguments)
+                if inspect.isawaitable(approved):
+                    approved = await approved
+            except Exception:
+                return ToolResult.fail("Execution denied: the approval handler failed.")
+            if approved is not True:
+                return ToolResult.fail("Execution denied by the user.")
+        return await self.registry.execute(name, **arguments)
     def _get_tool_schemas(self) -> list[dict[str, Any]] | None:
         """Get tool schemas for the LLM if tools are enabled."""
         if self.tools_enabled and self.registry:
@@ -268,7 +291,7 @@ class Agent:
                     yield AgentEvent.tool_executing(tc.name, tc.arguments)
                     
                     # Execute the tool
-                    result = await self.registry.execute(tc.name, **tc.arguments)
+                    result = await self._execute_tool(tc.name, tc.arguments)
                     
                     # Build context for TUI display
                     tool_context = {"arguments": tc.arguments}
