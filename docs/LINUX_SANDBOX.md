@@ -29,10 +29,10 @@ LINUX_SANDBOX_NETWORK=none
 LINUX_SANDBOX_MAX_OUTPUT_BYTES=1048576
 ```
 
-This backend is currently for non-interactive agent background tasks only. The
-terminal session manager explicitly refuses to fall back to the host shell when
-`EXECUTION_RUNTIME=linux` is selected. Interactive PTYs must use the isolated
-Docker terminal provider until a matching Linux PTY provider is implemented. Validate user-manager
+The backend also provides interactive PTYs through the same systemd user
+scope and bubblewrap workspace boundary. The terminal session manager selects
+this provider when `EXECUTION_RUNTIME=linux`; it never falls back to the host
+shell. Validate user-manager
 availability, cgroup v2 limits, user namespaces and bubblewrap mounts on a
 staging Linux host before production rollout. No host-level privileged daemon
 or cloud resource is provisioned by this code change.
