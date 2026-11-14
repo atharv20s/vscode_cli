@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
-import { parseByteLimit, parseCpuMax, parseCgroupMembership, getLinuxRuntimeDiagnostics } from "./linuxRuntimeService.js";
+import { parseByteLimit, parseCpuMax, parsePidsLimit, parseCgroupMembership, getLinuxRuntimeDiagnostics } from "./linuxRuntimeService.js";
 
 test("parses cgroup v2 membership without losing nested paths", () => {
   assert.deepEqual(parseCgroupMembership("0::/user.slice/user-1000.slice/session-2.scope\n"), [
@@ -17,6 +17,9 @@ test("parses finite and unlimited cgroup limits", () => {
   assert.equal(parseCpuMax("150000 100000"), 1.5);
   assert.equal(parseCpuMax("max 100000"), null);
   assert.equal(parseCpuMax("invalid"), null);
+  assert.equal(parsePidsLimit("128"), 128);
+  assert.equal(parsePidsLimit("max"), null);
+  assert.equal(parsePidsLimit(""), null);
 });
 
 test("returns a stable unsupported result outside Linux", async () => {
