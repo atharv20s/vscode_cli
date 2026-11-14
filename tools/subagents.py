@@ -167,7 +167,7 @@ class Subagent:
                         "content": str(tool_output)[:self.MAX_TOOL_OUTPUT_CHARS],
                     })
 
-            raise TimeoutError(f"Subagent reached its {max_iterations}-iteration limit without a final answer.")
+            raise RuntimeError(f"Subagent reached its {max_iterations}-iteration limit without a final answer.")
         finally:
             await client.close()
 
