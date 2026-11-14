@@ -334,3 +334,19 @@ random contents, verifies each identity reads back only its own content, and
 deletes both test files. It refuses to send tokens over non-local HTTP. The
 secret is never printed. Run only against an API environment where synthetic
 JWT identities are permitted by policy.
+
+
+## Explicit seccomp enforcement for workspace containers
+
+Workspace provisioning now fails closed unless the Docker worker host has a readable seccomp profile at `/etc/ath-ide/seccomp-workspace.json` (override with `DOCKER_SECCOMP_PROFILE`). Install the repository profile as a root-owned, non-writable file before starting the worker:
+
+```bash
+sudo install -d -o root -g root -m 0755 /etc/ath-ide
+sudo install -o root -g root -m 0644 server/security/seccomp-workspace.json /etc/ath-ide/seccomp-workspace.json
+```
+
+The profile keeps Docker's normal syscall allow behavior while explicitly returning EPERM for high-risk kernel interfaces including namespace/mount manipulation, ptrace/process-memory access, kernel module loading, BPF, perf events, userfaultfd and keyring operations. It is defense in depth, not a substitute for a VM boundary or host hardening. The Docker daemon must support the profile's declared architectures; validate on each worker architecture before rollout.
+
+New containers receive both `no-new-privileges` and the explicit seccomp profile. Existing containers are reused only when their inspected security options, read-only root filesystem and dropped capabilities match the required baseline; otherwise they are replaced using the current workspace bind mount. A missing profile prevents provisioning rather than silently falling back to Docker's implicit default.
+
+After installing the profile, rebuild/restart the worker and create a disposable workspace. Inspect it with `docker inspect` and verify `HostConfig.SecurityOpt` includes the expected seccomp path and no-new-privileges, `ReadonlyRootfs` is true, and `CapDrop` contains `ALL`. Do not treat a successful API health check as proof of these runtime properties.
