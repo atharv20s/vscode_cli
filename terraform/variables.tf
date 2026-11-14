@@ -34,9 +34,12 @@ variable "github_actions_branch" {
 }
 
 variable "image_tag" {
-  description = "Docker image tag to deploy"
+  description = "Immutable Docker image tag to deploy (prefer the Git commit SHA)"
   type        = string
-  default     = "latest"
+  validation {
+    condition     = var.image_tag != "latest" && length(var.image_tag) >= 7
+    error_message = "image_tag must be an immutable tag of at least seven characters; latest is not allowed."
+  }
 }
 
 variable "domain_name" {
