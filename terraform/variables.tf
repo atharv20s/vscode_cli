@@ -21,38 +21,22 @@ variable "app_name" {
   default     = "ath-ide"
 }
 
+variable "github_repository" {
+  description = "GitHub owner/repository allowed to federate into the deployer service account"
+  type        = string
+  default     = "atharv20s/vscode_cli"
+}
+
+variable "github_actions_branch" {
+  description = "Only this Git ref may exchange GitHub OIDC tokens for deployer credentials"
+  type        = string
+  default     = "main"
+}
+
 variable "image_tag" {
   description = "Docker image tag to deploy"
   type        = string
   default     = "latest"
-}
-
-variable "database_url" {
-  description = "Neon Serverless PostgreSQL connection string"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "redis_url" {
-  description = "Redis Cloud connection string for distributed cluster state"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "openrouter_api_key" {
-  description = "OpenRouter API Key for multi-model failover"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "jwt_secret" {
-  description = "JWT Secret for user and guest sessions"
-  type        = string
-  sensitive   = true
-  default     = "dev-jwt-secret-override-in-production-cluster-32"
 }
 
 variable "domain_name" {
