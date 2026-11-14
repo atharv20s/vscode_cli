@@ -115,7 +115,7 @@ test("S3 signing obtains short-lived credentials through IMDSv2 when EC2 role mo
   try {
     process.env.WORKSPACE_OBJECT_STORE_BUCKET = "ath-workspaces";
     process.env.WORKSPACE_OBJECT_STORE_REGION = "ap-south-1";
-    process.env.WORKSPACE_OBJECT_STORE_ENDPOINT = "https://s3.ap-south-1.amazonaws.com";
+    delete process.env.WORKSPACE_OBJECT_STORE_ENDPOINT;
     process.env.WORKSPACE_OBJECT_STORE_USE_EC2_ROLE = "true";
     process.env.WORKSPACE_OBJECT_STORE_SERVER_SIDE_ENCRYPTION = "AES256";
     for (const name of ["WORKSPACE_OBJECT_STORE_ACCESS_KEY_ID", "WORKSPACE_OBJECT_STORE_SECRET_ACCESS_KEY", "WORKSPACE_OBJECT_STORE_SESSION_TOKEN"]) {
