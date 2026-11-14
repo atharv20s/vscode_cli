@@ -83,6 +83,9 @@
           <i data-lucide="shield-check"></i> Invites
         </button>
         <span id="collab-presence" aria-live="polite" style="font-size:11px;color:var(--text-muted);white-space:nowrap;"></span>
+        <button id="linux-runtime-trigger" class="topbar-btn linux-runtime-trigger" type="button" aria-expanded="false" aria-controls="linux-runtime-panel" title="Inspect the current worker's Linux isolation and resource limits">
+          <i data-lucide="activity"></i><span>Runtime</span><span id="linux-runtime-indicator" class="runtime-indicator" aria-label="Runtime status"></span>
+        </button>
       </div>
 
       <div class="topbar-center">
@@ -720,5 +723,28 @@
   <script>
     lucide.createIcons();
   </script>
+
+  <section id="linux-runtime-panel" class="linux-runtime-panel" hidden aria-labelledby="linux-runtime-title">
+    <header class="linux-runtime-panel-header">
+      <div><strong id="linux-runtime-title">Worker runtime</strong><p>Process-scoped Linux diagnostics</p></div>
+      <button id="linux-runtime-refresh" type="button" class="icon-btn" title="Refresh runtime diagnostics" aria-label="Refresh runtime diagnostics"><i data-lucide="refresh-cw"></i></button>
+    </header>
+    <div class="linux-runtime-panel-body">
+      <p id="linux-runtime-status" class="linux-runtime-status" role="status">Not checked</p>
+      <dl>
+        <div><dt>Kernel</dt><dd id="linux-runtime-kernel">—</dd></div>
+        <div><dt>Architecture</dt><dd id="linux-runtime-arch">—</dd></div>
+        <div><dt>Cgroups</dt><dd id="linux-runtime-cgroup">—</dd></div>
+        <div><dt>CPU limit</dt><dd id="linux-runtime-cpu">—</dd></div>
+        <div><dt>Memory limit</dt><dd id="linux-runtime-memory">—</dd></div>
+        <div><dt>PID limit</dt><dd id="linux-runtime-pids">—</dd></div>
+        <div><dt>Seccomp</dt><dd id="linux-runtime-seccomp">—</dd></div>
+        <div><dt>No new privileges</dt><dd id="linux-runtime-nnp">—</dd></div>
+        <div><dt>Namespaces</dt><dd id="linux-runtime-namespaces">—</dd></div>
+      </dl>
+      <p class="linux-runtime-footnote">Telemetry only. Isolation must be enforced by the worker runtime and verified independently.</p>
+    </div>
+  </section>
+
 </body>
 </html>
