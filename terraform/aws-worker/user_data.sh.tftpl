@@ -15,7 +15,9 @@ WORKER_GID="$(id -g ubuntu)"
 install -d -o root -g root -m 0755 /etc/ath-ide
 install -d -o ubuntu -g ubuntu -m 0700 /var/lib/ath-ide/worker
 
-aws --region "${aws_region}" secretsmanager get-secret-value \
+secret_loaded=false
+for attempt in $(seq 1 12); do
+  if aws --region "${aws_region}" secretsmanager get-secret-value \
   --secret-id "${worker_secret_arn}" --query SecretString --output text |
 python3 -c '
 import json, re, sys
@@ -30,7 +32,16 @@ for key, value in data.items():
         raise SystemExit("Multiline values are not supported in worker EnvironmentFile")
     value = value.replace("\\\\", "\\\\\\\\").replace(chr(34), chr(92) + chr(34))
     print(key + "=" + chr(34) + value + chr(34))
-' > /etc/ath-ide/worker.env
+' > /etc/ath-ide/worker.env; then
+    secret_loaded=true
+    break
+  fi
+  sleep 5
+done
+if [[ "$secret_loaded" != "true" ]]; then
+  echo "Unable to load worker bootstrap secret from Secrets Manager." >&2
+  exit 1
+fi
 
 cat >> /etc/ath-ide/worker.env <<ENV
 NODE_ENV=production
