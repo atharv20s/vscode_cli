@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 dnf update -y
-dnf install -y docker git python3 jq curl awscli gcc-c++ make amazon-ssm-agent
+dnf install -y docker git python3 jq curl awscli gcc-c++ make
 curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
 dnf install -y nodejs
 systemctl enable --now docker
