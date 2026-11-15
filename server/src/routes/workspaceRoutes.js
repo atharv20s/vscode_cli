@@ -107,11 +107,18 @@ async function collectSymbolFiles(root) {
   }
   return files;
 }
+const symbolIndexCache = new Map();
 async function symbolIndexForRequest(req) {
   const workspace = getWorkspaceService(req.workspaceAccess?.ownerUserId || req.user.id, req.workspaceAccess?.workspaceId || req.get("X-Workspace-Id") || "default");
   if (config.executionRuntime === "remote") await pullWorkspaceFromRemote({ workspaceId: workspace.workspaceId, workspaceDir: workspace.workspaceRoot });
+  const cacheKey = workspace.workspaceId + ":" + workspace.workspaceRoot;
+  const cached = symbolIndexCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 10000) return cached.index;
   const files = await collectSymbolFiles(workspace.workspaceRoot);
-  return buildRepositorySymbolIndex(workspace.workspaceRoot, files, "", { includeAll: true });
+  const index = await buildRepositorySymbolIndex(workspace.workspaceRoot, files, "", { includeAll: true, maxFiles: 1000 });
+  symbolIndexCache.set(cacheKey, { createdAt: Date.now(), index });
+  if (symbolIndexCache.size > 20) symbolIndexCache.delete(symbolIndexCache.keys().next().value);
+  return index;
 }
 function symbolQuery(req) {
   const file = String(req.query.file || "");
