@@ -25,7 +25,8 @@ import { pullWorkspaceFromRemote } from "../services/remoteExecutionWorker.js";
 const router = Router();
 
 const SEARCH_IGNORED = new Set([".git", "node_modules", ".next", "dist", "build", "coverage", ".cache", ".worktrees", ".agent-runs", "vendor", "target", ".venv", "venv"]);
-const SEARCH_MAX_FILES = 5000;
+const SEARCH_MAX_FILES = 2000;
+const SEARCH_MAX_TOTAL_BYTES = 50 * 1024 * 1024;
 const SEARCH_MAX_FILE_BYTES = 512 * 1024;
 const SEARCH_MAX_RESULTS = 300;
 
@@ -38,6 +39,9 @@ async function searchWorkspace(req, res) {
   const caseInsensitive = req.query.caseInsensitive !== "false";
   let matcher = null;
   try {
+    if (useRegex && (query.length > 120 || /\\\\[1-9]|\\(\\?([=!<])|\\([^)]*[+*][^)]*\\)[+*{]/.test(query))) {
+      return res.status(400).json({ error: "UnsafeSearchPattern", message: "This regular expression uses constructs that are too expensive for workspace search." });
+    }
     if (useRegex) matcher = new RegExp(query, caseInsensitive ? "i" : "");
   } catch {
     return res.status(400).json({ error: "InvalidSearchPattern", message: "The regular expression is invalid." });
@@ -46,7 +50,7 @@ async function searchWorkspace(req, res) {
     if (config.executionRuntime === "remote") await pullWorkspaceFromRemote({ workspaceId: workspace.workspaceId, workspaceDir: workspace.workspaceRoot });
     const root = workspace.resolvePath(".").resolved;
     const stack = [root], results = [];
-    let scannedFiles = 0, truncated = false;
+    let scannedFiles = 0, scannedBytes = 0, truncated = false;
     while (stack.length && !truncated) {
       const directory = stack.pop();
       let entries;
@@ -67,6 +71,7 @@ async function searchWorkspace(req, res) {
         const lines = source.split(String.fromCharCode(10));
         for (let index = 0; index < lines.length; index++) {
           const line = lines[index];
+          if (line.length > 10000) continue;
           const haystack = caseInsensitive && !useRegex ? line.toLowerCase() : line;
           const needle = caseInsensitive && !useRegex ? query.toLowerCase() : query;
           const match = useRegex ? (matcher.lastIndex = 0, matcher.exec(line)) : (haystack.includes(needle) ? { index: haystack.indexOf(needle) } : null);
@@ -77,7 +82,7 @@ async function searchWorkspace(req, res) {
         if (truncated) break;
       }
     }
-    return res.json({ query, results, scannedFiles: Math.min(scannedFiles, SEARCH_MAX_FILES), truncated });
+    return res.json({ query, results, scannedFiles: Math.min(scannedFiles, SEARCH_MAX_FILES), scannedBytes, truncated });
   } catch {
     return res.status(500).json({ error: "WorkspaceSearchFailed", message: "Unable to search this workspace." });
   }
