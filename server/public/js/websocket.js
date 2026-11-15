@@ -24,6 +24,7 @@ class WebSocketClient {
     this.lastToken = null;
     this.pingInterval = null;
     this.shouldReconnect = true;
+    this.reconnectTimeout = null;
 
     // Auto-reconnect when user refocuses tab
     window.addEventListener("focus", () => {
@@ -103,6 +104,8 @@ class WebSocketClient {
 
   disconnect() {
     this.shouldReconnect = false;
+    if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+    this.reconnectTimeout = null;
     if (this.pingInterval) clearInterval(this.pingInterval);
     this.pingInterval = null;
     this.isConnected = false;
@@ -117,8 +120,9 @@ class WebSocketClient {
     this.reconnectAttempts++;
     const delay = Math.min(this.reconnectDelay * Math.pow(1.3, Math.min(this.reconnectAttempts, 8)), 5000);
 
-    setTimeout(() => {
-      this.connect(this.lastToken);
+    this.reconnectTimeout = setTimeout(() => {
+      this.reconnectTimeout = null;
+      if (this.shouldReconnect) this.connect(this.lastToken);
     }, delay);
   }
 
