@@ -367,6 +367,15 @@ class EditorManager {
     return score + v.length * 0.01;
   }
 
+  async openSearchResult(filePath, line, column) {
+    await this.openFile(filePath);
+    if (!this.monacoEditor || this.activeTab !== filePath) return;
+    const position = { lineNumber: Math.max(1, Number(line) || 1), column: Math.max(1, Number(column) || 1) };
+    this.monacoEditor.setPosition(position);
+    this.monacoEditor.revealPositionInCenter(position);
+    this.monacoEditor.focus();
+  }
+
   openWorkspaceSearch() {
     const input = document.getElementById("search-input");
     if (input) { input.focus(); input.placeholder = "Search workspace / web…"; }

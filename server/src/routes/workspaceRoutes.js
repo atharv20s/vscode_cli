@@ -3,6 +3,8 @@
  */
 
 import { Router } from "express";
+import fs from "fs/promises";
+import path from "path";
 import { requireAuth } from "../middleware/auth.js";
 import {
   listFiles,
@@ -17,8 +19,75 @@ import { LocalBackend } from "../services/backends/localBackend.js";
 import { config } from "../config/env.js";
 import { listWorkspaceSessions, createWorkspaceSession } from "../services/workspaceSessionService.js";
 import { resolveWorkspaceShare } from "../services/workspaceCollaborationService.js";
+import { getWorkspaceService } from "../services/workspaceService.js";
+import { pullWorkspaceFromRemote } from "../services/remoteExecutionWorker.js";
 
 const router = Router();
+
+const SEARCH_IGNORED = new Set([".git", "node_modules", ".next", "dist", "build", "coverage", ".cache", ".worktrees", ".agent-runs", "vendor", "target", ".venv", "venv"]);
+const SEARCH_MAX_FILES = 2000;
+const SEARCH_MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+const SEARCH_MAX_FILE_BYTES = 512 * 1024;
+const SEARCH_MAX_RESULTS = 300;
+
+async function searchWorkspace(req, res) {
+  const query = String(req.query.q || "");
+  if (!query.trim()) return res.status(400).json({ error: "MissingSearchQuery", message: "Provide a non-empty q parameter." });
+  if (query.length > 200) return res.status(400).json({ error: "SearchQueryTooLong", message: "Search queries are limited to 200 characters." });
+  const workspace = getWorkspaceService(req.workspaceAccess?.ownerUserId || req.user.id, req.workspaceAccess?.workspaceId || req.get("X-Workspace-Id") || "default");
+  const useRegex = req.query.regex === "true";
+  const caseInsensitive = req.query.caseInsensitive !== "false";
+  let matcher = null;
+  try {
+    if (useRegex && (query.length > 120 || query.includes("\\1") || query.includes("(?=") || query.includes("(?!") || query.includes("(?<") || query.includes(")+") || query.includes(")*"))) {
+      return res.status(400).json({ error: "UnsafeSearchPattern", message: "This regular expression uses constructs that are too expensive for workspace search." });
+    }
+    if (useRegex) matcher = new RegExp(query, caseInsensitive ? "i" : "");
+  } catch {
+    return res.status(400).json({ error: "InvalidSearchPattern", message: "The regular expression is invalid." });
+  }
+  try {
+    if (config.executionRuntime === "remote") await pullWorkspaceFromRemote({ workspaceId: workspace.workspaceId, workspaceDir: workspace.workspaceRoot });
+    const root = workspace.resolvePath(".").resolved;
+    const stack = [root], results = [];
+    let scannedFiles = 0, scannedBytes = 0, truncated = false;
+    while (stack.length && !truncated) {
+      const directory = stack.pop();
+      let entries;
+      try { entries = await fs.readdir(directory, { withFileTypes: true }); }
+      catch (error) { if (error.code === "ENOENT" || error.code === "EACCES") continue; throw error; }
+      for (const entry of entries) {
+        if (SEARCH_IGNORED.has(entry.name) || entry.name.startsWith(".ath-") || entry.isSymbolicLink()) continue;
+        const absolute = path.join(directory, entry.name);
+        if (entry.isDirectory()) { stack.push(absolute); continue; }
+        if (!entry.isFile()) continue;
+        scannedFiles++;
+        if (scannedFiles > SEARCH_MAX_FILES) { truncated = true; break; }
+        let stat, source;
+        try { stat = await fs.stat(absolute); if (stat.size > SEARCH_MAX_FILE_BYTES) continue; scannedBytes += stat.size; if (scannedBytes > SEARCH_MAX_TOTAL_BYTES) { truncated = true; break; } source = await fs.readFile(absolute, "utf8"); }
+        catch { continue; }
+        if (source.includes("\u0000")) continue;
+        const relative = path.relative(root, absolute).split(path.sep).join("/");
+        const lines = source.split(String.fromCharCode(10));
+        for (let index = 0; index < lines.length; index++) {
+          const line = lines[index];
+          if (line.length > 10000) continue;
+          const haystack = caseInsensitive && !useRegex ? line.toLowerCase() : line;
+          const needle = caseInsensitive && !useRegex ? query.toLowerCase() : query;
+          const match = useRegex ? (matcher.lastIndex = 0, matcher.exec(line)) : (haystack.includes(needle) ? { index: haystack.indexOf(needle) } : null);
+          if (!match) continue;
+          results.push({ file: relative, line: index + 1, col: match.index + 1, preview: line.trim().slice(0, 240) });
+          if (results.length >= SEARCH_MAX_RESULTS) { truncated = true; break; }
+        }
+        if (truncated) break;
+      }
+    }
+    return res.json({ query, results, scannedFiles: Math.min(scannedFiles, SEARCH_MAX_FILES), scannedBytes, truncated });
+  } catch {
+    return res.status(500).json({ error: "WorkspaceSearchFailed", message: "Unable to search this workspace." });
+  }
+}
+
 
 router.get("/sessions", requireAuth, async (req, res) => {
   try {
@@ -81,6 +150,7 @@ router.use(requireAuth, async (req, res, next) => {
   }
 });
 
+router.get("/search", searchWorkspace);
 router.get("/files", listFiles);
 router.get("/file", readFile);
 router.post("/file", writeFile);

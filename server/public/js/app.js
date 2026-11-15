@@ -504,6 +504,14 @@ class App {
       });
     });
 
+    // Workspace Find-in-Files (Ctrl/Cmd+Shift+F from Monaco).
+    const workspaceSearchInput = document.getElementById("search-input");
+    const workspaceSearchButton = document.getElementById("btn-workspace-search");
+    if (workspaceSearchButton) workspaceSearchButton.addEventListener("click", () => this.searchWorkspaceFiles());
+    if (workspaceSearchInput) workspaceSearchInput.addEventListener("keydown", event => {
+      if (event.key === "Enter") { event.preventDefault(); this.searchWorkspaceFiles(); }
+    });
+
     // Bottom Panel Tabs
     document.querySelectorAll(".panel-tab").forEach((tab) => {
       tab.addEventListener("click", () => {
@@ -1044,6 +1052,59 @@ class App {
   /**
    * Load files in the workspace with inline Delete & Move actions.
    */
+  async searchWorkspaceFiles() {
+    const input = document.getElementById("search-input");
+    const resultsEl = document.getElementById("search-results-list");
+    const countEl = document.getElementById("search-result-count");
+    const query = input?.value?.trim() || "";
+    if (!resultsEl || !query) return;
+    resultsEl.replaceChildren();
+    if (countEl) countEl.textContent = "Searching…";
+    const params = new URLSearchParams({
+      q: query,
+      regex: String(!!document.getElementById("search-regex")?.checked),
+      caseInsensitive: String(!document.getElementById("search-case-sensitive")?.checked),
+    });
+    try {
+      const response = await fetch("/api/workspace/search?" + params.toString(), {
+        headers: { Authorization: "Bearer " + (this.token || "") },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Workspace search failed.");
+      const results = Array.isArray(data.results) ? data.results : [];
+      if (countEl) countEl.textContent = results.length + (results.length === 1 ? " result" : " results") + (data.truncated ? " · capped" : "");
+      if (!results.length) {
+        const empty = document.createElement("div");
+        empty.className = "workspace-search-empty";
+        empty.textContent = "No matches found in the workspace.";
+        resultsEl.appendChild(empty);
+        return;
+      }
+      results.forEach(result => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "workspace-search-result";
+        const path = document.createElement("span");
+        path.className = "result-path";
+        path.textContent = result.file + ":" + result.line + ":" + result.col;
+        const preview = document.createElement("span");
+        preview.className = "result-preview";
+        preview.textContent = result.preview || "";
+        button.append(path, preview);
+        button.addEventListener("click", async () => {
+          await window.editorManager?.openSearchResult?.(result.file, result.line, result.col);
+        });
+        resultsEl.appendChild(button);
+      });
+    } catch (error) {
+      if (countEl) countEl.textContent = "Search failed";
+      const message = document.createElement("div");
+      message.className = "workspace-search-empty";
+      message.textContent = error.message;
+      resultsEl.appendChild(message);
+    }
+  }
+
   async loadWorkspaceFiles() {
     const fileTree = document.getElementById("file-tree");
     if (!fileTree) return;
