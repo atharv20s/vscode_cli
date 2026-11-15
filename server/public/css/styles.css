@@ -1936,3 +1936,13 @@ textarea {
   #code-editor-view.split-primary { width:100%; }
   .code-editor-view-secondary { display:none; }
 }
+
+/* Tree-sitter diagnostics and Problems panel */
+.ath-problems-panel { position:absolute; z-index:90; left:0; right:0; bottom:0; height:210px; display:flex; flex-direction:column; color:var(--text-main); background:var(--bg-panel); border-top:1px solid var(--border-bright); box-shadow:0 -12px 28px rgba(0,0,0,.28); }
+.ath-problems-panel[hidden] { display:none !important; }
+.ath-problems-panel header { height:34px; flex:0 0 34px; display:flex; align-items:center; justify-content:space-between; padding:0 12px; border-bottom:1px solid var(--border-subtle); font-size:12px; }
+.ath-problems-panel header button { border:0; background:transparent; color:var(--text-muted); cursor:pointer; font-size:20px; }
+.ath-problems-list { min-height:0; overflow:auto; padding:6px 10px; }
+.ath-problems-summary { padding:4px 2px 8px; color:var(--text-dim); font-size:11px; }
+.ath-problem-item { display:block; width:100%; padding:5px 7px; border:0; border-radius:4px; text-align:left; color:var(--text-muted); background:transparent; font:11px var(--font-mono); cursor:pointer; }
+.ath-problem-item:hover { color:var(--text-main); background:rgba(99,102,241,.12); }
