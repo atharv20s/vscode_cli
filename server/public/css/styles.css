@@ -1854,3 +1854,26 @@ textarea {
 .linux-runtime-panel dd { margin:0; font-size:12px; overflow-wrap:anywhere; }
 .linux-runtime-footnote { margin:14px 0 0; padding-top:10px; border-top:1px solid var(--border-subtle); color:var(--text-dim); font-size:10px; line-height:1.5; }
 @media (max-width:640px) { .linux-runtime-panel { top:54px; right:8px; } }
+
+
+/* Monaco editor surface and native IDE command dialogs */
+#code-editor-view {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #1e1e1e;
+}
+.code-editor-wrapper { position: relative; min-height: 0; }
+.monaco-editor, .monaco-editor .overflow-guard { border-radius: 0; }
+.monaco-editor .suggest-widget, .monaco-editor .monaco-hover { z-index: 80 !important; }
+.monaco-load-error { margin: 24px; padding: 16px; color: #fca5a5; background: rgba(127,29,29,.2); border: 1px solid rgba(239,68,68,.35); border-radius: 8px; font: 12px var(--font-mono); }
+.editor-dialog-overlay { position: fixed; inset: 0; z-index: 10050; display: flex; justify-content: center; align-items: flex-start; padding: 12vh 16px 16px; background: rgba(0,0,0,.58); backdrop-filter: blur(3px); }
+.editor-dialog { width: min(620px, 100%); max-height: 72vh; overflow: auto; padding: 18px; color: var(--text-main); background: var(--bg-panel); border: 1px solid var(--border-bright); border-radius: 12px; box-shadow: 0 24px 80px rgba(0,0,0,.55); }
+.editor-dialog h3 { margin: 0 0 6px; font-size: 15px; }
+.editor-dialog p { margin: 0 0 12px; color: var(--text-dim); font-size: 12px; }
+.editor-dialog input { width: 100%; box-sizing: border-box; margin-bottom: 10px; padding: 10px 12px; color: var(--text-main); background: var(--bg-input); border: 1px solid var(--accent); border-radius: 6px; outline: none; font: 13px var(--font-mono); }
+.editor-dialog-options { display: flex; flex-direction: column; gap: 3px; max-height: 42vh; overflow: auto; margin-bottom: 12px; }
+.editor-dialog-options button { padding: 8px 10px; text-align: left; color: var(--text-main); background: transparent; border: 0; border-radius: 5px; cursor: pointer; font: 12px var(--font-mono); }
+.editor-dialog-options button:hover { background: rgba(99,102,241,.18); }
