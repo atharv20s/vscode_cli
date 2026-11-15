@@ -747,8 +747,8 @@ class App {
           promptLabel.textContent = this.currentShell === "wsl" ? "wsl:bash$" : (this.currentShell === "cmd" ? "cmd$" : "pwsh$");
         }
         this.logTerminal(`[Terminal] Switched environment to ${this.currentShell.toUpperCase()}`, "info");
-        // Re-initialize terminal via WebSocket
-        window.wsClient.send("terminal_init", { shell: this.currentShell });
+        // A running PTY cannot change shells in place; create a new independent session.
+        this.createTerminalSession(this.currentShell);
       });
     }
 
@@ -1044,9 +1044,8 @@ class App {
 
   async executeTerminalCommand(cmd) {
     if (!cmd) return;
-    if (window.wsClient.isConnected) {
-      window.wsClient.send("terminal_input", { command: cmd + "\r" });
-    }
+    const session = this.getActiveTerminal();
+    if (session?.client?.isConnected) session.client.send("terminal_input", { command: cmd + "\r" });
   }
 
   /**
@@ -2948,8 +2947,9 @@ class App {
    * Send a command directly to the active interactive terminal session
    */
   sendTerminalCommand(cmd) {
-    if (window.wsClient && window.wsClient.isConnected) {
-      window.wsClient.send("terminal.input", { data: cmd + "\r\n" });
+    const session = this.getActiveTerminal();
+    if (session?.client?.isConnected) {
+      session.client.send("terminal.input", { data: cmd + "\r\n" });
       this.logTerminal(`[Run] Sent: ${cmd}`, "info");
       // Switch bottom panel to terminal
       const termTab = document.querySelector('.panel-tab[data-panel="terminal"]');
