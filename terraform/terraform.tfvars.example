@@ -7,11 +7,11 @@ region     = "us-central1"
 zone       = "us-central1-a"
 app_name   = "ath-ide"
 
-# Database & Cache (Injected directly from your .env)
-database_url       = "postgresql://neondb_owner:npg_...ep-cold-bush-...neon.tech/neondb?sslmode=require"
-redis_url          = "redis://default:...@redis-....c300.eu-central-1-1.ec2.redns.redis-cloud.com:13961"
-openrouter_api_key = "sk-or-v1-..."
-jwt_secret         = "your-cryptographically-secure-jwt-secret-32-chars"
+github_repository     = "atharv20s/vscode_cli"
+github_actions_branch = "main"
+image_tag             = "release-sha" # Prefer immutable image tags, not latest
+
+# Populate the Secret Manager secrets before deploying Cloud Run.
 
 # Optional Custom Domain (e.g. ide.yourdomain.com)
 domain_name = ""

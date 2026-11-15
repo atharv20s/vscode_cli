@@ -28,7 +28,8 @@
     "storage:verify-s3-restore": "node ../scripts/verify-s3-restore-live.mjs",
     "runtime:verify-terminal-restart": "node ../scripts/verify-terminal-restart.mjs",
     "security:verify-multi-user-isolation": "node ../scripts/verify-multi-user-isolation-live.mjs",
-    "production:acceptance": "node scripts/run-production-acceptance.mjs"
+    "production:acceptance": "node scripts/run-production-acceptance.mjs",
+    "runtime:verify-workspace-security": "node ../scripts/verify-workspace-security-live.mjs"
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0",

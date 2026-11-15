@@ -12,6 +12,7 @@ import fs from "fs";
 import path from "path";
 import { execFile, execSync } from "child_process";
 import { config } from "./src/config/env.js";
+import { buildStrictSSHOptions, validateSSHHost, validateSSHUsername } from "./src/services/sshSecurity.js";
 
 const host = config.remoteSandbox?.host || process.env.OCI_HOST || process.env.REMOTE_HOST;
 const user = config.remoteSandbox?.user || process.env.OCI_USER || "ubuntu";
@@ -97,20 +98,17 @@ function checkPort(targetHost, targetPort) {
 function runRemoteCommand(cmd) {
   return new Promise((resolve) => {
     const sshExecutable = process.platform === "win32" ? "ssh.exe" : "ssh";
-    const args = [
-      "-p", String(port),
-      "-o", "StrictHostKeyChecking=no",
-      "-o", "UserKnownHostsFile=/dev/null",
-      "-o", "LogLevel=ERROR",
-      "-o", "ConnectTimeout=10",
-      "-o", "BatchMode=yes",
-    ];
-
-    if (keyPath) {
-      args.push("-i", resolvedKey);
+    let args;
+    try {
+      validateSSHHost(host);
+      validateSSHUsername(user);
+      args = buildStrictSSHOptions({ port, connectTimeout: 10 });
+    } catch (error) {
+      resolve({ success: false, output: error.message, exitCode: 1 });
+      return;
     }
-
-    args.push(`${user}@${host}`, cmd);
+    if (keyPath) args.push("-i", resolvedKey);
+    args.push(user + "@" + host, cmd);
 
     execFile(sshExecutable, args, { timeout: 20000 }, (error, stdout, stderr) => {
       const output = (stdout || stderr || "").trim();

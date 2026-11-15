@@ -1,0 +1,35 @@
+name: AWS Execution Worker Terraform
+
+on:
+  pull_request:
+    paths:
+      - "terraform/aws-worker/**"
+      - ".github/workflows/aws-worker-terraform.yml"
+  push:
+    branches: [main]
+    paths:
+      - "terraform/aws-worker/**"
+      - ".github/workflows/aws-worker-terraform.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - name: Format
+        working-directory: terraform/aws-worker
+        run: |
+          terraform fmt -diff -recursive
+          terraform fmt -check -recursive
+      - name: Initialize without backend
+        working-directory: terraform/aws-worker
+        run: terraform init -backend=false -input=false
+      - name: Validate
+        working-directory: terraform/aws-worker
+        run: terraform validate

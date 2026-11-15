@@ -23,8 +23,13 @@ output "service_account_email" {
   value       = google_service_account.github_actions_sa.email
 }
 
-output "service_account_private_key_base64" {
-  description = "Base64 encoded Service Account private key for GitHub Secret GCP_SA_KEY"
-  value       = google_service_account_key.deployer_key.private_key
-  sensitive   = true
+
+output "workload_identity_provider" {
+  description = "GitHub Actions workload identity provider resource name"
+  value       = google_iam_workload_identity_pool_provider.github.name
+}
+
+output "runtime_service_account_email" {
+  description = "Least-privilege Cloud Run runtime service account"
+  value       = google_service_account.runtime.email
 }

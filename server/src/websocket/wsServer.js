@@ -567,7 +567,7 @@ async function handleMessage(ws, msg, user) {
  * Handle agent chat messages — streams agent events back over WS.
  */
 async function handleChat(ws, payload, user) {
-  const { message, images, conversationId, model, systemPrompt, context, conversationHistory } = payload || {};
+  const { message, images, conversationId, model, context, conversationHistory } = payload || {};
 
   if (!message && (!images || images.length === 0)) {
     sendMessage(ws, "error", { message: "Missing 'message' or 'images' in chat payload" });
@@ -606,7 +606,6 @@ async function handleChat(ws, payload, user) {
       context,
       conversationHistory: sanitizedHistory,
       model: model || undefined,
-      systemPrompt: systemPrompt || undefined,
       workspaceDir: ws.workspaceService.workspaceRoot,
       workspaceId: ws.workspaceId,
       workspaceKey: ws.workspaceKey,
