@@ -3351,8 +3351,16 @@ class App {
     const container = document.getElementById("terminal-container");
     if (!container) return;
     container.classList.add("terminal-session-container");
-    const defaultSession = { id: "default", sessionId: null, client: window.wsClient, shell: this.currentShell || "powershell", label: "Terminal 1", state: "connecting", host: container };
+    const defaultId = window.crypto?.randomUUID?.() || "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      return (c === "x" ? r : (r & 3 | 8)).toString(16);
+    });
+    const defaultUrl = new URL(window.wsClient.url);
+    defaultUrl.searchParams.set("terminalSessionId", defaultId);
+    window.wsClient.url = defaultUrl.toString();
+    const defaultSession = { id: "default", sessionId: defaultId, client: window.wsClient, shell: this.currentShell || "powershell", label: "Terminal 1", state: "connecting", host: container };
     this.terminalSessions.set("default", defaultSession);
+    this.terminalSessions.set(defaultId, defaultSession);
     this.createTerminalView(defaultSession, container);
     this.term = defaultSession.term;
     this.fitAddon = defaultSession.fitAddon;
