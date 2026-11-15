@@ -418,7 +418,8 @@ class EditorManager {
   async refreshDiagnostics(filePath, editor = this.monacoEditor) {
     const model = editor?.getModel();
     if (!model || !filePath || !this.openTabs.has(filePath)) return;
-    let modelPath = String(model.uri?.path || "").replace(/^\\//, "");
+    let modelPath = String(model.uri?.path || "");
+    if (modelPath.startsWith("/")) modelPath = modelPath.slice(1);
     try { modelPath = decodeURIComponent(modelPath); } catch {}
     if (modelPath !== filePath) return;
     try {
