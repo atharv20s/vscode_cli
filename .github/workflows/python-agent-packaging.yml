@@ -1,0 +1,39 @@
+name: Python agent packaging
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "setup.py"
+      - "main.py"
+      - "Agent/**"
+      - "CLIENT/**"
+      - "config/**"
+      - "context/**"
+      - "hooks/**"
+      - "prompts/**"
+      - "safety/**"
+      - "tools/**"
+      - "ui/**"
+      - "utils/**"
+      - "docs/PYTHON_AGENT_INSTALL.md"
+      - ".github/workflows/python-agent-packaging.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: python -m pip install .
+      - name: Verify CLI entry point
+        run: ath-agent --help
+      - name: Verify package metadata
+        run: python setup.py --name

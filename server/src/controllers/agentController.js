@@ -14,7 +14,7 @@ import { getWorkspaceService } from "../services/workspaceService.js";
  * POST /api/agent/chat — SSE streaming chat.
  */
 export async function chatStream(req, res) {
-  const { message, images = [], model, systemPrompt, conversationId: requestedConversationId } = req.body || {};
+  const { message, images = [], model, conversationId: requestedConversationId } = req.body || {};
 
   if (!message && (!Array.isArray(images) || images.length === 0)) {
     return res.status(400).json({
@@ -82,7 +82,6 @@ export async function chatStream(req, res) {
       images,
       conversationHistory: history,
       model: model || undefined,
-      systemPrompt: systemPrompt || undefined,
       workspaceDir: workspaceService.workspaceRoot,
       workspaceId: workspaceService.workspaceId,
       workspaceService,

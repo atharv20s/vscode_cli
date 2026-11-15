@@ -11,6 +11,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 
 const steps = [
+  ["Docker seccomp and workspace resource enforcement", "../scripts/verify-workspace-security-live.mjs"],
   ["S3 signed upload/read-back", "../scripts/verify-s3-live.mjs"],
   ["S3 delete-and-worker-restore drill", "../scripts/verify-s3-restore-live.mjs"],
   ["Remote terminal recovery after worker restart", "../scripts/verify-terminal-restart.mjs"],

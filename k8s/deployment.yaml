@@ -22,10 +22,23 @@ spec:
         app: ath-ide-core
     spec:
       serviceAccountName: ath-ide-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: ath-ide-server
           image: ath-ide:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            privileged: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 3001
@@ -34,6 +47,10 @@ spec:
               value: "kafka-service.ath-ide.svc.cluster.local:9092"
             - name: NODE_ENV
               value: "production"
+            - name: HOME
+              value: "/tmp"
+            - name: WORKSPACE_ROOT
+              value: "/workspace"
           envFrom:
             - configMapRef:
                 name: ath-ide-config
@@ -61,7 +78,12 @@ spec:
           volumeMounts:
             - name: workspaces-volume
               mountPath: /workspace
+            - name: tmp-volume
+              mountPath: /tmp
       volumes:
+        - name: tmp-volume
+          emptyDir:
+            sizeLimit: 256Mi
         - name: workspaces-volume
           persistentVolumeClaim:
             claimName: ath-ide-workspaces-pvc
@@ -74,7 +96,7 @@ metadata:
   labels:
     app: ath-ide-core
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   sessionAffinity: ClientIP
   sessionAffinityConfig:
     clientIP:

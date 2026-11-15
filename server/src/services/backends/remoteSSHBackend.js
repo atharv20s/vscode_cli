@@ -6,11 +6,12 @@
  * wrapped in standardized event envelopes.
  */
 
-import { spawn, exec } from "child_process";
+import { spawn, execFile } from "child_process";
 import pty from "node-pty";
 import { logger } from "../../config/logger.js";
 import { sendMessage } from "../../websocket/connectionManager.js";
 import { eventBus, EVENT_TOPICS } from "../../websocket/eventBus.js";
+import { buildStrictSSHOptions, validateSSHHost, validateSSHUsername } from "../sshSecurity.js";
 
 export class RemoteSSHBackend {
   constructor() {
@@ -30,21 +31,20 @@ export class RemoteSSHBackend {
    */
   static async testConnection({ host, port = 22, username = "ubuntu", keyPath = null }) {
     return new Promise((resolve) => {
-      const keyArg = keyPath ? `-i "${keyPath}"` : "";
-      const cmd = `ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 ${keyArg} -p ${port} ${username}@${host} "uname -a && uptime"`;
-
-      exec(cmd, { timeout: 8000 }, (err, stdout, stderr) => {
-        if (err) {
-          resolve({
-            success: false,
-            error: stderr.trim() || err.message || "Failed to establish SSH connection to remote host.",
-          });
-        } else {
-          resolve({
-            success: true,
-            info: stdout.trim(),
-          });
-        }
+      let args;
+      try {
+        validateSSHHost(host);
+        validateSSHUsername(username);
+        args = buildStrictSSHOptions({ port, connectTimeout: 5 });
+        if (keyPath) args.push("-i", keyPath);
+        args.push(username + "@" + host, "uname -a && uptime");
+      } catch (error) {
+        resolve({ success: false, error: error.message });
+        return;
+      }
+      execFile("ssh", args, { timeout: 8000 }, (err, stdout, stderr) => {
+        if (err) resolve({ success: false, error: (stderr || "").trim() || err.message || "Failed to establish SSH connection to remote host." });
+        else resolve({ success: true, info: (stdout || "").trim() });
       });
     });
   }
@@ -72,17 +72,11 @@ export class RemoteSSHBackend {
   }) {
     this.hostConfig = { host, port, username, keyPath };
 
-    const sshArgs = [
-      "-tt",
-      "-o", "StrictHostKeyChecking=no",
-      "-p", port.toString(),
-    ];
-
-    if (keyPath) {
-      sshArgs.push("-i", keyPath);
-    }
-
-    sshArgs.push(`${username}@${host}`);
+    validateSSHHost(host);
+    validateSSHUsername(username);
+    const sshArgs = ["-tt", ...buildStrictSSHOptions({ port, connectTimeout: 10, batchMode: false })];
+    if (keyPath) sshArgs.push("-i", keyPath);
+    sshArgs.push(username + "@" + host);
 
     logger.info(`RemoteSSHBackend: Spawning remote SSH PTY session for ${username}@${host}:${port}`);
 
