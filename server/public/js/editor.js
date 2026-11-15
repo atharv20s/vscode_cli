@@ -70,7 +70,7 @@ class EditorManager {
 
       const symbolLanguages = ["javascript", "typescript", "python", "rust", "go", "java"];
       const symbolHeaders = () => ({ Authorization: "Bearer " + (localStorage.getItem("token") || "") });
-      const activeFileForModel = model => decodeURIComponent(String(model?.uri?.path || "").replace(/^\\//, "")) || this.activeTab;
+      const activeFileForModel = model => decodeURIComponent(String(model?.uri?.path || "").replace(/^\//, "")) || this.activeTab;
       const symbolRequest = async (endpoint, model, position) => {
         const word = model.getWordAtPosition(position);
         const file = activeFileForModel(model);
