@@ -181,3 +181,37 @@ export async function buildRepositorySymbolIndex(root, filePaths, prompt = "", o
     parsedFiles,
   };
 }
+
+export async function getTreeSitterDiagnostics(filePath, source) {
+  const languageName = LANGUAGE_BY_EXTENSION[path.extname(String(filePath || "")).toLowerCase()];
+  if (!languageName || typeof source !== "string") return { available: false, diagnostics: [] };
+  const runtime = await getRuntime();
+  const parser = new runtime.Parser();
+  try {
+    parser.setLanguage(await getLanguage(languageName));
+    const tree = parser.parse(source);
+    const diagnostics = [];
+    walk(tree.rootNode, node => {
+      if (diagnostics.length >= 200) return;
+      const missing = Boolean(node.isMissing);
+      const error = Boolean(node.isError) || node.type === "ERROR";
+      if (!missing && !error) return;
+      const start = node.startPosition || { row: 0, column: 0 };
+      const end = node.endPosition || start;
+      const snippet = String(node.text || "").replace(/\s+/g, " ").trim().slice(0, 80);
+      diagnostics.push({
+        startLineNumber: start.row + 1,
+        startColumn: start.column + 1,
+        endLineNumber: Math.max(start.row + 1, end.row + 1),
+        endColumn: Math.max(start.column + 2, end.column + 1),
+        severity: missing ? "warning" : "error",
+        message: missing ? "Expected " + node.type : "Unexpected syntax" + (snippet ? ": " + snippet : ""),
+        source: "Tree-sitter"
+      });
+    });
+    tree.delete?.();
+    return { available: true, diagnostics };
+  } finally {
+    parser.delete?.();
+  }
+}
