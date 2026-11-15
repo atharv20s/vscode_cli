@@ -14,6 +14,8 @@ class EditorManager {
     this.monacoReady = false;
     this.pendingModel = null;
     this.gitDecorationIds = new Map();
+    this.gitDiffEditor = null;
+    this.gitDiffOverlay = null;
     this.suppressModelChange = false;
     this.initEventListeners();
     this.restoreStateFromCache();
@@ -157,6 +159,7 @@ class EditorManager {
       if (e.key === "Escape") this.closeEditorDialog();
     });
     document.getElementById("editor-search-trigger")?.addEventListener("click", () => this.monacoEditor?.getAction("actions.find").run());
+    document.getElementById("btn-git-diff-file")?.addEventListener("click", () => this.openGitDiff());
   }
 
   saveStateToCache() {
@@ -277,6 +280,63 @@ class EditorManager {
     this.monacoEditor.focus();
   }
 
+
+
+  async openGitDiff(filePath = this.activeTab) {
+    if (!filePath || !this.monacoReady) return;
+    this.closeGitDiff();
+    try {
+      const response = await fetch("/api/workspace/git/diff?file=" + encodeURIComponent(filePath), {
+        headers: { Authorization: "Bearer " + (localStorage.getItem("token") || "") }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || data.error || "Unable to load Git diff.");
+      const overlay = document.createElement("div");
+      overlay.className = "git-diff-overlay";
+      overlay.id = "git-diff-overlay";
+      const header = document.createElement("div");
+      header.className = "git-diff-header";
+      const title = document.createElement("strong");
+      title.textContent = data.file + " · HEAD ↔ Working Tree";
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "secondary-btn";
+      close.textContent = "Close";
+      close.addEventListener("click", () => this.closeGitDiff());
+      header.append(title, close);
+      const host = document.createElement("div");
+      host.className = "git-diff-host";
+      overlay.append(header, host);
+      document.body.appendChild(overlay);
+      this.gitDiffOverlay = overlay;
+      const language = this.detectLanguage(data.file);
+      const uriBase = "inmemory://ath-git-diff/" + encodeURIComponent(data.file);
+      const original = monaco.editor.createModel(data.original || "", language, monaco.Uri.parse(uriBase + "?side=original"));
+      const modified = monaco.editor.createModel(data.modified || "", language, monaco.Uri.parse(uriBase + "?side=modified"));
+      this.gitDiffEditor = monaco.editor.createDiffEditor(host, {
+        theme: "vs-dark", readOnly: true, originalEditable: false, renderSideBySide: true,
+        automaticLayout: true, minimap: { enabled: false }, scrollBeyondLastLine: false,
+        diffWordWrap: "on", renderIndicators: true
+      });
+      this.gitDiffEditor.setModel({ original, modified });
+      overlay.addEventListener("keydown", event => { if (event.key === "Escape") this.closeGitDiff(); });
+      close.focus();
+    } catch (error) {
+      window.app?.logTerminal("Git diff failed: " + error.message, "error");
+    }
+  }
+
+  closeGitDiff() {
+    if (this.gitDiffEditor) {
+      const model = this.gitDiffEditor.getModel();
+      model?.original?.dispose();
+      model?.modified?.dispose();
+      this.gitDiffEditor.dispose();
+      this.gitDiffEditor = null;
+    }
+    this.gitDiffOverlay?.remove();
+    this.gitDiffOverlay = null;
+  }
 
   async refreshGitDecorations(filePath = this.activeTab) {
     if (!filePath || !this.monacoEditor || !this.monacoReady) return;
