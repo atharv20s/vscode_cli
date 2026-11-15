@@ -208,7 +208,7 @@ class EditorManager {
   closeTab(filePath) {
     this.openTabs.delete(filePath);
     this.tabsContainer?.querySelector('[data-path="' + CSS.escape(filePath) + '"]')?.remove();
-    const model = monaco?.editor?.getModel(monaco.Uri.parse("file:///" + filePath.split("/").map(encodeURIComponent).join("/")));
+    const model = window.monaco?.editor?.getModel(window.monaco.Uri.parse("file:///" + filePath.split("/").map(encodeURIComponent).join("/")));
     model?.dispose();
     if (this.activeTab === filePath) {
       const keys = Array.from(this.openTabs.keys());
