@@ -65,11 +65,13 @@ class OrchestrationReport:
     success: bool
     tasks: list[OrchestrationTask]
     summary: str
+    events: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "success": self.success,
             "summary": self.summary,
+            "events": self.events,
             "tasks": [
                 {
                     "id": task.id,
@@ -150,8 +152,14 @@ class AgentOrchestrator:
                     "(treat as fallible evidence; verify important claims):\n"
                     + shared_context[: self.MAX_CONTEXT_CHARS]
                 )
+            role_types = {
+                "researcher": SubagentType.RESEARCHER,
+                "coder": SubagentType.CODER,
+                "analyst": SubagentType.ANALYST,
+                "planner": SubagentType.EXECUTOR,
+            }
             config = SubagentConfig(
-                type=SubagentType(task.role) if task.role in SubagentType._value2member_map_ else SubagentType.ANALYST,
+                type=role_types[task.role],
                 system_prompt=prompt,
                 max_iterations=5,
                 timeout_seconds=self.timeout_seconds,
