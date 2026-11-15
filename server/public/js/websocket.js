@@ -23,6 +23,7 @@ class WebSocketClient {
     this.isConnected = false;
     this.lastToken = null;
     this.pingInterval = null;
+    this.shouldReconnect = true;
 
     // Auto-reconnect when user refocuses tab
     window.addEventListener("focus", () => {
@@ -40,6 +41,7 @@ class WebSocketClient {
    * Connect to WebSocket server.
    */
   connect(token) {
+    this.shouldReconnect = true;
     if (token) this.lastToken = token;
     const protocols = [];
     if (this.lastToken) protocols.push("ath-auth", this.lastToken);
@@ -88,7 +90,7 @@ class WebSocketClient {
         if (this.pingInterval) clearInterval(this.pingInterval);
         this.updateStatus(false);
         this.emit("close");
-        this.attemptReconnect();
+        if (this.shouldReconnect) this.attemptReconnect();
       };
 
       this.ws.onerror = (err) => {
@@ -100,10 +102,20 @@ class WebSocketClient {
     }
   }
 
+
+  disconnect() {
+    this.shouldReconnect = false;
+    if (this.pingInterval) clearInterval(this.pingInterval);
+    this.pingInterval = null;
+    this.isConnected = false;
+    if (this.ws && this.ws.readyState < WebSocket.CLOSING) this.ws.close(1000, "Client disconnected");
+  }
+
   /**
    * Attempt to reconnect with exponential backoff.
    */
   attemptReconnect() {
+    if (!this.shouldReconnect) return;
     this.reconnectAttempts++;
     const delay = Math.min(this.reconnectDelay * Math.pow(1.3, Math.min(this.reconnectAttempts, 8)), 5000);
 
