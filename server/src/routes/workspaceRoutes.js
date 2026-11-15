@@ -36,10 +36,9 @@ async function searchWorkspace(req, res) {
   const workspace = getWorkspaceService(req.workspaceAccess?.ownerUserId || req.user.id, req.workspaceAccess?.workspaceId || req.get("X-Workspace-Id") || "default");
   const useRegex = req.query.regex === "true";
   const caseInsensitive = req.query.caseInsensitive !== "false";
-  let matcher;
+  let matcher = null;
   try {
-    const pattern = useRegex ? query : query.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\const pattern = useRegex ? query : query.replace(new RegExp("[.*+?^${}()|[\\]\\\\]", "g"), "\\const router = Router();");");
-    matcher = new RegExp(pattern, caseInsensitive ? "i" : "");
+    if (useRegex) matcher = new RegExp(query, caseInsensitive ? "i" : "");
   } catch {
     return res.status(400).json({ error: "InvalidSearchPattern", message: "The regular expression is invalid." });
   }
@@ -65,11 +64,12 @@ async function searchWorkspace(req, res) {
         catch { continue; }
         if (source.includes("\u0000")) continue;
         const relative = path.relative(root, absolute).split(path.sep).join("/");
-        const lines = source.split(/\\r?\\n/);
+        const lines = source.split(String.fromCharCode(10));
         for (let index = 0; index < lines.length; index++) {
           const line = lines[index];
-          matcher.lastIndex = 0;
-          const match = matcher.exec(line);
+          const haystack = caseInsensitive && !useRegex ? line.toLowerCase() : line;
+          const needle = caseInsensitive && !useRegex ? query.toLowerCase() : query;
+          const match = useRegex ? (matcher.lastIndex = 0, matcher.exec(line)) : (haystack.includes(needle) ? { index: haystack.indexOf(needle) } : null);
           if (!match) continue;
           results.push({ file: relative, line: index + 1, col: match.index + 1, preview: line.trim().slice(0, 240) });
           if (results.length >= SEARCH_MAX_RESULTS) { truncated = true; break; }
