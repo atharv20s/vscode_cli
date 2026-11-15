@@ -264,7 +264,13 @@
           <div class="search-panel-content">
             <div class="search-input-box">
               <i data-lucide="search"></i>
-              <input type="text" id="search-input" placeholder="Search files or web with Tavily...">
+              <input type="text" id="search-input" placeholder="Find in files…" autocomplete="off">
+              <button type="button" id="btn-workspace-search" class="search-run-btn" title="Search workspace">Search</button>
+            </div>
+            <div class="workspace-search-options">
+              <label><input type="checkbox" id="search-regex"> Regex</label>
+              <label><input type="checkbox" id="search-case-sensitive"> Match case</label>
+              <span id="search-result-count" aria-live="polite"></span>
             </div>
             <div class="search-results" id="search-results-list"></div>
           </div>
