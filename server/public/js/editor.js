@@ -446,6 +446,7 @@ class EditorManager {
       panel = document.createElement("section");
       panel.id = "ath-problems-panel";
       panel.className = "ath-problems-panel";
+      panel.hidden = true;
       const header = document.createElement("header");
       const title = document.createElement("strong");
       title.textContent = "Problems";
