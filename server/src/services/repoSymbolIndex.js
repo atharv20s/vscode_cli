@@ -125,7 +125,8 @@ export async function buildRepositorySymbolIndex(root, filePaths, prompt = "", o
       const foundInFile = [];
       walk(tree.rootNode, node => {
         if (DECLARATIONS.has(node.type)) {
-          const name = declarationName(node);
+          const nameNode = node.childForFieldName?.("name") || firstIdentifier(node);
+          const name = nameNode?.text?.trim() || "";
           if (name && name.length <= 120) {
             const item = {
               name,
@@ -133,7 +134,7 @@ export async function buildRepositorySymbolIndex(root, filePaths, prompt = "", o
               kind: node.type,
               startLine: node.startPosition.row + 1,
               endLine: node.endPosition.row + 1,
-              column: node.startPosition.column + 1,
+              column: (nameNode?.startPosition?.column ?? node.startPosition.column) + 1,
               signature: String(node.text || "").split("\n", 1)[0].trim().slice(0, 240),
             };
             declarations.push(item);
