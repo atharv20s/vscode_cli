@@ -113,27 +113,80 @@ class EditorManager {
         });
       });
       this.monacoReady = true;
-      this.monacoEditor.onDidChangeModelContent(() => {
-        if (this.suppressModelChange || !this.activeTab || !this.openTabs.has(this.activeTab)) return;
-        const tab = this.openTabs.get(this.activeTab);
-        tab.content = this.monacoEditor.getValue();
-        tab.isDirty = true;
-        this.updateTabUI(this.activeTab);
-        this.saveStateToCache();
-      });
-      this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => this.saveCurrentFile());
-      this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => this.monacoEditor.getAction("actions.find").run());
-      this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => this.openWorkspaceSearch());
-      this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => this.openQuickOpen());
-      this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => this.openCommandPalette());
-      this.monacoEditor.addCommand(monaco.KeyCode.F2, () => this.monacoEditor.getAction("editor.action.rename").run());
-      this.monacoEditor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyUp, () => this.monacoEditor.getAction("editor.action.moveLinesUpAction").run());
-      this.monacoEditor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyDown, () => this.monacoEditor.getAction("editor.action.moveLinesDownAction").run());
-      this.monacoEditor.onDidFocusEditorText(() => this.editorView.classList.add("monaco-focused"));
-      this.monacoEditor.onDidBlurEditorText(() => this.editorView.classList.remove("monaco-focused"));
       if (this.pendingModel) this.selectTab(this.pendingModel);
       window.dispatchEvent(new CustomEvent("ath:monaco-ready"));
     }, (error) => this.showEditorError("Monaco failed to initialize: " + (error?.message || error)));
+  }
+
+
+  attachEditorGroup(editor, group) {
+    editor.onDidChangeModelContent(() => {
+      const filePath = this.groupTabs[group];
+      if (this.suppressModelChange || !filePath || !this.openTabs.has(filePath)) return;
+      const tab = this.openTabs.get(filePath);
+      tab.content = editor.getValue();
+      tab.isDirty = true;
+      this.updateTabUI(filePath);
+      this.saveStateToCache();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { this.activateGroup(group); this.saveCurrentFile(); });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => editor.getAction("actions.find").run());
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => this.openWorkspaceSearch());
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => this.openQuickOpen());
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => this.openCommandPalette());
+    editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyUp, () => editor.getAction("editor.action.moveLinesUpAction").run());
+    editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyDown, () => editor.getAction("editor.action.moveLinesDownAction").run());
+    editor.onDidFocusEditorText(() => this.activateGroup(group));
+    editor.onDidBlurEditorText(() => this.editorView.classList.remove("monaco-focused"));
+  }
+
+  activateGroup(group) {
+    const editor = group === "secondary" ? this.secondaryEditor : this.primaryEditor;
+    if (!editor) return;
+    this.activeGroup = group;
+    this.monacoEditor = editor;
+    this.activeTab = this.groupTabs[group] || this.activeTab;
+    this.editorView?.classList.add("monaco-focused");
+    const activeFile = document.getElementById("status-active-file");
+    if (activeFile && this.activeTab) activeFile.textContent = this.activeTab;
+    this.tabsContainer?.querySelectorAll(".editor-tab").forEach(el => el.classList.toggle("active", el.dataset.path === this.activeTab));
+  }
+
+  toggleSplitEditor() {
+    if (!this.monacoReady) return;
+    if (this.secondaryEditor) {
+      this.secondaryEditor.dispose();
+      this.secondaryEditor = null;
+      this.secondaryHost?.remove();
+      this.secondaryHost = null;
+      this.groupTabs.secondary = null;
+      this.editorView?.classList.remove("split-primary");
+      this.activateGroup("primary");
+      this.primaryEditor?.layout();
+      return;
+    }
+    const wrapper = this.editorView?.parentElement;
+    if (!wrapper) return;
+    this.secondaryHost = document.createElement("div");
+    this.secondaryHost.id = "code-editor-view-secondary";
+    this.secondaryHost.className = "code-editor-view-secondary";
+    wrapper.appendChild(this.secondaryHost);
+    this.editorView.classList.add("split-primary");
+    this.secondaryEditor = monaco.editor.create(this.secondaryHost, { ...this.editorOptions, value: "" });
+    this.attachEditorGroup(this.secondaryEditor, "secondary");
+    const initial = this.groupTabs.primary || this.activeTab;
+    if (initial && this.openTabs.has(initial)) this.selectTab(initial, "secondary");
+    this.activateGroup("secondary");
+    this.secondaryEditor.layout();
+    this.primaryEditor?.layout();
+  }
+
+  openInOtherGroup(filePath = this.activeTab) {
+    if (!filePath) return;
+    if (!this.secondaryEditor) this.toggleSplitEditor();
+    if (!this.secondaryEditor) return;
+    const target = this.activeGroup === "secondary" ? "primary" : "secondary";
+    this.selectTab(filePath, target);
   }
 
   showEditorError(message) {
@@ -232,22 +285,24 @@ class EditorManager {
     this.suppressModelChange = false;
   }
 
-  selectTab(filePath) {
-    this.activeTab = filePath;
+  selectTab(filePath, group = this.activeGroup) {
     const tab = this.openTabs.get(filePath);
     if (!tab) return;
-    const activeFile = document.getElementById("status-active-file");
-    if (activeFile) activeFile.textContent = filePath;
-    this.tabsContainer?.querySelectorAll(".editor-tab").forEach(el => el.classList.toggle("active", el.dataset.path === filePath));
+    if (group === "secondary" && !this.secondaryEditor) group = "primary";
+    this.groupTabs[group] = filePath;
+    this.activeGroup = group;
+    this.activeTab = filePath;
+    const editor = group === "secondary" ? this.secondaryEditor : this.primaryEditor;
     if (this.welcomeScreen) this.welcomeScreen.style.display = "none";
     if (this.editorView) this.editorView.style.display = "block";
-    if (!this.monacoReady) { this.pendingModel = filePath; return; }
+    if (!this.monacoReady || !editor) { this.pendingModel = filePath; return; }
     const model = monaco.editor.createModel(tab.content || "", tab.language || this.detectLanguage(filePath), monaco.Uri.parse("file:///" + filePath.split("/").map(encodeURIComponent).join("/")));
     const existing = monaco.editor.getModel(model.uri);
-    if (existing) { model.dispose(); this.monacoEditor.setModel(existing); }
-    else this.monacoEditor.setModel(model);
-    this.monacoEditor.updateOptions({ readOnly: false });
-    this.monacoEditor.focus();
+    if (existing) { model.dispose(); editor.setModel(existing); }
+    else editor.setModel(model);
+    editor.updateOptions({ readOnly: false });
+    this.activateGroup(group);
+    editor.focus();
     this.saveStateToCache();
     this.refreshGitDecorations(filePath);
   }
@@ -533,6 +588,7 @@ class EditorManager {
       ["Find", () => this.monacoEditor?.getAction("actions.find").run()],
       ["Replace", () => this.monacoEditor?.getAction("editor.action.startFindReplaceAction").run()],
       ["Quick Open", () => this.openQuickOpen()],
+      ["Open in Other Group", () => this.openInOtherGroup()],
       ["Search Workspace", () => this.openWorkspaceSearch()],
       ["Toggle Minimap", () => this.monacoEditor?.updateOptions({ minimap: { enabled: !this.monacoEditor.getOption(monaco.editor.EditorOption.minimap).enabled } })],
       ["Toggle Word Wrap", () => this.monacoEditor?.updateOptions({ wordWrap: this.monacoEditor.getOption(monaco.editor.EditorOption.wordWrap) === "on" ? "off" : "on" })],
