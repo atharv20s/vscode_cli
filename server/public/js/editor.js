@@ -13,6 +13,7 @@ class EditorManager {
     this.monacoEditor = null;
     this.monacoReady = false;
     this.pendingModel = null;
+    this.gitDecorationIds = new Map();
     this.suppressModelChange = false;
     this.initEventListeners();
     this.restoreStateFromCache();
@@ -39,6 +40,7 @@ class EditorManager {
         theme: "vs-dark",
         automaticLayout: true,
         minimap: { enabled: true },
+        glyphMargin: true,
         fontFamily: "'Fira Code', Consolas, monospace",
         fontSize: 13,
         fontLigatures: true,
@@ -244,6 +246,7 @@ class EditorManager {
     this.monacoEditor.updateOptions({ readOnly: false });
     this.monacoEditor.focus();
     this.saveStateToCache();
+    this.refreshGitDecorations(filePath);
   }
 
   closeTab(filePath) {
@@ -263,6 +266,56 @@ class EditorManager {
       }
     }
     this.saveStateToCache();
+  }
+
+  async openSearchResult(filePath, line, column) {
+    await this.openFile(filePath);
+    if (!this.monacoEditor || this.activeTab !== filePath) return;
+    const position = { lineNumber: Math.max(1, Number(line) || 1), column: Math.max(1, Number(column) || 1) };
+    this.monacoEditor.setPosition(position);
+    this.monacoEditor.revealPositionInCenter(position);
+    this.monacoEditor.focus();
+  }
+
+
+  async refreshGitDecorations(filePath = this.activeTab) {
+    if (!filePath || !this.monacoEditor || !this.monacoReady) return;
+    try {
+      const response = await fetch("/api/workspace/git/status", {
+        headers: { Authorization: "Bearer " + (localStorage.getItem("token") || "") }
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const status = (data.files || []).find(item => item.path === filePath);
+      const tabEl = this.tabsContainer?.querySelector('[data-path="' + CSS.escape(filePath) + '"]');
+      if (tabEl) {
+        if (status) tabEl.dataset.gitStatus = status.kind;
+        else delete tabEl.dataset.gitStatus;
+      }
+      document.querySelectorAll("#file-tree [data-path], #file-tree [data-file-path]").forEach(element => {
+        const path = element.dataset.path || element.dataset.filePath;
+        const item = (data.files || []).find(file => file.path === path);
+        if (item) element.dataset.gitStatus = item.kind;
+        else delete element.dataset.gitStatus;
+      });
+      if (this.activeTab !== filePath) return;
+      const model = this.monacoEditor.getModel();
+      if (!model) return;
+      const markers = data.changedLines?.[filePath] || [];
+      const decorations = markers.map(marker => ({
+        range: new monaco.Range(marker.line, 1, marker.line, 1),
+        options: {
+          isWholeLine: true,
+          className: marker.kind === "added" ? "git-added-line" : "git-modified-line",
+          glyphMarginClassName: marker.kind === "added" ? "git-added-glyph" : "git-modified-glyph",
+          overviewRuler: { color: marker.kind === "added" ? "#3fb950" : "#d29922", position: monaco.editor.OverviewRulerLane.Left }
+        }
+      }));
+      const previous = this.gitDecorationIds.get(filePath) || [];
+      this.gitDecorationIds.set(filePath, model.deltaDecorations(previous, decorations));
+    } catch (error) {
+      console.warn("Git decoration refresh failed:", error);
+    }
   }
 
   startLiveStream(filePath) {
