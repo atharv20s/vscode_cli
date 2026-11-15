@@ -92,7 +92,7 @@ export function broadcastToUser(userId, type, payload) {
 
   const message = JSON.stringify({ type, payload });
   for (const ws of connections) {
-    if (ws.readyState === 1) {
+    if (!ws.terminalOnly && ws.readyState === 1) {
       ws.send(message);
     }
   }
@@ -105,7 +105,7 @@ export function broadcastAll(type, payload) {
   const message = JSON.stringify({ type, payload });
   for (const [, connections] of userConnections) {
     for (const ws of connections) {
-      if (ws.readyState === 1) {
+      if (!ws.terminalOnly && ws.readyState === 1) {
         ws.send(message);
       }
     }
