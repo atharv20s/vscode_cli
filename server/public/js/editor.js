@@ -418,6 +418,9 @@ class EditorManager {
   async refreshDiagnostics(filePath, editor = this.monacoEditor) {
     const model = editor?.getModel();
     if (!model || !filePath || !this.openTabs.has(filePath)) return;
+    let modelPath = String(model.uri?.path || "").replace(/^\\//, "");
+    try { modelPath = decodeURIComponent(modelPath); } catch {}
+    if (modelPath !== filePath) return;
     try {
       const response = await fetch("/api/workspace/diagnostics", {
         method: "POST",
@@ -483,7 +486,7 @@ class EditorManager {
       row.className = "ath-problem-item";
       row.textContent = (item.severity === "warning" ? "⚠ " : "● ") + item.startLineNumber + ":" + item.startColumn + "  " + item.message;
       row.addEventListener("click", () => {
-        const group = this.groupTabs.secondary === filePath ? "secondary" : "primary";
+        const group = this.activeTab === filePath ? this.activeGroup : (this.groupTabs.secondary === filePath ? "secondary" : "primary");
         this.activateGroup(group);
         const targetEditor = group === "secondary" ? this.secondaryEditor : this.primaryEditor;
         targetEditor?.setPosition({ lineNumber: item.startLineNumber, column: item.startColumn });
