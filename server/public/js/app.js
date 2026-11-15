@@ -3307,6 +3307,7 @@ class App {
     });
     const url = new URL(window.wsClient.url);
     url.searchParams.set("terminalSessionId", id);
+    url.searchParams.set("terminalOnly", "1");
     const client = new WebSocketClient(url.toString());
     const host = document.createElement("div");
     host.className = "terminal-session-container";
