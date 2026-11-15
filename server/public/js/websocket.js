@@ -27,13 +27,11 @@ class WebSocketClient {
 
     // Auto-reconnect when user refocuses tab
     window.addEventListener("focus", () => {
-      if (!this.isConnected) {
-        this.connect(this.lastToken);
-      }
+      if (this.shouldReconnect && !this.isConnected) this.connect(this.lastToken);
     });
 
     window.addEventListener("online", () => {
-      this.connect(this.lastToken);
+      if (this.shouldReconnect && !this.isConnected) this.connect(this.lastToken);
     });
   }
 
