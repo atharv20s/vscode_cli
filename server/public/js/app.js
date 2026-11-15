@@ -276,18 +276,20 @@ class App {
 
     // Terminal State & Output Listeners
     window.wsClient.on("open", () => {
+      const terminal = this.terminalSessions.get("default");
       window.wsClient.send("terminal.init", {
-        shell: this.currentShell || "powershell",
-        cols: this.term ? this.term.cols : 80,
-        rows: this.term ? this.term.rows : 24
+        shell: terminal?.shell || "powershell",
+        cols: terminal?.term ? terminal.term.cols : 80,
+        rows: terminal?.term ? terminal.term.rows : 24
       });
     });
 
     if (window.wsClient.isConnected) {
+      const terminal = this.terminalSessions.get("default");
       window.wsClient.send("terminal.init", {
-        shell: this.currentShell || "powershell",
-        cols: this.term ? this.term.cols : 80,
-        rows: this.term ? this.term.rows : 24
+        shell: terminal?.shell || "powershell",
+        cols: terminal?.term ? terminal.term.cols : 80,
+        rows: terminal?.term ? terminal.term.rows : 24
       });
     }
 
