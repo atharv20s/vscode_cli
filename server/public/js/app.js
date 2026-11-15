@@ -172,7 +172,6 @@ class App {
       }
     });
 
-
     // Agent Streaming Events
     window.wsClient.on("turn_start", (data) => {
       this.logTerminal(`[Agent] Turn ${data.turn}/${data.maxTurns} started...`, "info");
