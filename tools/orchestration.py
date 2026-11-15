@@ -232,7 +232,7 @@ class AgentOrchestrator:
             "Specialists only had the bounded read-only tool set; no workspace "
             "writes, shell execution, or deployment were performed."
         )
-        return OrchestrationReport(success=successful == len(tasks), tasks=tasks, summary=summary)
+        return OrchestrationReport(success=successful == len(tasks), tasks=tasks, summary=summary, events=list(self.events))
 
 
 class OrchestrateTaskTool(Tool):
@@ -292,7 +292,7 @@ class OrchestrateTaskTool(Tool):
             return ToolResult.ok(
                 json.dumps(payload, ensure_ascii=False, indent=2),
                 orchestration_success=report.success,
-                events=AgentOrchestrator.MAX_TASKS,
+                lifecycle_events=len(report.events),
             )
         except (TypeError, ValueError) as exc:
             return ToolResult.fail(str(exc))
