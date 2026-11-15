@@ -195,6 +195,24 @@ function symbolQuery(req) {
   if (!file || file.length > 1024 || !symbol || symbol.length > 120 || !/^[A-Za-z_$][\w$]*$/.test(symbol)) return null;
   return { file, symbol, line: Math.max(1, Number.parseInt(req.query.line, 10) || 1) };
 }
+
+router.get("/symbols/document", async (req, res) => {
+  const file = String(req.query.file || "");
+  if (!file || file.length > 1024) return res.status(400).json({ error: "InvalidFilePath" });
+  const workspace = getWorkspaceService(req.workspaceAccess?.ownerUserId || req.user.id, req.workspaceAccess?.workspaceId || req.get("X-Workspace-Id") || "default");
+  const target = workspace.resolvePath(file);
+  if (!target.safe || target.relative === ".") return res.status(403).json({ error: "Forbidden" });
+  try {
+    const index = await symbolIndexForRequest(req);
+    const symbols = (index.declarations || []).filter(item => item.path === target.relative)
+      .map(item => ({ name: item.name, kind: item.kind, line: item.startLine, endLine: item.endLine, col: item.column || 1, signature: item.signature || item.name }))
+      .sort((a, b) => a.line - b.line || a.col - b.col);
+    return res.json({ file: target.relative, symbols });
+  } catch {
+    return res.status(503).json({ error: "SymbolIndexUnavailable" });
+  }
+});
+
 router.get("/symbols/definition", async (req, res) => {
   const query = symbolQuery(req);
   if (!query) return res.status(400).json({ error: "InvalidSymbolQuery" });
