@@ -38,7 +38,7 @@ async function searchWorkspace(req, res) {
   const caseInsensitive = req.query.caseInsensitive !== "false";
   let matcher;
   try {
-    const pattern = useRegex ? query : query.replace(new RegExp("[.*+?^${}()|[\\]\\\\]", "g"), "\\const router = Router();");
+    const pattern = useRegex ? query : query.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\const pattern = useRegex ? query : query.replace(new RegExp("[.*+?^${}()|[\\]\\\\]", "g"), "\\const router = Router();");");
     matcher = new RegExp(pattern, caseInsensitive ? "i" : "");
   } catch {
     return res.status(400).json({ error: "InvalidSearchPattern", message: "The regular expression is invalid." });
