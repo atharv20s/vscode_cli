@@ -123,7 +123,7 @@ async function symbolIndexForRequest(req) {
 function symbolQuery(req) {
   const file = String(req.query.file || "");
   const symbol = String(req.query.symbol || "");
-  if (!file || file.length > 1024 || !symbol || symbol.length > 120 || !/^[A-Za-z_$][\\w$]*$/.test(symbol)) return null;
+  if (!file || file.length > 1024 || !symbol || symbol.length > 120 || !/^[A-Za-z_$][\w$]*$/.test(symbol)) return null;
   return { file, symbol, line: Math.max(1, Number.parseInt(req.query.line, 10) || 1) };
 }
 router.get("/symbols/definition", async (req, res) => {
