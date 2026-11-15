@@ -3182,114 +3182,229 @@ class App {
     termLogs.scrollTop = termLogs.scrollHeight;
   }
 
+
+  getActiveTerminal() {
+    return this.terminalSessions.get(this.activeTerminalId) || this.terminalSessions.get("default") || null;
+  }
+
+  routeTerminalOutput(data, client) {
+    if (!data?.text) return;
+    const session = (data.sessionId && this.terminalSessions.get(data.sessionId)) ||
+      Array.from(new Set(this.terminalSessions.values())).find(item => item.client === client);
+    session?.term?.write(data.text);
+  }
+
+  routeTerminalState(data, client) {
+    if (!data) return;
+    let session = (data.sessionId && this.terminalSessions.get(data.sessionId)) ||
+      Array.from(new Set(this.terminalSessions.values())).find(item => item.client === client);
+    if (!session && client === window.wsClient) session = this.terminalSessions.get("default");
+    if (!session) return;
+    if (data.sessionId) {
+      session.sessionId = data.sessionId;
+      this.terminalSessions.set(data.sessionId, session);
+    }
+    session.state = data.state || session.state;
+    session.pid = data.pid || null;
+    session.cwd = data.cwd || session.cwd;
+    if (this.getActiveTerminal() !== session) return;
+    const dot = document.getElementById("term-status-dot");
+    const stateLabel = document.getElementById("term-state-label");
+    const shellLabel = document.getElementById("term-shell-label");
+    const cwdLabel = document.getElementById("term-cwd-label");
+    const pidLabel = document.getElementById("term-pid-label");
+    if (stateLabel) stateLabel.textContent = session.state === "ready" ? "Ready" : session.state;
+    if (shellLabel && (data.shell || session.shell)) shellLabel.textContent = data.shell || session.shell;
+    if (cwdLabel && session.cwd) cwdLabel.textContent = String(session.cwd).replace(/\\\\/g, "/").split("/").slice(-2).join("/");
+    if (pidLabel) pidLabel.textContent = session.pid ? "PID: " + session.pid : "PID: --";
+    if (dot) dot.style.background = session.state === "ready" || session.state === "running" ? "#10b981" : "#f59e0b";
+  }
+
+  routeTerminalExit(data, client) {
+    const session = (data?.sessionId && this.terminalSessions.get(data.sessionId)) ||
+      Array.from(new Set(this.terminalSessions.values())).find(item => item.client === client);
+    if (!session) return;
+    session.state = "exited";
+    session.term?.write("\\r\\n[System] Terminal session exited with code " + (data?.code ?? 0) + ".\\r\\n");
+    if (this.getActiveTerminal() === session) {
+      const stateLabel = document.getElementById("term-state-label");
+      if (stateLabel) stateLabel.textContent = "Exited";
+    }
+  }
+
+  renderTerminalTabs() {
+    const bar = document.getElementById("terminal-session-tabs");
+    if (!bar) return;
+    bar.replaceChildren();
+    const sessions = Array.from(new Set(this.terminalSessions.values()));
+    sessions.forEach((session, index) => {
+      const tab = document.createElement("div");
+      tab.className = "terminal-session-tab" + (session.id === this.activeTerminalId ? " active" : "");
+      const activate = document.createElement("button");
+      activate.type = "button";
+      activate.className = "terminal-session-tab-label";
+      activate.textContent = session.label || (session.id === "default" ? "Terminal 1" : "Terminal " + (index + 1));
+      activate.addEventListener("click", () => this.switchTerminalSession(session.id));
+      tab.appendChild(activate);
+      if (session.id !== "default") {
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "terminal-session-tab-close";
+        close.textContent = "×";
+        close.title = "Close terminal";
+        close.addEventListener("click", event => { event.stopPropagation(); this.closeTerminalSession(session.id); });
+        tab.appendChild(close);
+      }
+      bar.appendChild(tab);
+    });
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "terminal-session-add";
+    add.textContent = "+";
+    add.title = "New terminal session";
+    add.addEventListener("click", () => this.createTerminalSession(this.currentShell || "powershell"));
+    bar.appendChild(add);
+  }
+
+  switchTerminalSession(id) {
+    const session = this.terminalSessions.get(id);
+    if (!session) return;
+    this.activeTerminalId = id;
+    for (const item of new Set(this.terminalSessions.values())) {
+      if (item.host) item.host.hidden = item.id !== id;
+    }
+    this.term = session.term;
+    this.fitAddon = session.fitAddon;
+    this.currentShell = session.shell || this.currentShell;
+    const shellSelect = document.getElementById("terminal-shell-select");
+    if (shellSelect) shellSelect.value = this.currentShell;
+    this.renderTerminalTabs();
+    const stateLabel = document.getElementById("term-state-label");
+    const shellLabel = document.getElementById("term-shell-label");
+    const pidLabel = document.getElementById("term-pid-label");
+    if (stateLabel) stateLabel.textContent = session.state === "ready" ? "Ready" : (session.state || "Connecting");
+    if (shellLabel) shellLabel.textContent = session.shell || "shell";
+    if (pidLabel) pidLabel.textContent = session.pid ? "PID: " + session.pid : "PID: --";
+    setTimeout(() => {
+      try {
+        session.fitAddon?.fit();
+        if (session.client?.isConnected && session.term) {
+          session.client.send("terminal.resize", { cols: session.term.cols, rows: session.term.rows });
+        }
+        session.term?.focus();
+      } catch {}
+    }, 80);
+  }
+
+  createTerminalView(session, host) {
+    const term = new Terminal({
+      theme: { background: "#0d0e12", foreground: "#e2e8f0", cursor: "#6366f1", black: "#000000", red: "#ef4444", green: "#10b981", yellow: "#f59e0b", blue: "#6366f1", magenta: "#a855f7", cyan: "#06b6d4", white: "#cbd5e1" },
+      fontFamily: "var(--font-mono)", fontSize: 12, cursorBlink: true, scrollback: 2000
+    });
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(host);
+    session.term = term;
+    session.fitAddon = fitAddon;
+    session.host = host;
+    let lineBuffer = "";
+    term.onData(data => {
+      if (!session.client?.isConnected) return;
+      session.client.send("terminal.input", { data });
+      if (data === "\\r") {
+        const command = lineBuffer.trim();
+        if (command) session.client.send("terminal.command.submitted", { command, cwd: session.cwd || "workspace" });
+        lineBuffer = "";
+      } else if (data === "\\u007f" || data === "\\b") lineBuffer = lineBuffer.slice(0, -1);
+      else if (data.length === 1 && data >= " ") lineBuffer += data;
+    });
+    const resizeObserver = new ResizeObserver(() => {
+      try {
+        fitAddon.fit();
+        if (session.client?.isConnected) session.client.send("terminal.resize", { cols: term.cols, rows: term.rows });
+      } catch {}
+    });
+    resizeObserver.observe(host);
+    session.resizeObserver = resizeObserver;
+    setTimeout(() => { try { fitAddon.fit(); } catch {} }, 100);
+  }
+
+  createTerminalSession(shell = "powershell") {
+    const id = window.crypto?.randomUUID?.() || "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      return (c === "x" ? r : (r & 3 | 8)).toString(16);
+    });
+    const url = new URL(window.wsClient.url);
+    url.searchParams.set("terminalSessionId", id);
+    const client = new WebSocketClient(url.toString());
+    const host = document.createElement("div");
+    host.className = "terminal-session-container";
+    host.id = "terminal-container-" + id;
+    host.hidden = true;
+    document.getElementById("panel-terminal")?.appendChild(host);
+    const session = { id, sessionId: id, client, shell, label: "Terminal " + (this.terminalSessions.size + 1), state: "connecting", host };
+    this.terminalSessions.set(id, session);
+    this.createTerminalView(session, host);
+    client.on("open", () => client.send("terminal.init", { shell, cols: session.term.cols, rows: session.term.rows }));
+    client.on("terminal.output", data => this.routeTerminalOutput(data, client));
+    client.on("terminal.state", data => this.routeTerminalState(data, client));
+    client.on("terminal.exit", data => this.routeTerminalExit(data, client));
+    client.on("terminal_exit", data => this.routeTerminalExit(data, client));
+    client.on("error", data => {
+      const message = data?.message || "Terminal connection error";
+      session.state = "error";
+      session.term?.write("\\r\\n[System] " + message + "\\r\\n");
+      this.logTerminal(message, "error");
+    });
+    client.connect(this.token);
+    this.switchTerminalSession(id);
+    return session;
+  }
+
+  closeTerminalSession(id) {
+    const session = this.terminalSessions.get(id);
+    if (!session || id === "default") return;
+    if (session.client?.isConnected) session.client.send("terminal.close", {});
+    session.client?.disconnect?.();
+    session.resizeObserver?.disconnect();
+    session.term?.dispose();
+    session.host?.remove();
+    this.terminalSessions.delete(id);
+    if (this.activeTerminalId === id) this.switchTerminalSession("default");
+    else this.renderTerminalTabs();
+  }
+
   initTerminalUI() {
     const container = document.getElementById("terminal-container");
     if (!container) return;
-
-    const term = new Terminal({
-      theme: {
-        background: '#0d0e12',
-        foreground: '#e2e8f0',
-        cursor: '#6366f1',
-        black: '#000000',
-        red: '#ef4444',
-        green: '#10b981',
-        yellow: '#f59e0b',
-        blue: '#6366f1',
-        magenta: '#a855f7',
-        cyan: '#06b6d4',
-        white: '#cbd5e1'
-      },
-      fontFamily: 'var(--font-mono)',
-      fontSize: 12,
-      cursorBlink: true,
-      scrollback: 1000
-    });
-
-    const fitAddon = new FitAddon.FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(container);
-    fitAddon.fit();
-
-    this.term = term;
-    this.fitAddon = fitAddon;
-
-    let lineBuffer = "";
-
-    term.onData((data) => {
-      if (window.wsClient.isConnected) {
-        // 1. Stream raw keystroke to user interactive PTY
-        window.wsClient.send("terminal.input", { data });
-
-        // 2. Track submitted commands on Enter
-        if (data === "\r") {
-          const submittedCmd = lineBuffer.trim();
-          if (submittedCmd) {
-            window.wsClient.send("terminal.command.submitted", {
-              command: submittedCmd,
-              cwd: "workspace",
-            });
-          }
-          lineBuffer = "";
-        } else if (data === "\u007f" || data === "\b") {
-          lineBuffer = lineBuffer.slice(0, -1);
-        } else if (data.length === 1 && data >= " ") {
-          lineBuffer += data;
-        }
-      }
-    });
-
-    const handleResize = () => {
-      try {
-        fitAddon.fit();
-        if (window.wsClient.isConnected) {
-          window.wsClient.send("terminal.resize", { cols: term.cols, rows: term.rows });
-        }
-      } catch (err) {
-        console.warn("Resize error:", err);
-      }
-    };
-
-    setTimeout(handleResize, 100);
-    window.addEventListener("resize", handleResize);
-
-    const resizeObserver = new ResizeObserver(() => {
-      handleResize();
-    });
-    resizeObserver.observe(container);
-
+    container.classList.add("terminal-session-container");
+    const defaultSession = { id: "default", sessionId: null, client: window.wsClient, shell: this.currentShell || "powershell", label: "Terminal 1", state: "connecting", host: container };
+    this.terminalSessions.set("default", defaultSession);
+    this.createTerminalView(defaultSession, container);
+    this.term = defaultSession.term;
+    this.fitAddon = defaultSession.fitAddon;
+    this.renderTerminalTabs();
+    this.switchTerminalSession("default");
     const clearTermBtn = document.getElementById("btn-clear-terminal");
-    if (clearTermBtn) {
-      clearTermBtn.addEventListener("click", () => {
-        term.clear();
-      });
-    }
-
+    clearTermBtn?.addEventListener("click", () => this.getActiveTerminal()?.term?.clear());
     const pasteTermBtn = document.getElementById("btn-paste-terminal");
-    if (pasteTermBtn) {
-      pasteTermBtn.addEventListener("click", async () => {
-        try {
-          const text = await navigator.clipboard.readText();
-          if (text && window.wsClient.isConnected) {
-            window.wsClient.send("terminal.paste", { text });
-          }
-        } catch (err) {
-          console.warn("Paste error:", err);
-        }
-      });
-    }
-
+    pasteTermBtn?.addEventListener("click", async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        const session = this.getActiveTerminal();
+        if (text && session?.client?.isConnected) session.client.send("terminal.paste", { text });
+      } catch (error) { console.warn("Paste error:", error); }
+    });
     const stopBgBtn = document.getElementById("btn-stop-bg-task");
-    if (stopBgBtn) {
-      stopBgBtn.addEventListener("click", () => {
-        if (this.activeBgOperationId && window.wsClient.isConnected) {
-          window.wsClient.send("agent.command.stop", { operationId: this.activeBgOperationId });
-          const banner = document.getElementById("agent-exec-banner");
-          if (banner) banner.style.display = "none";
-        }
-      });
-    }
+    stopBgBtn?.addEventListener("click", () => {
+      if (this.activeBgOperationId && window.wsClient.isConnected) {
+        window.wsClient.send("agent.command.stop", { operationId: this.activeBgOperationId });
+        const banner = document.getElementById("agent-exec-banner");
+        if (banner) banner.style.display = "none";
+      }
+    });
   }
+
 
   initPreviewUI() {
     const previewContainer = document.getElementById("live-preview-view");
