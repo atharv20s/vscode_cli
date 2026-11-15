@@ -98,7 +98,7 @@ export async function buildRepositorySymbolIndex(root, filePaths, prompt = "", o
 
   const candidates = filePaths
     .filter(file => LANGUAGE_BY_EXTENSION[path.extname(file).toLowerCase()])
-    .slice(0, MAX_FILES);
+    .slice(0, Math.max(MAX_FILES, Math.min(1000, Number(options.maxFiles) || MAX_FILES)));
 
   for (const relative of candidates) {
     const languageName = LANGUAGE_BY_EXTENSION[path.extname(relative).toLowerCase()];
