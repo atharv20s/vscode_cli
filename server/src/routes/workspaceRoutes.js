@@ -282,6 +282,41 @@ router.get("/git/status", async (req, res) => {
 });
 
 
+
+router.get("/git/diff", async (req, res) => {
+  const requestedPath = String(req.query.file || "");
+  if (!requestedPath || requestedPath.length > 1024) return res.status(400).json({ error: "InvalidFilePath" });
+  const workspace = getWorkspaceService(req.workspaceAccess?.ownerUserId || req.user.id, req.workspaceAccess?.workspaceId || req.get("X-Workspace-Id") || "default");
+  try {
+    if (config.executionRuntime === "remote") await pullWorkspaceFromRemote({ workspaceId: workspace.workspaceId, workspaceDir: workspace.workspaceRoot });
+    const target = workspace.resolvePath(requestedPath);
+    if (!target.safe || target.relative === ".") return res.status(403).json({ error: "Forbidden" });
+    const stat = await fs.stat(target.resolved);
+    if (!stat.isFile() || stat.size > 1024 * 1024) return res.status(413).json({ error: "DiffFileTooLarge" });
+    const modified = await fs.readFile(target.resolved, "utf8");
+    if (modified.includes("\u0000")) return res.status(415).json({ error: "BinaryDiffUnsupported" });
+    await execFileAsync("git", ["-c", "safe.directory=" + workspace.workspaceRoot, "rev-parse", "--is-inside-work-tree"], {
+      cwd: workspace.workspaceRoot, timeout: 5000, maxBuffer: 64 * 1024, windowsHide: true
+    });
+    let original = "";
+    let isNew = false;
+    try {
+      const result = await execFileAsync("git", ["-c", "safe.directory=" + workspace.workspaceRoot, "show", "HEAD:" + target.relative], {
+        cwd: workspace.workspaceRoot, timeout: 5000, maxBuffer: 2 * 1024 * 1024, windowsHide: true, encoding: "utf8"
+      });
+      original = String(result.stdout || "");
+    } catch (error) {
+      if (error.code === 128 || error.code === 1) isNew = true;
+      else throw error;
+    }
+    return res.json({ file: target.relative, original, modified, base: "HEAD", isNew });
+  } catch (error) {
+    if (error.code === "ENOENT") return res.status(404).json({ error: "FileNotFound" });
+    if (error.code === 128 || /not a git repository/i.test(error.message || "")) return res.status(409).json({ error: "GitRepositoryUnavailable" });
+    return res.status(503).json({ error: "GitDiffUnavailable", message: "Unable to prepare the selected file diff." });
+  }
+});
+
 router.get("/files", listFiles);
 router.get("/file", readFile);
 router.post("/file", writeFile);
