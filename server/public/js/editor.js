@@ -128,6 +128,7 @@ class EditorManager {
       tab.isDirty = true;
       this.updateTabUI(filePath);
       this.saveStateToCache();
+      this.scheduleDiagnostics(filePath, editor);
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { this.activateGroup(group); this.saveCurrentFile(); });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => editor.getAction("actions.find").run());
@@ -305,6 +306,7 @@ class EditorManager {
     editor.focus();
     this.saveStateToCache();
     this.refreshGitDecorations(filePath);
+    this.scheduleDiagnostics(filePath, editor);
   }
 
   closeTab(filePath) {
@@ -403,6 +405,92 @@ class EditorManager {
     }
     this.gitDiffOverlay?.remove();
     this.gitDiffOverlay = null;
+  }
+
+
+  scheduleDiagnostics(filePath, editor) {
+    if (!filePath || !editor) return;
+    clearTimeout(this.diagnosticTimers.get(filePath));
+    const timer = setTimeout(() => this.refreshDiagnostics(filePath, editor), 650);
+    this.diagnosticTimers.set(filePath, timer);
+  }
+
+  async refreshDiagnostics(filePath, editor = this.monacoEditor) {
+    const model = editor?.getModel();
+    if (!model || !filePath || !this.openTabs.has(filePath)) return;
+    try {
+      const response = await fetch("/api/workspace/diagnostics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + (localStorage.getItem("token") || "") },
+        body: JSON.stringify({ file: filePath, content: model.getValue() })
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const diagnostics = Array.isArray(data.diagnostics) ? data.diagnostics : [];
+      monaco.editor.setModelMarkers(model, "ath-tree-sitter", diagnostics.map(item => ({
+        startLineNumber: item.startLineNumber,
+        startColumn: item.startColumn,
+        endLineNumber: item.endLineNumber,
+        endColumn: item.endColumn,
+        message: item.message,
+        source: "Tree-sitter",
+        severity: item.severity === "warning" ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Error
+      })));
+      this.renderProblems(filePath, diagnostics);
+    } catch (error) { console.warn("Tree-sitter diagnostics failed:", error); }
+  }
+
+  toggleProblemsPanel(forceOpen = false) {
+    let panel = document.getElementById("ath-problems-panel");
+    if (!panel) {
+      panel = document.createElement("section");
+      panel.id = "ath-problems-panel";
+      panel.className = "ath-problems-panel";
+      const header = document.createElement("header");
+      const title = document.createElement("strong");
+      title.textContent = "Problems";
+      const close = document.createElement("button");
+      close.type = "button";
+      close.textContent = "×";
+      close.title = "Close Problems";
+      close.addEventListener("click", () => { panel.hidden = true; });
+      header.append(title, close);
+      const list = document.createElement("div");
+      list.className = "ath-problems-list";
+      panel.append(header, list);
+      this.editorView?.parentElement?.appendChild(panel);
+    }
+    panel.hidden = forceOpen ? false : !panel.hidden;
+    return panel;
+  }
+
+  renderProblems(filePath, diagnostics) {
+    const panel = document.getElementById("ath-problems-panel");
+    const button = document.getElementById("btn-problems-panel");
+    if (button) button.title = diagnostics.length ? diagnostics.length + " problems in " + filePath : "No problems in " + filePath;
+    if (!panel) return;
+    const list = panel.querySelector(".ath-problems-list");
+    if (!list) return;
+    list.replaceChildren();
+    const heading = document.createElement("div");
+    heading.className = "ath-problems-summary";
+    heading.textContent = diagnostics.length + (diagnostics.length === 1 ? " problem" : " problems") + " · " + filePath;
+    list.appendChild(heading);
+    diagnostics.forEach(item => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "ath-problem-item";
+      row.textContent = (item.severity === "warning" ? "⚠ " : "● ") + item.startLineNumber + ":" + item.startColumn + "  " + item.message;
+      row.addEventListener("click", () => {
+        const group = this.groupTabs.secondary === filePath ? "secondary" : "primary";
+        this.activateGroup(group);
+        const targetEditor = group === "secondary" ? this.secondaryEditor : this.primaryEditor;
+        targetEditor?.setPosition({ lineNumber: item.startLineNumber, column: item.startColumn });
+        targetEditor?.revealLineInCenter(item.startLineNumber);
+        targetEditor?.focus();
+      });
+      list.appendChild(row);
+    });
   }
 
   async refreshGitDecorations(filePath = this.activeTab) {
