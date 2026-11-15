@@ -310,18 +310,30 @@ class EditorManager {
   closeTab(filePath) {
     this.openTabs.delete(filePath);
     this.tabsContainer?.querySelector('[data-path="' + CSS.escape(filePath) + '"]')?.remove();
-    const model = window.monaco?.editor?.getModel(window.monaco.Uri.parse("file:///" + filePath.split("/").map(encodeURIComponent).join("/")));
-    model?.dispose();
-    if (this.activeTab === filePath) {
-      const keys = Array.from(this.openTabs.keys());
-      if (keys.length) this.selectTab(keys[keys.length - 1]);
+    const nextPath = Array.from(this.openTabs.keys()).at(-1) || null;
+    const activeGroup = this.activeGroup;
+    for (const group of ["primary", "secondary"]) {
+      if (this.groupTabs[group] !== filePath) continue;
+      const editor = group === "secondary" ? this.secondaryEditor : this.primaryEditor;
+      if (nextPath && editor) this.selectTab(nextPath, group);
       else {
-        this.activeTab = null;
-        if (this.welcomeScreen) this.welcomeScreen.style.display = "flex";
-        if (this.editorView) this.editorView.style.display = "none";
-        const activeFile = document.getElementById("status-active-file");
-        if (activeFile) activeFile.textContent = "No file open";
+        this.groupTabs[group] = null;
+        editor?.setModel(null);
       }
+    }
+    const stillOpenInGroup = this.groupTabs.primary === filePath || this.groupTabs.secondary === filePath;
+    if (!stillOpenInGroup) {
+      const model = window.monaco?.editor?.getModel(window.monaco.Uri.parse("file:///" + filePath.split("/").map(encodeURIComponent).join("/")));
+      model?.dispose();
+    }
+    const fallbackGroup = this.groupTabs[activeGroup] ? activeGroup : (this.groupTabs.primary ? "primary" : (this.groupTabs.secondary ? "secondary" : null));
+    if (fallbackGroup) this.activateGroup(fallbackGroup);
+    else {
+      this.activeTab = null;
+      if (this.welcomeScreen) this.welcomeScreen.style.display = "flex";
+      if (this.editorView) this.editorView.style.display = "none";
+      const activeFile = document.getElementById("status-active-file");
+      if (activeFile) activeFile.textContent = "No file open";
     }
     this.saveStateToCache();
   }
