@@ -1877,3 +1877,48 @@ textarea {
 .editor-dialog-options { display: flex; flex-direction: column; gap: 3px; max-height: 42vh; overflow: auto; margin-bottom: 12px; }
 .editor-dialog-options button { padding: 8px 10px; text-align: left; color: var(--text-main); background: transparent; border: 0; border-radius: 5px; cursor: pointer; font: 12px var(--font-mono); }
 .editor-dialog-options button:hover { background: rgba(99,102,241,.18); }
+
+/* Workspace Find-in-Files */
+.workspace-search-options { display:flex; align-items:center; gap:12px; padding:8px 10px; color:var(--text-dim); font-size:10px; }
+.workspace-search-options label { display:flex; align-items:center; gap:4px; cursor:pointer; }
+.workspace-search-options input { accent-color:var(--accent); }
+#search-result-count { margin-left:auto; white-space:nowrap; }
+.search-run-btn { border:1px solid var(--border-bright); border-radius:5px; padding:5px 8px; color:var(--text-main); background:var(--bg-card); font-size:10px; cursor:pointer; }
+.search-run-btn:hover { border-color:var(--accent); color:var(--accent-light); }
+.workspace-search-result { display:flex; flex-direction:column; gap:3px; width:100%; padding:8px 10px; text-align:left; color:var(--text-main); background:transparent; border:0; border-bottom:1px solid var(--border-subtle); cursor:pointer; }
+.workspace-search-result:hover { background:rgba(99,102,241,.12); }
+.workspace-search-result .result-path { color:var(--accent-light); font:11px var(--font-mono); }
+.workspace-search-result .result-preview { color:var(--text-muted); font:10px var(--font-mono); overflow-wrap:anywhere; }
+.workspace-search-empty { padding:14px 10px; color:var(--text-dim); font-size:11px; }
+
+/* Git status and changed-line decorations */
+.editor-tab[data-git-status="added"]::after,
+.editor-tab[data-git-status="modified"]::after,
+.editor-tab[data-git-status="deleted"]::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-left: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  vertical-align: middle;
+}
+.editor-tab[data-git-status="added"]::after,
+#file-tree [data-git-status="added"]::after { background: #3fb950; }
+.editor-tab[data-git-status="modified"]::after,
+#file-tree [data-git-status="modified"]::after { background: #d29922; }
+.editor-tab[data-git-status="deleted"]::after,
+#file-tree [data-git-status="deleted"]::after { background: #f85149; }
+#file-tree [data-git-status] { position: relative; }
+.monaco-editor .git-added-line { border-left: 2px solid #3fb950; }
+.monaco-editor .git-modified-line { border-left: 2px solid #d29922; }
+.monaco-editor .git-added-glyph::before,
+.monaco-editor .git-modified-glyph::before {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 100%;
+  margin-left: 3px;
+}
+.monaco-editor .git-added-glyph::before { background: #3fb950; }
+.monaco-editor .git-modified-glyph::before { background: #d29922; }
