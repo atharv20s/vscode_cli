@@ -39,7 +39,7 @@ async function searchWorkspace(req, res) {
   const caseInsensitive = req.query.caseInsensitive !== "false";
   let matcher = null;
   try {
-    if (useRegex && (query.length > 120 || /\\\\[1-9]|\\(\\?([=!<])|\\([^)]*[+*][^)]*\\)[+*{]/.test(query))) {
+    if (useRegex && (query.length > 120 || query.includes("\\1") || query.includes("(?=") || query.includes("(?!") || query.includes("(?<") || query.includes(")+") || query.includes(")*"))) {
       return res.status(400).json({ error: "UnsafeSearchPattern", message: "This regular expression uses constructs that are too expensive for workspace search." });
     }
     if (useRegex) matcher = new RegExp(query, caseInsensitive ? "i" : "");
@@ -64,7 +64,7 @@ async function searchWorkspace(req, res) {
         scannedFiles++;
         if (scannedFiles > SEARCH_MAX_FILES) { truncated = true; break; }
         let stat, source;
-        try { stat = await fs.stat(absolute); if (stat.size > SEARCH_MAX_FILE_BYTES) continue; source = await fs.readFile(absolute, "utf8"); }
+        try { stat = await fs.stat(absolute); if (stat.size > SEARCH_MAX_FILE_BYTES) continue; scannedBytes += stat.size; if (scannedBytes > SEARCH_MAX_TOTAL_BYTES) { truncated = true; break; } source = await fs.readFile(absolute, "utf8"); }
         catch { continue; }
         if (source.includes("\u0000")) continue;
         const relative = path.relative(root, absolute).split(path.sep).join("/");
