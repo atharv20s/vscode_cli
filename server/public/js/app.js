@@ -13,6 +13,8 @@ class App {
     this.currentThinkingContent = "";
     this.sessionTokens = 0;
     this.chatHistory = [];
+    this.terminalSessions = new Map();
+    this.activeTerminalId = "default";
 
     this.init();
   }
@@ -289,43 +291,10 @@ class App {
       });
     }
 
-    window.wsClient.on("terminal.output", (data) => {
-      if (data && data.text && this.term) {
-        this.term.write(data.text);
-      }
-    });
-
-    window.wsClient.on("terminal.state", (data) => {
-      if (!data) return;
-      const dot = document.getElementById("term-status-dot");
-      const stateLabel = document.getElementById("term-state-label");
-      const shellLabel = document.getElementById("term-shell-label");
-      const cwdLabel = document.getElementById("term-cwd-label");
-      const pidLabel = document.getElementById("term-pid-label");
-
-      if (stateLabel) stateLabel.textContent = data.state === "ready" ? "Ready" : data.state;
-      if (shellLabel && data.shell) shellLabel.textContent = data.shell;
-      if (cwdLabel && data.cwd) {
-        const parts = data.cwd.replace(/\\/g, "/").split("/");
-        cwdLabel.textContent = parts.slice(-2).join("/");
-      }
-      if (pidLabel) pidLabel.textContent = data.pid ? `PID: ${data.pid}` : "PID: --";
-      if (dot) {
-        dot.style.background = data.state === "ready" || data.state === "running" ? "#10b981" : "#f59e0b";
-      }
-    });
-
-    window.wsClient.on("terminal.exit", (data) => {
-      if (this.term) {
-        this.term.write(`\r\n[System] Terminal session exited with code ${data.code}.\r\n`);
-      }
-    });
-
-    window.wsClient.on("terminal_exit", (data) => {
-      if (this.term) {
-        this.term.write(`\r\n[System] Terminal session exited with code ${data.code}.\r\n`);
-      }
-    });
+    window.wsClient.on("terminal.output", data => this.routeTerminalOutput(data, window.wsClient));
+    window.wsClient.on("terminal.state", data => this.routeTerminalState(data, window.wsClient));
+    window.wsClient.on("terminal.exit", data => this.routeTerminalExit(data, window.wsClient));
+    window.wsClient.on("terminal_exit", data => this.routeTerminalExit(data, window.wsClient));
 
     // Explicit approval gate for agent-generated shell commands and sensitive actions.
     // The server fails closed if this request is rejected, unavailable or times out.
@@ -3341,8 +3310,10 @@ class App {
     host.className = "terminal-session-container";
     host.id = "terminal-container-" + id;
     host.hidden = true;
-    document.getElementById("panel-terminal")?.appendChild(host);
-    const session = { id, sessionId: id, client, shell, label: "Terminal " + (this.terminalSessions.size + 1), state: "connecting", host };
+    const statusStrip = document.getElementById("terminal-status-strip");
+    const terminalPanel = document.getElementById("panel-terminal");
+    if (terminalPanel) terminalPanel.insertBefore(host, statusStrip || null);
+    const session = { id, sessionId: id, client, shell, label: "Terminal " + (new Set(this.terminalSessions.values()).size + 1), state: "connecting", host };
     this.terminalSessions.set(id, session);
     this.createTerminalView(session, host);
     client.on("open", () => client.send("terminal.init", { shell, cols: session.term.cols, rows: session.term.rows }));
