@@ -87,7 +87,7 @@ async function getLanguage(languageName) {
   return languagePromises.get(languageName);
 }
 
-export async function buildRepositorySymbolIndex(root, filePaths, prompt = "") {
+export async function buildRepositorySymbolIndex(root, filePaths, prompt = "", options = {}) {
   const runtime = await getRuntime();
   const parserCache = new Map();
   const declarations = [];
@@ -133,6 +133,8 @@ export async function buildRepositorySymbolIndex(root, filePaths, prompt = "") {
               kind: node.type,
               startLine: node.startPosition.row + 1,
               endLine: node.endPosition.row + 1,
+              column: node.startPosition.column + 1,
+              signature: String(node.text || "").split("\n", 1)[0].trim().slice(0, 240),
             };
             declarations.push(item);
             foundInFile.push(item);
@@ -161,7 +163,7 @@ export async function buildRepositorySymbolIndex(root, filePaths, prompt = "") {
     const overlap = terms.filter(term => promptTerms.has(term)).length;
     const directMention = String(prompt).toLowerCase().includes(item.name.toLowerCase());
     return { ...item, score: overlap * 3 + (directMention ? 8 : 0) };
-  }).filter(item => item.score > 0)
+  }).filter(item => options.includeAll || item.score > 0)
     .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path) || a.startLine - b.startLine);
 
   const matchedNames = new Set(declarationScores.slice(0, 30).map(item => item.name.toLowerCase()));
@@ -173,7 +175,7 @@ export async function buildRepositorySymbolIndex(root, filePaths, prompt = "") {
     available: true,
     parsedFileCount: parsedFiles.length,
     parseErrors,
-    declarations: declarationScores.slice(0, 40),
+    declarations: options.includeAll ? declarationScores.slice(0, 12000) : declarationScores.slice(0, 40),
     references: matchedReferences,
     parsedFiles,
   };
