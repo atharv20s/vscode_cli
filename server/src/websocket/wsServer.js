@@ -270,7 +270,7 @@ export function initWebSocketServer(httpServer) {
     ws.terminalSessionId = /^[a-f0-9-]{36}$/i.test(requestedTerminalId) ? requestedTerminalId : crypto.randomUUID();
     ws.previewService = getPreviewService(ws.workspaceId);
 
-    if (!ws.terminalOnly) addConnection(ws, user || { id: ws.userId, username: "guest" });
+    addConnection(ws, user || { id: ws.userId, username: "guest" });
 
     ws.on("pong", () => {
       ws.isAlive = true;
