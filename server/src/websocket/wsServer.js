@@ -75,7 +75,7 @@ export function initWebSocketServer(httpServer) {
   const broadcastScoped = (type, envelope, payload = envelope.payload) => {
     if (!envelope.workspaceId) return;
     wss.clients.forEach(client => {
-      if (client.workspaceId === envelope.workspaceId) sendMessage(client, type, payload);
+      if (client.workspaceId === envelope.workspaceId && !client.terminalOnly) sendMessage(client, type, payload);
     });
   };
 
@@ -86,7 +86,7 @@ export function initWebSocketServer(httpServer) {
       .filter(snapshot => now - snapshot.seenAt < 45000)
       .flatMap(snapshot => snapshot.peers);
     wss.clients.forEach(client => {
-      if (client.workspaceId === workspaceId && client.readyState === 1) {
+      if (client.workspaceId === workspaceId && !client.terminalOnly && client.readyState === 1) {
         sendMessage(client, "collab.presence", { users: peers, count: peers.length });
       }
     });
@@ -109,7 +109,7 @@ export function initWebSocketServer(httpServer) {
   const broadcastPresence = workspaceId => {
     if (!workspaceId) return;
     const peers = [...wss.clients]
-      .filter(client => client.workspaceId === workspaceId && client.readyState === 1)
+      .filter(client => client.workspaceId === workspaceId && !client.terminalOnly && client.readyState === 1)
       .map(client => ({
         connectionId: client.sessionId,
         userId: client.actorUserId || client.userId,
@@ -125,7 +125,7 @@ export function initWebSocketServer(httpServer) {
 
   const presenceInterval = setInterval(() => {
     const activeWorkspaces = new Set([...wss.clients]
-      .filter(client => client.workspaceId && client.readyState === 1)
+      .filter(client => client.workspaceId && !client.terminalOnly && client.readyState === 1)
       .map(client => client.workspaceId));
     for (const workspaceId of activeWorkspaces) broadcastPresence(workspaceId);
     const now = Date.now();
@@ -207,7 +207,7 @@ export function initWebSocketServer(httpServer) {
     if (!envelope.workspaceId) return;
     // Approval prompts contain command details and must reach workspace owners only.
     wss.clients.forEach(client => {
-      if (client.workspaceId === envelope.workspaceId &&
+      if (client.workspaceId === envelope.workspaceId && !client.terminalOnly &&
           client.workspacePermission === "owner" && client.readyState === 1) {
         sendMessage(client, "permission.requested", envelope.payload);
       }
@@ -226,6 +226,7 @@ export function initWebSocketServer(httpServer) {
     // as a negotiated subprotocol instead of a query parameter so reverse
     // proxies and access logs do not record it as part of the request URL.
     const url = new URL(req.url, `http://${req.headers.host}`);
+    ws.terminalOnly = url.searchParams.get("terminalOnly") === "1";
     const offeredProtocols = String(req.headers["sec-websocket-protocol"] || "")
       .split(",").map(value => value.trim()).filter(Boolean);
     const token = offeredProtocols[0] === "ath-auth" ? offeredProtocols[1] : null;
@@ -269,7 +270,7 @@ export function initWebSocketServer(httpServer) {
     ws.terminalSessionId = /^[a-f0-9-]{36}$/i.test(requestedTerminalId) ? requestedTerminalId : crypto.randomUUID();
     ws.previewService = getPreviewService(ws.workspaceId);
 
-    addConnection(ws, user || { id: ws.userId, username: "guest" });
+    if (!ws.terminalOnly) addConnection(ws, user || { id: ws.userId, username: "guest" });
 
     ws.on("pong", () => {
       ws.isAlive = true;
@@ -327,12 +328,16 @@ export function initWebSocketServer(httpServer) {
  */
 async function handleMessage(ws, msg, user) {
   const { type, payload } = msg;
+  if (ws.terminalOnly && !["ping", "terminal.init", "terminal.input", "terminal.resize", "terminal.paste", "terminal.command.submitted", "terminal.close"].includes(type)) {
+    sendMessage(ws, "error", { message: "This WebSocket is restricted to terminal session operations." });
+    return;
+  }
   const ownerOnly = new Set([
     "abort", "agent.command.stop", "permission.resolve", "permission_resolve",
     "bridge.register", "bridge.output", "bridge.completed",
     "preview.start", "preview_start", "preview.stop", "preview_stop",
     "preview.restart", "preview_restart", "terminal.paste", "terminal_resize",
-    "terminal.resize", "terminal.command.submitted",
+    "terminal.resize", "terminal.command.submitted", "terminal.close",
   ]);
   if (ws.workspacePermission !== "owner" && ownerOnly.has(type)) {
     sendMessage(ws, "error", { message: "This action is available only to the workspace owner." });
