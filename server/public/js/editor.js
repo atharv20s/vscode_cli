@@ -1,390 +1,312 @@
 /**
- * Code Editor & Multi-Tab Workspace Manager
+ * Monaco-backed editor and multi-tab workspace manager.
+ * Keeps the existing workspace file API, optimistic versions and collaboration hooks.
  */
-
 class EditorManager {
   constructor() {
-    this.openTabs = new Map(); // path -> { content, isDirty, language }
+    this.openTabs = new Map();
     this.activeTab = null;
     this.tabsContainer = document.getElementById("tabs-container");
     this.welcomeScreen = document.getElementById("editor-welcome");
     this.editorView = document.getElementById("code-editor-view");
     this.saveBtn = document.getElementById("btn-save-file");
-
+    this.monacoEditor = null;
+    this.monacoReady = false;
+    this.pendingModel = null;
+    this.suppressModelChange = false;
     this.initEventListeners();
     this.restoreStateFromCache();
+    this.loadMonaco();
+  }
+
+  loadMonaco() {
+    if (!this.editorView) return;
+    if (typeof window.require !== "function") {
+      this.showEditorError("Monaco loader did not load. Check your network/CDN access.");
+      return;
+    }
+    window.require.config({ paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.47.0/min/vs" } });
+    window.MonacoEnvironment = {
+      getWorkerUrl: function () {
+        const code = "self.MonacoEnvironment={baseUrl:'https://cdn.jsdelivr.net/npm/monaco-editor@0.47.0/min/'};importScripts('https://cdn.jsdelivr.net/npm/monaco-editor@0.47.0/min/vs/base/worker/workerMain.js');";
+        return "data:text/javascript;charset=utf-8," + encodeURIComponent(code);
+      }
+    };
+    window.require(["vs/editor/editor.main"], () => {
+      this.monacoEditor = monaco.editor.create(this.editorView, {
+        value: "",
+        language: "plaintext",
+        theme: "vs-dark",
+        automaticLayout: true,
+        minimap: { enabled: true },
+        fontFamily: "'Fira Code', Consolas, monospace",
+        fontSize: 13,
+        fontLigatures: true,
+        tabSize: 2,
+        insertSpaces: true,
+        detectIndentation: true,
+        autoIndent: "full",
+        formatOnPaste: true,
+        formatOnType: true,
+        bracketPairColorization: { enabled: true },
+        guides: { indentation: true, bracketPairs: true },
+        folding: true,
+        foldingHighlight: true,
+        smoothScrolling: true,
+        cursorBlinking: "smooth",
+        cursorSmoothCaretAnimation: "on",
+        renderWhitespace: "selection",
+        wordWrap: "off",
+        scrollBeyondLastLine: false,
+        stickyScroll: { enabled: true },
+        padding: { top: 12, bottom: 12 },
+        suggest: { showWords: true, preview: true },
+        quickSuggestions: true,
+        parameterHints: { enabled: true },
+        hover: { enabled: true },
+        links: true,
+        mouseWheelZoom: true
+      });
+      this.monacoReady = true;
+      this.monacoEditor.onDidChangeModelContent(() => {
+        if (this.suppressModelChange || !this.activeTab || !this.openTabs.has(this.activeTab)) return;
+        const tab = this.openTabs.get(this.activeTab);
+        tab.content = this.monacoEditor.getValue();
+        tab.isDirty = true;
+        this.updateTabUI(this.activeTab);
+        this.saveStateToCache();
+      });
+      this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => this.saveCurrentFile());
+      this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => this.monacoEditor.getAction("actions.find").run());
+      this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => this.openWorkspaceSearch());
+      this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => this.openQuickOpen());
+      this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => this.openCommandPalette());
+      this.monacoEditor.addCommand(monaco.KeyCode.F2, () => this.monacoEditor.getAction("editor.action.rename").run());
+      this.monacoEditor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyUp, () => this.monacoEditor.getAction("editor.action.moveLinesUpAction").run());
+      this.monacoEditor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyDown, () => this.monacoEditor.getAction("editor.action.moveLinesDownAction").run());
+      this.monacoEditor.onDidFocusEditorText(() => this.editorView.classList.add("monaco-focused"));
+      this.monacoEditor.onDidBlurEditorText(() => this.editorView.classList.remove("monaco-focused"));
+      if (this.pendingModel) this.selectTab(this.pendingModel);
+      window.dispatchEvent(new CustomEvent("ath:monaco-ready"));
+    }, (error) => this.showEditorError("Monaco failed to initialize: " + (error?.message || error)));
+  }
+
+  showEditorError(message) {
+    if (!this.editorView) return;
+    this.editorView.innerHTML = "";
+    const notice = document.createElement("div");
+    notice.className = "monaco-load-error";
+    notice.textContent = message;
+    this.editorView.appendChild(notice);
   }
 
   initEventListeners() {
-    if (this.saveBtn) {
-      this.saveBtn.addEventListener("click", () => this.saveCurrentFile());
-    }
-
-    // Ctrl+S / Cmd+S shortcut
+    this.saveBtn?.addEventListener("click", () => this.saveCurrentFile());
     window.addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         this.saveCurrentFile();
       }
+      if ((e.ctrlKey || e.metaKey) && e.key === "?" && !e.target.closest("input,textarea")) {
+        e.preventDefault();
+        this.showShortcutHelp();
+      }
+      if (e.key === "Escape") this.closeEditorDialog();
     });
-
-    // Make editor content editable & auto-cache drafts
-    if (this.editorView) {
-      this.editorView.setAttribute("contenteditable", "true");
-      this.editorView.addEventListener("input", () => {
-        if (this.activeTab && this.openTabs.has(this.activeTab)) {
-          const tab = this.openTabs.get(this.activeTab);
-          tab.content = this.editorView.innerText;
-          tab.isDirty = true;
-          this.updateTabUI(this.activeTab);
-          this.saveStateToCache();
-        }
-      });
-    }
+    document.getElementById("editor-search-trigger")?.addEventListener("click", () => this.monacoEditor?.getAction("actions.find").run());
   }
 
-  /**
-   * Save open tabs and active file to LocalStorage Cache.
-   */
   saveStateToCache() {
     try {
-      const tabsArray = [];
-      for (const [path, data] of this.openTabs.entries()) {
-        tabsArray.push({ path, content: data.content, isDirty: data.isDirty, version: data.version || null });
-      }
-      localStorage.setItem("ath_cached_editor_tabs", JSON.stringify(tabsArray));
+      const tabs = Array.from(this.openTabs, ([path, data]) => ({ path, content: data.content, isDirty: data.isDirty, version: data.version || null }));
+      localStorage.setItem("ath_cached_editor_tabs", JSON.stringify(tabs));
       localStorage.setItem("ath_cached_active_tab", this.activeTab || "");
     } catch {}
   }
 
-  /**
-   * Restore open tabs and active file from LocalStorage Cache.
-   */
   restoreStateFromCache() {
     try {
-      const rawTabs = localStorage.getItem("ath_cached_editor_tabs");
-      const activeTab = localStorage.getItem("ath_cached_active_tab");
-      if (!rawTabs) return;
-
-      const tabs = JSON.parse(rawTabs);
-      if (Array.isArray(tabs) && tabs.length > 0) {
-        tabs.forEach((tab) => {
-          this.openTabs.set(tab.path, {
-            content: tab.content,
-            version: tab.version || null,
-            isDirty: tab.isDirty || false,
-            language: this.detectLanguage(tab.path),
-          });
-          this.createTabElement(tab.path);
-        });
-
-        const targetTab = (activeTab && this.openTabs.has(activeTab)) ? activeTab : tabs[0].path;
-        this.selectTab(targetTab);
-      }
-    } catch (e) {
-      console.warn("Editor cache restore notice:", e);
-    }
+      const raw = localStorage.getItem("ath_cached_editor_tabs");
+      if (!raw) return;
+      const tabs = JSON.parse(raw);
+      if (!Array.isArray(tabs)) return;
+      tabs.forEach(tab => {
+        if (!tab?.path || typeof tab.content !== "string") return;
+        this.openTabs.set(tab.path, { content: tab.content, version: tab.version || null, isDirty: !!tab.isDirty, language: this.detectLanguage(tab.path) });
+        this.createTabElement(tab.path);
+      });
+      const active = localStorage.getItem("ath_cached_active_tab");
+      if (tabs.length) this.selectTab(active && this.openTabs.has(active) ? active : tabs[0].path);
+    } catch (error) { console.warn("Editor cache restore notice:", error); }
   }
 
-  /**
-   * Open a file in a new or existing editor tab.
-   */
   async openFile(filePath) {
-    if (this.openTabs.has(filePath)) {
-      this.selectTab(filePath);
-      return;
-    }
-
+    if (this.openTabs.has(filePath)) return this.selectTab(filePath);
     try {
-      const response = await fetch(`/api/workspace/file?path=${encodeURIComponent(filePath)}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
-        },
+      const response = await fetch("/api/workspace/file?path=" + encodeURIComponent(filePath), {
+        headers: { Authorization: "Bearer " + (localStorage.getItem("token") || "") }
       });
-
-      if (!response.ok) {
-        throw new Error(`Failed to read ${filePath}`);
-      }
-
+      if (!response.ok) throw new Error("Failed to read " + filePath);
       const data = await response.json();
-      const language = this.detectLanguage(filePath);
-
-      this.openTabs.set(filePath, {
-        content: data.content,
-        version: data.version || null,
-        isDirty: false,
-        language,
-      });
-
+      this.openTabs.set(filePath, { content: data.content, version: data.version || null, isDirty: false, language: this.detectLanguage(filePath) });
       this.createTabElement(filePath);
       this.selectTab(filePath);
       this.saveStateToCache();
     } catch (err) {
       console.error("Open file error:", err);
-      app.logTerminal(`Error opening ${filePath}: ${err.message}`, "error");
+      window.app?.logTerminal("Error opening " + filePath + ": " + err.message, "error");
     }
   }
 
-  /**
-   * Create tab DOM element.
-   */
   createTabElement(filePath) {
+    if (!this.tabsContainer || this.tabsContainer.querySelector('[data-path="' + CSS.escape(filePath) + '"]')) return;
     const tab = document.createElement("div");
     tab.className = "editor-tab";
     tab.dataset.path = filePath;
-
-    const fileName = filePath.split("/").pop();
-    tab.innerHTML = `
-      <span class="tab-title">${fileName}</span>
-      <button class="tab-close-btn" title="Close Tab">&times;</button>
-    `;
-
-    tab.addEventListener("click", (e) => {
-      if (!e.target.classList.contains("tab-close-btn")) {
-        this.selectTab(filePath);
-      }
-    });
-
-    tab.querySelector(".tab-close-btn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.closeTab(filePath);
-    });
-
+    const title = document.createElement("span");
+    title.className = "tab-title";
+    title.textContent = filePath.split("/").pop();
+    const close = document.createElement("button");
+    close.className = "tab-close-btn";
+    close.title = "Close Tab";
+    close.setAttribute("aria-label", "Close " + filePath);
+    close.textContent = "×";
+    tab.append(title, close);
+    tab.addEventListener("click", e => { if (!e.target.closest(".tab-close-btn")) this.selectTab(filePath); });
+    close.addEventListener("click", e => { e.stopPropagation(); this.closeTab(filePath); });
     this.tabsContainer.appendChild(tab);
   }
 
-  /**
-   * Select and display active tab.
-   */
+  setEditorValue(content, language) {
+    if (!this.monacoEditor) return;
+    this.suppressModelChange = true;
+    const model = this.monacoEditor.getModel();
+    if (model && monaco.editor.getModelLanguage(model) !== language) monaco.editor.setModelLanguage(model, language);
+    this.monacoEditor.setValue(content || "");
+    this.suppressModelChange = false;
+  }
+
   selectTab(filePath) {
     this.activeTab = filePath;
-    const activeFileEl = document.getElementById("status-active-file");
-    if (activeFileEl) {
-      activeFileEl.textContent = filePath;
-    }
-    const tabData = this.openTabs.get(filePath);
-    if (!tabData) return;
-
-    // Update tab bar UI
-    document.querySelectorAll(".editor-tab").forEach((el) => {
-      el.classList.toggle("active", el.dataset.path === filePath);
-    });
-
-    // Hide welcome, show editor
+    const tab = this.openTabs.get(filePath);
+    if (!tab) return;
+    const activeFile = document.getElementById("status-active-file");
+    if (activeFile) activeFile.textContent = filePath;
+    this.tabsContainer?.querySelectorAll(".editor-tab").forEach(el => el.classList.toggle("active", el.dataset.path === filePath));
     if (this.welcomeScreen) this.welcomeScreen.style.display = "none";
-    if (this.editorView) {
-      this.editorView.style.display = "block";
-      this.editorView.innerText = tabData.content;
-    }
+    if (this.editorView) this.editorView.style.display = "block";
+    if (!this.monacoReady) { this.pendingModel = filePath; return; }
+    const model = monaco.editor.createModel(tab.content || "", tab.language || this.detectLanguage(filePath), monaco.Uri.parse("file:///" + filePath.split("/").map(encodeURIComponent).join("/")));
+    const existing = monaco.editor.getModel(model.uri);
+    if (existing) { model.dispose(); this.monacoEditor.setModel(existing); }
+    else this.monacoEditor.setModel(model);
+    this.monacoEditor.updateOptions({ readOnly: false });
+    this.monacoEditor.focus();
     this.saveStateToCache();
   }
 
-  /**
-   * Close a tab.
-   */
   closeTab(filePath) {
     this.openTabs.delete(filePath);
-    const tabEl = this.tabsContainer.querySelector(`[data-path="${filePath}"]`);
-    if (tabEl) tabEl.remove();
-
+    this.tabsContainer?.querySelector('[data-path="' + CSS.escape(filePath) + '"]')?.remove();
+    const model = monaco?.editor?.getModel(monaco.Uri.parse("file:///" + filePath.split("/").map(encodeURIComponent).join("/")));
+    model?.dispose();
     if (this.activeTab === filePath) {
-      const remainingKeys = Array.from(this.openTabs.keys());
-      if (remainingKeys.length > 0) {
-        this.selectTab(remainingKeys[remainingKeys.length - 1]);
-      } else {
+      const keys = Array.from(this.openTabs.keys());
+      if (keys.length) this.selectTab(keys[keys.length - 1]);
+      else {
         this.activeTab = null;
         if (this.welcomeScreen) this.welcomeScreen.style.display = "flex";
         if (this.editorView) this.editorView.style.display = "none";
-        const activeFileEl = document.getElementById("status-active-file");
-        if (activeFileEl) activeFileEl.textContent = "No file open";
+        const activeFile = document.getElementById("status-active-file");
+        if (activeFile) activeFile.textContent = "No file open";
       }
     }
     this.saveStateToCache();
   }
 
-  /**
-   * Start Live Real-time Streaming into the Editor
-   */
   startLiveStream(filePath) {
     if (!filePath) return;
-
     if (!this.openTabs.has(filePath)) {
-      this.openTabs.set(filePath, {
-        content: "",
-        isDirty: true,
-        language: this.detectLanguage(filePath),
-      });
+      this.openTabs.set(filePath, { content: "", isDirty: true, language: this.detectLanguage(filePath), version: null });
       this.createTabElement(filePath);
     }
-
     this.selectTab(filePath);
-
-    // Show live streaming HUD
     const hud = document.getElementById("editor-streaming-hud");
-    const hudLabel = document.getElementById("hud-file-label");
-    const hudAdded = document.getElementById("hud-lines-added");
-    if (hud && hudLabel) {
-      hud.style.display = "flex";
-      hudLabel.textContent = `Writing live: ${filePath}`;
-      if (hudAdded) hudAdded.textContent = "🟢 +0 lines";
-    }
-
-    if (this.editorView) {
-      this.editorView.classList.add("streaming");
-    }
-
-    // Set tab pulsing indicator
-    const tabEl = this.tabsContainer?.querySelector(`[data-path="${filePath}"]`);
-    if (tabEl) {
-      tabEl.classList.add("tab-streaming");
-    }
+    const label = document.getElementById("hud-file-label");
+    const added = document.getElementById("hud-lines-added");
+    if (hud && label) { hud.style.display = "flex"; label.textContent = "Writing live: " + filePath; if (added) added.textContent = "🟢 +0 lines"; }
+    this.editorView?.classList.add("streaming");
+    this.tabsContainer?.querySelector('[data-path="' + CSS.escape(filePath) + '"]')?.classList.add("tab-streaming");
   }
 
-  /**
-   * Stream incoming code content in real-time
-   */
-  appendLiveStream(filePath, currentContent) {
-    if (!this.openTabs.has(filePath)) {
-      this.startLiveStream(filePath);
-    }
-
-    if (this.activeTab !== filePath) {
-      this.selectTab(filePath);
-    }
-
+  appendLiveStream(filePath, content) {
+    if (!this.openTabs.has(filePath)) this.startLiveStream(filePath);
+    if (this.activeTab !== filePath) this.selectTab(filePath);
     const tab = this.openTabs.get(filePath);
-    if (tab) {
-      tab.content = currentContent;
-      tab.isDirty = true;
-    }
-
-    if (this.editorView) {
-      this.editorView.innerText = currentContent;
-      this.editorView.scrollTop = this.editorView.scrollHeight;
-    }
-
-    // Update lines count
-    const lines = currentContent.split("\n").length;
-    const hudAdded = document.getElementById("hud-lines-added");
-    if (hudAdded) {
-      hudAdded.textContent = `🟢 +${lines} lines`;
-    }
+    if (tab) { tab.content = content; tab.isDirty = true; }
+    this.setEditorValue(content, tab?.language || this.detectLanguage(filePath));
+    if (this.monacoEditor) this.monacoEditor.revealLine(this.monacoEditor.getModel().getLineCount());
+    const count = document.getElementById("hud-lines-added");
+    if (count) count.textContent = "🟢 +" + content.split("\n").length + " lines";
   }
 
-  /**
-   * Finish Live Streaming and commit file
-   */
   async finishLiveStream(filePath, finalContent) {
-    if (this.openTabs.has(filePath)) {
-      const tab = this.openTabs.get(filePath);
-      tab.content = finalContent || tab.content;
-      tab.isDirty = false;
-      this.updateTabUI(filePath);
-    }
-
-    if (this.editorView) {
-      this.editorView.classList.remove("streaming");
-      if (finalContent) {
-        this.editorView.innerText = finalContent;
-      }
-    }
-
+    const tab = this.openTabs.get(filePath);
+    if (tab) { tab.content = finalContent || tab.content; tab.isDirty = false; this.updateTabUI(filePath); }
+    if (this.activeTab === filePath) this.setEditorValue(tab?.content || "", tab?.language || this.detectLanguage(filePath));
+    this.editorView?.classList.remove("streaming");
     const hud = document.getElementById("editor-streaming-hud");
-    const hudLabel = document.getElementById("hud-file-label");
-    if (hud && hudLabel) {
-      hudLabel.textContent = `✨ Completed: ${filePath}`;
-      setTimeout(() => {
-        if (hud) hud.style.display = "none";
-      }, 3500);
-    }
-
-    const tabEl = this.tabsContainer?.querySelector(`[data-path="${filePath}"]`);
-    if (tabEl) {
-      tabEl.classList.remove("tab-streaming");
-    }
-
-    // Auto save to workspace on backend with optimistic concurrency.
+    const label = document.getElementById("hud-file-label");
+    if (hud && label) { label.textContent = "✨ Completed: " + filePath; setTimeout(() => { hud.style.display = "none"; }, 3500); }
+    this.tabsContainer?.querySelector('[data-path="' + CSS.escape(filePath) + '"]')?.classList.remove("tab-streaming");
     try {
-      const tab = this.openTabs.get(filePath);
-      const saveResponse = await fetch("/api/workspace/file", {
+      const current = this.openTabs.get(filePath);
+      const response = await fetch("/api/workspace/file", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
-          ...(tab?.version ? { "If-Match": `"${tab.version}"` } : { "If-None-Match": "*" }),
-        },
-        body: JSON.stringify({
-          path: filePath,
-          content: finalContent || tab?.content || "",
-        }),
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + (localStorage.getItem("token") || ""), ...(current?.version ? { "If-Match": '"' + current.version + '"' } : { "If-None-Match": "*" }) },
+        body: JSON.stringify({ path: filePath, content: finalContent || current?.content || "" })
       });
-      if (saveResponse.ok) {
-        const saved = await saveResponse.json().catch(() => ({}));
-        if (tab && saved.version) tab.version = saved.version;
-      } else if (saveResponse.status === 409 && window.app?.logTerminal) {
-        window.app.logTerminal(`Could not save ${filePath}: another collaborator changed it. Reload before retrying.`, "warning");
-      }
-    } catch {}
-
+      if (response.ok) { const saved = await response.json().catch(() => ({})); if (current && saved.version) current.version = saved.version; }
+      else if (response.status === 409) window.app?.logTerminal("Could not save " + filePath + ": another collaborator changed it. Reload before retrying.", "warning");
+    } catch (error) { window.app?.logTerminal("Stream save failed: " + error.message, "error"); }
     this.saveStateToCache();
-    if (window.app?.loadWorkspaceFiles) {
-      await window.app.loadWorkspaceFiles();
-    }
+    await window.app?.loadWorkspaceFiles?.();
   }
 
-  /**
-   * Update active tab content externally (e.g. When AI Agent writes to file).
-   */
-  updateFileContent(filePath, newContent) {
-    if (this.openTabs.has(filePath)) {
-      const tab = this.openTabs.get(filePath);
-      tab.content = newContent;
-      tab.isDirty = false;
-      if (this.activeTab === filePath && this.editorView) {
-        this.editorView.innerText = newContent;
-      }
-      this.saveStateToCache();
-    }
+  updateFileContent(filePath, content) {
+    const tab = this.openTabs.get(filePath);
+    if (!tab) return;
+    tab.content = content;
+    tab.isDirty = false;
+    if (this.activeTab === filePath) this.setEditorValue(content, tab.language || this.detectLanguage(filePath));
+    this.updateTabUI(filePath);
+    this.saveStateToCache();
   }
 
-  /**
-   * Save current file to server.
-   */
   async saveCurrentFile() {
     if (!this.activeTab || !this.openTabs.has(this.activeTab)) return;
-
     const tab = this.openTabs.get(this.activeTab);
+    if (this.monacoEditor && this.activeTab) tab.content = this.monacoEditor.getValue();
     const filePath = this.activeTab;
-
     try {
       const response = await fetch("/api/workspace/file", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
-          ...(tab.version ? { "If-Match": `"${tab.version}"` } : { "If-None-Match": "*" }),
-        },
-        body: JSON.stringify({
-          path: filePath,
-          content: tab.content,
-        }),
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + (localStorage.getItem("token") || ""), ...(tab.version ? { "If-Match": '"' + tab.version + '"' } : { "If-None-Match": "*" }) },
+        body: JSON.stringify({ path: filePath, content: tab.content })
       });
-
       if (response.status === 409) {
         const conflict = await response.json().catch(() => ({}));
         throw new Error(conflict.message || "This file changed in another session. Reload it before saving.");
       }
-      if (!response.ok) throw new Error("Save failed");
+      if (!response.ok) throw new Error("Save failed (" + response.status + ")");
       const saved = await response.json().catch(() => ({}));
       tab.version = saved.version || tab.version;
-
       tab.isDirty = false;
+      tab.hasRemoteConflict = false;
       this.updateTabUI(filePath);
       this.saveStateToCache();
-      app.logTerminal(`Saved ${filePath}`, "success");
-    } catch (err) {
-      app.logTerminal(`Failed to save ${filePath}: ${err.message}`, "error");
-    }
+      window.app?.logTerminal("Saved " + filePath, "success");
+    } catch (err) { window.app?.logTerminal("Failed to save " + filePath + ": " + err.message, "error"); }
   }
 
   async handleRemoteFileChange(event) {
@@ -395,49 +317,119 @@ class EditorManager {
     if (tab.isDirty) {
       tab.hasRemoteConflict = true;
       this.updateTabUI(filePath);
-      if (window.app?.logTerminal) window.app.logTerminal(`Another collaborator changed ${filePath}. Your local draft was kept; reload before saving.`, "warning");
+      window.app?.logTerminal("Another collaborator changed " + filePath + ". Your local draft was kept; reload before saving.", "warning");
       return;
     }
     try {
-      const response = await fetch(`/api/workspace/file?path=${encodeURIComponent(filePath)}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token") || ""}` },
-      });
+      const response = await fetch("/api/workspace/file?path=" + encodeURIComponent(filePath), { headers: { Authorization: "Bearer " + (localStorage.getItem("token") || "") } });
       if (!response.ok) return;
       const data = await response.json();
       tab.content = data.content;
       tab.version = data.version || null;
       tab.isDirty = false;
       tab.hasRemoteConflict = false;
-      if (this.activeTab === filePath && this.editorView) this.editorView.innerText = data.content;
+      if (this.activeTab === filePath) this.setEditorValue(data.content, tab.language);
       this.updateTabUI(filePath);
       this.saveStateToCache();
-    } catch (error) {
-      console.warn("Collaborative file refresh failed:", error);
-    }
+    } catch (error) { console.warn("Collaborative file refresh failed:", error); }
   }
 
   updateTabUI(filePath) {
-    const tabEl = this.tabsContainer.querySelector(`[data-path="${filePath}"]`);
+    const tabEl = this.tabsContainer?.querySelector('[data-path="' + CSS.escape(filePath) + '"]');
     if (!tabEl) return;
-    const tabData = this.openTabs.get(filePath);
-    const fileName = filePath.split("/").pop();
-    tabEl.querySelector(".tab-title").textContent = `${fileName}${tabData?.isDirty ? " •" : ""}`;
+    const tab = this.openTabs.get(filePath);
+    const title = filePath.split("/").pop();
+    tabEl.querySelector(".tab-title").textContent = title + (tab?.isDirty ? " •" : "") + (tab?.hasRemoteConflict ? " ⚠" : "");
+    tabEl.title = tab?.hasRemoteConflict ? "Remote changes detected — reload before saving" : filePath;
   }
 
   detectLanguage(filePath) {
     const ext = filePath.split(".").pop().toLowerCase();
-    const map = {
-      js: "javascript",
-      py: "python",
-      html: "html",
-      css: "css",
-      json: "json",
-      md: "markdown",
-      sh: "bash",
-      sql: "sql",
-    };
-    return map[ext] || "plaintext";
+    const map = { js:"javascript", mjs:"javascript", cjs:"javascript", jsx:"javascript", ts:"typescript", tsx:"typescript", py:"python", html:"html", htm:"html", css:"css", scss:"scss", less:"less", json:"json", jsonc:"json", md:"markdown", mdx:"markdown", sh:"shell", bash:"shell", sql:"sql", yml:"yaml", yaml:"yaml", xml:"xml", svg:"xml", java:"java", c:"c", h:"c", cpp:"cpp", cc:"cpp", rs:"rust", go:"go", php:"php", rb:"ruby", cs:"csharp", kt:"kotlin", swift:"swift", dockerfile:"dockerfile", toml:"ini", ini:"ini", graphql:"graphql", vue:"html", svelte:"html" };
+    return map[ext] || (filePath.toLowerCase().endsWith("/dockerfile") ? "dockerfile" : "plaintext");
+  }
+
+  openQuickOpen() {
+    this.showEditorDialog("Quick Open", "Type a filename to filter the workspace file list.", "filename", async value => {
+      const files = Array.from(document.querySelectorAll("#file-tree [data-path], #file-tree [data-file-path]"))
+        .map(el => el.dataset.path || el.dataset.filePath).filter(Boolean);
+      const match = files.sort((a,b) => this.fuzzyScore(value,a) - this.fuzzyScore(value,b))[0];
+      if (match) await this.openFile(match);
+      else window.app?.logTerminal("No matching file found in the loaded explorer tree.", "warning");
+    });
+  }
+
+  fuzzyScore(query, value) {
+    const q = query.toLowerCase().replace(/\s/g, "");
+    const v = value.toLowerCase();
+    let at = 0, score = 0;
+    for (const ch of q) { at = v.indexOf(ch, at); if (at < 0) return 1e9; score += at++; }
+    return score + v.length * 0.01;
+  }
+
+  openWorkspaceSearch() {
+    const input = document.getElementById("search-input");
+    if (input) { input.focus(); input.placeholder = "Search workspace / web…"; }
+    document.querySelector('[data-view="search"]')?.click();
+  }
+
+  openCommandPalette() {
+    const actions = [
+      ["Save File", () => this.saveCurrentFile()],
+      ["Find", () => this.monacoEditor?.getAction("actions.find").run()],
+      ["Replace", () => this.monacoEditor?.getAction("editor.action.startFindReplaceAction").run()],
+      ["Quick Open", () => this.openQuickOpen()],
+      ["Search Workspace", () => this.openWorkspaceSearch()],
+      ["Toggle Minimap", () => this.monacoEditor?.updateOptions({ minimap: { enabled: !this.monacoEditor.getOption(monaco.editor.EditorOption.minimap).enabled } })],
+      ["Toggle Word Wrap", () => this.monacoEditor?.updateOptions({ wordWrap: this.monacoEditor.getOption(monaco.editor.EditorOption.wordWrap) === "on" ? "off" : "on" })],
+      ["Format Document", () => this.monacoEditor?.getAction("editor.action.formatDocument").run()],
+      ["Go to Line", () => this.monacoEditor?.getAction("editor.action.gotoLine").run()],
+      ["Keyboard Shortcuts", () => this.showShortcutHelp()]
+    ];
+    this.showEditorDialog("Command Palette", "Choose a command or type to filter.", "command", value => {
+      const item = actions.find(([name]) => name.toLowerCase().includes(value.toLowerCase()));
+      if (item) item[1]();
+    }, actions.map(([name]) => name));
+  }
+
+  showEditorDialog(title, description, placeholder, onSubmit, options = []) {
+    this.closeEditorDialog();
+    const overlay = document.createElement("div");
+    overlay.className = "editor-dialog-overlay";
+    overlay.id = "editor-dialog";
+    const panel = document.createElement("div");
+    panel.className = "editor-dialog";
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    const help = document.createElement("p");
+    help.textContent = description;
+    const input = document.createElement("input");
+    input.placeholder = placeholder;
+    input.autocomplete = "off";
+    const list = document.createElement("div");
+    list.className = "editor-dialog-options";
+    options.forEach(option => { const row = document.createElement("button"); row.textContent = option; row.addEventListener("click", () => { this.closeEditorDialog(); onSubmit(option); }); list.appendChild(row); });
+    const run = document.createElement("button");
+    run.className = "primary-btn";
+    run.textContent = "Open";
+    run.addEventListener("click", () => { const value = input.value.trim(); this.closeEditorDialog(); if (value) onSubmit(value); });
+    input.addEventListener("keydown", e => { if (e.key === "Enter") run.click(); });
+    panel.append(heading, help, input, list, run);
+    overlay.appendChild(panel);
+    overlay.addEventListener("mousedown", e => { if (e.target === overlay) this.closeEditorDialog(); });
+    document.body.appendChild(overlay);
+    input.focus();
+  }
+
+  closeEditorDialog() { document.getElementById("editor-dialog")?.remove(); }
+
+  showShortcutHelp() {
+    this.showEditorDialog("ATH IDE Keyboard Shortcuts", "Core editor shortcuts", "Search commands", () => {}, [
+      "Ctrl/Cmd + S — Save file", "Ctrl/Cmd + F — Find in file", "Ctrl/Cmd + H — Replace in file",
+      "Ctrl/Cmd + P — Quick open", "Ctrl/Cmd + Shift + P — Command palette",
+      "Ctrl/Cmd + Shift + F — Workspace search", "Alt + Up/Down — Move line",
+      "Ctrl/Cmd + D — Add next occurrence", "Alt + Click — Multi-cursor", "F2 — Rename symbol", "F12 — Go to definition"
+    ]);
   }
 }
-
 window.editorManager = new EditorManager();
