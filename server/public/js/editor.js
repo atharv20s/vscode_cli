@@ -102,7 +102,7 @@ class EditorManager {
             return {
               range: model.getWordAtPosition(position),
               contents: [
-                { value: "**" + String(item.name || "").replace(/[*_]/g, "\\      this.monacoReady = true;") + "** (" + String(item.kind || "symbol").replace(/[*_]/g, "\\      this.monacoReady = true;") + ")" },
+                { value: "**" + String(item.name || "") + "** (" + String(item.kind || "symbol") + ")" },
                 { value: "Signature: " + String(item.signature || item.name || "").slice(0, 240) },
                 { value: String(item.file || "") + ":" + String(item.line || "") }
               ]
