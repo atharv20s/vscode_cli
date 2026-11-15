@@ -558,6 +558,16 @@ async function handleMessage(ws, msg, user) {
       }
       break;
 
+    case "terminal.close":
+      if (ws.workspacePermission !== "owner") {
+        sendMessage(ws, "error", { message: "Only the workspace owner can close terminal sessions." });
+        break;
+      }
+      executionService.killInteractive(ws.terminalSessionId);
+      sendMessage(ws, "terminal.exit", { sessionId: ws.terminalSessionId, code: 0, closed: true });
+      ws.close(1000, "Terminal session closed");
+      break;
+
     default:
       sendMessage(ws, "error", { message: `Unknown message type: ${type}` });
   }
