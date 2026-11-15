@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from CLIENT.response import StreamEvent, StreamEventType, TextDelta, ToolCallDelta
 from tools.base import ToolResult
-from tools.subagents import Subagent, SubagentConfig, SubagentType
+from tools.subagents import AnalystTool, Subagent, SubagentConfig, SubagentType, TOOLS
 
 
 class FakeTool:
@@ -111,6 +111,33 @@ class SubagentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(empty.success)
         self.assertFalse(oversized.success)
         self.assertEqual(FakeLLMClient.instances, [])
+
+
+    async def test_total_tool_call_budget_is_enforced(self):
+        class EndlessClient(FakeLLMClient):
+            async def chat_completion(self, messages, stream=True, tools=None):
+                self.calls += 1
+                yield StreamEvent(
+                    type=StreamEventType.TOOL_CALL,
+                    tool_calls=[ToolCallDelta(f"call_{self.calls}", "web_search", '{"query":"repeat"}')],
+                    finish_reason="tool_calls",
+                )
+
+        with patch("tools.subagents.LLMClient", EndlessClient):
+            agent = Subagent(SubagentConfig(
+                type=SubagentType.RESEARCHER,
+                system_prompt="Research carefully.",
+                max_iterations=10,
+            ))
+            result = await agent.run("Repeat searches until stopped.")
+        self.assertFalse(result.success)
+        self.assertIn("total tool-call budget", result.error)
+        self.assertEqual(len(result.tool_calls), Subagent.MAX_TOTAL_TOOL_CALLS)
+
+    async def test_analyst_is_exposed_as_a_specialist_tool(self):
+        self.assertIn("analyst_agent", [tool.name for tool in TOOLS])
+        self.assertIsInstance(AnalystTool(), AnalystTool)
+        self.assertEqual(AnalystTool().required_params, ["task"])
 
     async def test_iteration_budget_is_enforced(self):
         class EndlessToolClient(FakeLLMClient):
