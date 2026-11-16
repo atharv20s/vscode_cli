@@ -1987,3 +1987,19 @@ textarea {
 .terminal-session-add { width:24px; height:24px; border:1px dashed var(--border-bright); border-radius:4px; font-size:15px; }
 .terminal-session-container { flex:1 1 auto; min-height:0; width:100%; overflow:hidden; background:#0d0e12; padding:8px; }
 .terminal-session-container[hidden] { display:none !important; }
+
+
+/* Inline agent patch review (Monaco View Zone) */
+.agent-inline-review { box-sizing:border-box; height:100%; display:flex; flex-direction:column; gap:5px; padding:7px 10px; overflow:hidden; color:var(--text-main); background:#17251f; border:1px solid rgba(74,222,128,.32); border-left:3px solid #4ade80; font:11px var(--font-mono); }
+.agent-inline-review-heading,.agent-inline-review-actions,.agent-inline-review-files { display:flex; align-items:center; gap:7px; min-width:0; }
+.agent-inline-review-heading { justify-content:space-between; }
+.agent-inline-review-heading strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.agent-inline-review-status { color:#a7f3d0; white-space:nowrap; }
+.agent-inline-review-files { overflow-x:auto; }
+.agent-inline-review-file { flex:0 0 auto; max-width:220px; overflow:hidden; text-overflow:ellipsis; padding:3px 7px; color:var(--text-muted); background:transparent; border:1px solid transparent; border-radius:4px; cursor:pointer; font:10px var(--font-mono); }
+.agent-inline-review-file.active { color:#fff; border-color:rgba(74,222,128,.55); background:rgba(74,222,128,.12); }
+.agent-inline-review-actions { justify-content:flex-end; }
+.agent-inline-review-actions button { padding:4px 9px; font-size:10px; }
+.agent-inline-review-actions button:disabled { opacity:.4; cursor:not-allowed; }
+.agent-inline-added-line { background:rgba(34,197,94,.14); }
+.agent-inline-added-gutter { border-left:3px solid #4ade80; }

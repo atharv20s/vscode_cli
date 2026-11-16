@@ -15,7 +15,8 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-RUN apk add --no-cache git bash chromium nss freetype harfbuzz ca-certificates ttf-freefont
+RUN apk add --no-cache git bash chromium nss freetype harfbuzz ca-certificates ttf-freefont \
+    && npm install --global --no-audit --no-fund typescript-language-server@5.1.3 pyright@1.1.407
 
 ENV NODE_ENV=production
 ENV PORT=3001

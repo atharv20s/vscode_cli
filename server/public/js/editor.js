@@ -25,6 +25,15 @@ class EditorManager {
     this.agentApplyFiles = [];
     this.agentApplySelectedPath = null;
     this.agentApplyReady = false;
+    this.agentApplyAcceptedPaths = new Set();
+    this.agentApplyViewZoneId = null;
+    this.agentApplyZoneEditor = null;
+    this.agentApplyDecorations = null;
+    this.lspPending = new Map();
+    this.lspChangeTimers = new Map();
+    this.lspRequestId = 1;
+    this.lspRootUri = null;
+    this.lspLanguage = null;
     this.suppressModelChange = false;
     this.initEventListeners();
     this.restoreStateFromCache();
@@ -122,11 +131,185 @@ class EditorManager {
         });
       });
       this.monacoReady = true;
+      this.initLspProviders();
       if (this.pendingModel) this.selectTab(this.pendingModel);
       window.dispatchEvent(new CustomEvent("ath:monaco-ready"));
     }, (error) => this.showEditorError("Monaco failed to initialize: " + (error?.message || error)));
   }
 
+
+  initLspProviders() {
+    if (this.lspProvidersRegistered || !window.wsClient) return;
+    this.lspProvidersRegistered = true;
+    window.wsClient.on("lsp.message", message => {
+      if (message?.method && message.id !== undefined) {
+        const result = message.method === "workspace/workspaceFolders"
+          ? [{ uri: this.lspRootUri, name: "workspace" }]
+          : message.method === "workspace/configuration" ? (message.params?.items || []).map(() => null) : null;
+        window.wsClient.send("lsp.message", { message: { jsonrpc: "2.0", id: message.id, result } });
+        return;
+      }
+      if (message?.id !== undefined && this.lspPending.has(message.id)) {
+        const pending = this.lspPending.get(message.id);
+        clearTimeout(pending.timer);
+        this.lspPending.delete(message.id);
+        if (message.error) pending.reject(new Error(message.error.message || "LSP request failed"));
+        else pending.resolve(message.result);
+        return;
+      }
+      if (message?.method === "textDocument/publishDiagnostics") {
+        const params = message.params || {};
+        const uri = monaco.Uri.parse(params.uri || "");
+        const model = monaco.editor.getModel(uri);
+        if (model) monaco.editor.setModelMarkers(model, "LSP", (params.diagnostics || []).map(item => ({
+          severity: item.severity === 1 ? monaco.MarkerSeverity.Error : item.severity === 2 ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Info,
+          message: String(item.message || "").slice(0, 2000),
+          startLineNumber: Math.max(1, item.range?.start?.line + 1 || 1),
+          startColumn: Math.max(1, item.range?.start?.character + 1 || 1),
+          endLineNumber: Math.max(1, item.range?.end?.line + 1 || 1),
+          endColumn: Math.max(1, item.range?.end?.character + 1 || 1),
+          source: item.source || "LSP"
+        })));
+      }
+    });
+    window.wsClient.on("lsp.started", info => {
+      this.lspLanguage = info.language;
+      this.lspRootUri = info.rootUri;
+      const id = this.lspRequestId++;
+      this.lspRequest("initialize", {
+        processId: null,
+        rootUri: info.rootUri,
+        capabilities: {
+          textDocument: {
+            completion: { completionItem: { snippetSupport: true, documentationFormat: ["markdown", "plaintext"] } },
+            hover: { contentFormat: ["markdown", "plaintext"] },
+            definition: { linkSupport: true },
+            publishDiagnostics: { relatedInformation: true }
+          },
+          workspace: { configuration: true, workspaceFolders: true }
+        },
+        workspaceFolders: [{ uri: info.rootUri, name: "workspace" }]
+      }, id).then(() => {
+        window.wsClient.send("lsp.message", { message: { jsonrpc: "2.0", method: "initialized", params: {} } });
+        if (this.activeTab) this.selectTab(this.activeTab);
+      }).catch(error => window.app?.logTerminal("LSP initialize failed: " + error.message, "warning"));
+    });
+    window.wsClient.on("lsp.error", error => {
+      this.lspLanguage = null; this.lspRootUri = null;
+      window.app?.logTerminal("LSP: " + (error?.message || "language server error"), "warning");
+    });
+    const languages = ["typescript", "javascript", "python"];
+    languages.forEach(language => {
+      monaco.languages.registerCompletionItemProvider(language, {
+        triggerCharacters: [".", '"', "'", "/", "@", "<"],
+        provideCompletionItems: async (model, position) => {
+          const result = await this.lspRequest("textDocument/completion", {
+            textDocument: { uri: this.lspUriForModel(model) },
+            position: { line: position.lineNumber - 1, character: position.column - 1 }
+          });
+          const items = Array.isArray(result) ? result : (result?.items || []);
+          return { suggestions: items.map(item => ({
+            label: item.label,
+            kind: item.kind || monaco.languages.CompletionItemKind.Text,
+            insertText: item.insertText || item.label,
+            insertTextRules: item.insertTextFormat === 2 ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+            detail: item.detail,
+            documentation: typeof item.documentation === "string" ? item.documentation : item.documentation?.value,
+            sortText: item.sortText,
+            filterText: item.filterText
+          })) };
+        }
+      });
+      monaco.languages.registerHoverProvider(language, {
+        provideHover: async (model, position) => {
+          const result = await this.lspRequest("textDocument/hover", {
+            textDocument: { uri: this.lspUriForModel(model) },
+            position: { line: position.lineNumber - 1, character: position.column - 1 }
+          });
+          if (!result?.contents) return null;
+          const contents = Array.isArray(result.contents) ? result.contents : [result.contents];
+          return { contents: contents.map(item => ({ value: typeof item === "string" ? item : item.value || item.language || "" })) };
+        }
+      });
+      monaco.languages.registerDefinitionProvider(language, {
+        provideDefinition: async (model, position) => {
+          const result = await this.lspRequest("textDocument/definition", {
+            textDocument: { uri: this.lspUriForModel(model) },
+            position: { line: position.lineNumber - 1, character: position.column - 1 }
+          });
+          const locations = Array.isArray(result) ? result : (result ? [result] : []);
+          return locations.map(location => {
+            const range = location.range || location.targetSelectionRange || location.targetRange;
+            return { uri: monaco.Uri.parse(location.uri || location.targetUri), range: new monaco.Range(
+              range.start.line + 1, range.start.character + 1, range.end.line + 1, range.end.character + 1
+            ) };
+          });
+        }
+      });
+    });
+  }
+
+  lspRequest(method, params, requestId = null) {
+    if (!window.wsClient) return Promise.reject(new Error("Workspace WebSocket is unavailable."));
+    if (method !== "initialize" && !this.lspRootUri) return Promise.reject(new Error("Language server is not initialized."));
+    const id = requestId ?? this.lspRequestId++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.lspPending.delete(id);
+        reject(new Error("Language server request timed out."));
+      }, 12000);
+      this.lspPending.set(id, { resolve, reject, timer });
+      window.wsClient.send("lsp.message", { message: { jsonrpc: "2.0", id, method, params } });
+    });
+  }
+
+  lspUriForModel(model) {
+    return model.uri.toString();
+  }
+
+  ensureLspForFile(filePath, tab) {
+    const extension = String(filePath).toLowerCase().split(".").pop();
+    const language = ["ts", "tsx", "js", "jsx", "mjs", "cjs"].includes(extension) ? "typescript"
+      : ["py", "pyi"].includes(extension) ? "python" : null;
+    if (!language || !window.wsClient) return;
+    if (this.lspLanguage !== language) {
+      this.lspLanguage = language;
+      this.lspRootUri = null;
+      window.wsClient.send("lsp.start", { language });
+      return;
+    }
+    this.openLspDocument(filePath, tab);
+  }
+
+  openLspDocument(filePath, tab = this.openTabs.get(filePath)) {
+    if (!filePath || !tab || !this.lspRootUri || !this.lspLanguage) return;
+    const extension = filePath.toLowerCase().split(".").pop();
+    const language = ["py", "pyi"].includes(extension) ? "python" : "typescript";
+    if (language !== this.lspLanguage) return;
+    window.wsClient.send("lsp.message", { message: {
+      jsonrpc: "2.0", method: "textDocument/didOpen",
+      params: { textDocument: { uri: this.lspRootUri + filePath.split("/").map(encodeURIComponent).join("/"),
+        languageId: language === "python" ? "python" : (["ts", "tsx"].includes(extension) ? "typescript" : "javascript"),
+        version: 1, text: tab.content || "" } }
+    } });
+  }
+
+  notifyLspDidChange(filePath, editor) {
+    if (!this.lspRootUri || !this.lspLanguage || !filePath || !editor?.getModel()) return;
+    const extension = filePath.toLowerCase().split(".").pop();
+    const language = ["py", "pyi"].includes(extension) ? "python" : "typescript";
+    if (language !== this.lspLanguage) return;
+    clearTimeout(this.lspChangeTimers.get(filePath));
+    const timer = setTimeout(() => {
+      this.lspChangeTimers.delete(filePath);
+      window.wsClient?.send("lsp.message", { message: {
+        jsonrpc: "2.0", method: "textDocument/didChange",
+        params: { textDocument: { uri: this.lspRootUri + filePath.split("/").map(encodeURIComponent).join("/"), version: Date.now() },
+          contentChanges: [{ text: editor.getValue() }] }
+      } });
+    }, 250);
+    this.lspChangeTimers.set(filePath, timer);
+  }
 
   attachEditorGroup(editor, group) {
     editor.onDidChangeModelContent(() => {
@@ -138,6 +321,7 @@ class EditorManager {
       this.updateTabUI(filePath);
       this.saveStateToCache();
       this.scheduleDiagnostics(filePath, editor);
+      this.notifyLspDidChange(filePath, editor);
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { this.activateGroup(group); this.saveCurrentFile(); });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => editor.getAction("actions.find").run());
@@ -345,10 +529,16 @@ class EditorManager {
     if (this.welcomeScreen) this.welcomeScreen.style.display = "none";
     if (this.editorView) this.editorView.style.display = "block";
     if (!this.monacoReady || !editor) { this.pendingModel = filePath; return; }
-    const model = monaco.editor.createModel(tab.content || "", tab.language || this.detectLanguage(filePath), monaco.Uri.parse("file:///" + filePath.split("/").map(encodeURIComponent).join("/")));
+    const modelUri = this.lspRootUri ? this.lspRootUri + filePath.split("/").map(encodeURIComponent).join("/") : "file:///" + filePath.split("/").map(encodeURIComponent).join("/");
+    const previousModel = editor.getModel();
+    const model = monaco.editor.createModel(tab.content || "", tab.language || this.detectLanguage(filePath), monaco.Uri.parse(modelUri));
     const existing = monaco.editor.getModel(model.uri);
     if (existing) { model.dispose(); editor.setModel(existing); }
     else editor.setModel(model);
+    if (previousModel && previousModel !== editor.getModel() && this.activeTab === filePath && previousModel.uri.toString() !== modelUri) {
+      const sharedElsewhere = [this.primaryEditor, this.secondaryEditor].some(other => other && other !== editor && other.getModel() === previousModel);
+      if (!sharedElsewhere) previousModel.dispose();
+    }
     editor.updateOptions({ readOnly: false });
     this.activateGroup(group);
     editor.focus();
@@ -356,6 +546,7 @@ class EditorManager {
     this.refreshGitDecorations(filePath);
     this.scheduleDiagnostics(filePath, editor);
     this.refreshDocumentSymbols(filePath);
+    this.ensureLspForFile(filePath, tab);
   }
 
   closeTab(filePath) {
@@ -491,65 +682,125 @@ class EditorManager {
   }
 
   renderAgentApplyReview() {
-    if (!this.agentApplyFiles.length) return;
+    if (!this.agentApplyFiles.length || !this.monacoEditor || typeof monaco === "undefined") return;
     this.closeAgentApplyReview();
-    const overlay = document.createElement("section");
-    overlay.className = "git-diff-overlay agent-apply-overlay";
-    overlay.id = "agent-apply-overlay";
-    const header = document.createElement("div"); header.className = "git-diff-header";
-    const title = document.createElement("strong");
-    title.textContent = this.agentApplySummary + " · " + this.agentApplyFiles.length + " file(s)";
-    const close = document.createElement("button"); close.type = "button"; close.className = "secondary-btn"; close.textContent = "Close";
-    close.addEventListener("click", () => this.rejectAgentChanges()); header.append(title, close);
-    const fileBar = document.createElement("nav"); fileBar.className = "agent-apply-filebar";
-    const host = document.createElement("div"); host.className = "git-diff-host agent-apply-diff-host";
-    const footer = document.createElement("footer"); footer.className = "agent-apply-footer";
-    const status = document.createElement("span"); status.className = "agent-apply-status";
-    status.textContent = "Review proposed changes. Nothing has been written yet.";
-    const reject = document.createElement("button"); reject.type = "button"; reject.className = "secondary-btn"; reject.textContent = "Reject all";
-    reject.addEventListener("click", () => this.rejectAgentChanges());
-    const accept = document.createElement("button"); accept.type = "button"; accept.className = "primary-btn"; accept.textContent = "Accept changes"; accept.disabled = !this.agentApplyReady;
-    accept.addEventListener("click", () => this.acceptAgentChanges(false));
-    const verify = document.createElement("button"); verify.type = "button"; verify.className = "primary-btn"; verify.textContent = "Accept & verify"; verify.disabled = !this.agentApplyReady;
-    verify.addEventListener("click", () => this.acceptAgentChanges(true));
-    footer.append(status, reject, accept, verify); overlay.append(header, fileBar, host, footer); document.body.appendChild(overlay);
-    this.agentApplyOverlay=overlay;this.agentApplyFileBar=fileBar;this.agentApplyDiffHost=host;this.agentApplyStatus=status;
-    this.agentApplyAcceptButton=accept;this.agentApplyVerifyButton=verify;
-    this.agentApplyFiles.forEach(item=>{
-      const button=document.createElement("button");button.type="button";
-      button.className="agent-apply-file"+(item.path===this.agentApplySelectedPath?" active":"");
-      button.textContent=item.path+(item.isNew?" · new":"");
-      button.addEventListener("click",()=>{this.agentApplySelectedPath=item.path;this.renderAgentApplySelectedDiff();fileBar.querySelectorAll("button").forEach(node=>node.classList.toggle("active",node===button));});
-      fileBar.appendChild(button);
+    const zone = document.createElement("div");
+    zone.className = "agent-inline-review";
+    const heading = document.createElement("div");
+    heading.className = "agent-inline-review-heading";
+    const summary = document.createElement("strong");
+    summary.textContent = this.agentApplySummary + " · " + this.agentApplyFiles.length + " proposed file(s)";
+    const status = document.createElement("span");
+    status.className = "agent-inline-review-status";
+    status.textContent = this.agentApplyReady ? "Ready for review" : "Waiting for agent turn to finish";
+    heading.append(summary, status);
+    const files = document.createElement("div");
+    files.className = "agent-inline-review-files";
+    this.agentApplyFiles.forEach(item => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "agent-inline-review-file";
+      button.textContent = item.path + (this.agentApplyAcceptedPaths.has(item.path) ? " ✓" : "");
+      button.addEventListener("click", () => {
+        this.agentApplySelectedPath = item.path;
+        this.renderAgentApplySelectedDiff();
+        files.querySelectorAll("button").forEach(node => node.classList.toggle("active", node === button));
+      });
+      files.appendChild(button);
     });
+    const actions = document.createElement("div");
+    actions.className = "agent-inline-review-actions";
+    const accept = document.createElement("button");
+    accept.type = "button"; accept.className = "primary-btn"; accept.textContent = "Accept Hunk";
+    accept.disabled = !this.agentApplyReady; accept.addEventListener("click", () => this.acceptAgentHunk());
+    const reject = document.createElement("button");
+    reject.type = "button"; reject.className = "secondary-btn"; reject.textContent = "Reject Hunk";
+    reject.addEventListener("click", () => this.rejectAgentHunk());
+    const apply = document.createElement("button");
+    apply.type = "button"; apply.className = "primary-btn"; apply.textContent = "Apply accepted";
+    apply.disabled = !this.agentApplyReady || this.agentApplyAcceptedPaths.size === 0;
+    apply.addEventListener("click", () => this.acceptAgentChanges(false));
+    const verify = document.createElement("button");
+    verify.type = "button"; verify.className = "primary-btn"; verify.textContent = "Apply & verify";
+    verify.disabled = !this.agentApplyReady || this.agentApplyAcceptedPaths.size === 0;
+    verify.addEventListener("click", () => this.acceptAgentChanges(true));
+    const rejectAll = document.createElement("button");
+    rejectAll.type = "button"; rejectAll.className = "secondary-btn"; rejectAll.textContent = "Reject all";
+    rejectAll.addEventListener("click", () => this.rejectAgentChanges());
+    actions.append(accept, reject, apply, verify, rejectAll);
+    zone.append(heading, files, actions);
+    this.agentApplyZoneEditor = this.monacoEditor;
+    this.agentApplyZoneEditor.changeViewZones(accessor => {
+      if (this.agentApplyViewZoneId) accessor.removeZone(this.agentApplyViewZoneId);
+      this.agentApplyViewZoneId = accessor.addZone({ afterLineNumber: 0, heightInLines: 4, domNode: zone, suppressMouseDown: false });
+    });
+    this.agentApplyStatus = status;
+    this.agentApplyAcceptButton = accept;
+    this.agentApplyVerifyButton = apply;
+    this.agentApplyFileBar = files;
+    this.agentApplyOverlay = zone;
     this.renderAgentApplySelectedDiff();
-    overlay.addEventListener("keydown",event=>{if(event.key==="Escape")this.rejectAgentChanges();});
+    this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY, () => this.acceptAgentHunk());
+    this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyN, () => this.rejectAgentHunk());
   }
 
   renderAgentApplySelectedDiff() {
-    const item=this.agentApplyFiles.find(file=>file.path===this.agentApplySelectedPath);
-    if(!item||!this.agentApplyDiffHost||typeof monaco==="undefined")return;
-    if(!this.agentApplyDiffEditor)this.agentApplyDiffEditor=monaco.editor.createDiffEditor(this.agentApplyDiffHost,{
-      theme:"vs-dark",readOnly:true,originalEditable:false,renderSideBySide:this.gitDiffSideBySide,
-      automaticLayout:true,minimap:{enabled:false},scrollBeyondLastLine:false,diffWordWrap:"on",renderIndicators:true
+    const item = this.agentApplyFiles.find(file => file.path === this.agentApplySelectedPath);
+    if (!item || !this.monacoEditor) return;
+    if (!this.openTabs.has(item.path)) {
+      this.openTabs.set(item.path, { content: item.original || "", version: item.expectedVersion || null, isDirty: false, language: this.detectLanguage(item.path) });
+      this.createTabElement(item.path);
+    }
+    if (this.activeTab !== item.path) this.selectTab(item.path);
+    const model = this.monacoEditor.getModel();
+    if (!model) return;
+    const originalLines = String(item.original || "").split("\n");
+    const proposedLines = String(item.content || "").split("\n");
+    const decorations = [];
+    const limit = Math.min(proposedLines.length, 1500);
+    for (let index = 0; index < limit; index++) {
+      if (originalLines[index] !== proposedLines[index]) {
+        const line = Math.min(index + 1, model.getLineCount());
+        decorations.push({ range: new monaco.Range(line, 1, line, model.getLineMaxColumn(line)),
+          options: { isWholeLine: true, className: "agent-inline-added-line", linesDecorationsClassName: "agent-inline-added-gutter" } });
+      }
+    }
+    this.agentApplyDecorations?.clear();
+    this.agentApplyDecorations = this.monacoEditor.createDecorationsCollection(decorations);
+    if (this.agentApplyStatus) this.agentApplyStatus.textContent =
+      this.agentApplyAcceptedPaths.has(item.path) ? "Hunk staged · Ctrl+Y to stage, Ctrl+N to reject" : "Review highlighted changes · Ctrl+Y to stage, Ctrl+N to reject";
+  }
+
+  acceptAgentHunk() {
+    if (!this.agentApplyReady || !this.agentApplySelectedPath) return;
+    this.agentApplyAcceptedPaths.add(this.agentApplySelectedPath);
+    this.agentApplyFileBar?.querySelectorAll("button").forEach(button => {
+      if (button.textContent.startsWith(this.agentApplySelectedPath)) button.textContent = this.agentApplySelectedPath + " ✓";
     });
-    this.agentApplyDiffModels.forEach(model=>model.dispose());
-    const language=this.detectLanguage(item.path),uri="inmemory://ath-agent-apply/"+encodeURIComponent(item.path);
-    const original=monaco.editor.createModel(item.original||"",language,monaco.Uri.parse(uri+"?original"));
-    const modified=monaco.editor.createModel(item.content||"",language,monaco.Uri.parse(uri+"?proposed"));
-    this.agentApplyDiffModels=[original,modified];this.agentApplyDiffEditor.setModel({original,modified});
+    this.agentApplyStatus && (this.agentApplyStatus.textContent = "Hunk staged. Use Apply accepted to write it.");
+    if (this.agentApplyVerifyButton) this.agentApplyVerifyButton.disabled = false;
+  }
+
+  rejectAgentHunk() {
+    if (!this.agentApplySelectedPath) return;
+    this.agentApplyAcceptedPaths.delete(this.agentApplySelectedPath);
+    this.agentApplyFiles = this.agentApplyFiles.filter(item => item.path !== this.agentApplySelectedPath);
+    this.agentApplySelectedPath = this.agentApplyFiles[0]?.path || null;
+    if (!this.agentApplyFiles.length) return this.rejectAgentChanges();
+    this.renderAgentApplyReview();
   }
 
   enableAgentProposalActions() {
     this.agentApplyReady=true;
-    if(this.agentApplyAcceptButton)this.agentApplyAcceptButton.disabled=false;
-    if(this.agentApplyVerifyButton)this.agentApplyVerifyButton.disabled=false;
-    if(this.agentApplyStatus)this.agentApplyStatus.textContent="Agent turn finished. Review and accept when ready.";
+    this.renderAgentApplyReview();
+    if(this.agentApplyStatus)this.agentApplyStatus.textContent="Agent turn finished. Review and stage hunks before applying.";
   }
 
   async acceptAgentChanges(verify) {
     if(!this.agentApplyReady||!this.agentApplyFiles.length)return;
-    const files=this.agentApplyFiles.map(item=>({path:item.path,content:item.content,expectedVersion:item.expectedVersion}));
+    const selected=this.agentApplyFiles.filter(item=>this.agentApplyAcceptedPaths.has(item.path));
+    if(!selected.length)return;
+    const files=selected.map(item=>({path:item.path,content:item.content,expectedVersion:item.expectedVersion}));
     if(this.agentApplyStatus)this.agentApplyStatus.textContent="Applying version-checked patch…";
     if(this.agentApplyAcceptButton)this.agentApplyAcceptButton.disabled=true;
     if(this.agentApplyVerifyButton)this.agentApplyVerifyButton.disabled=true;
@@ -560,15 +811,18 @@ class EditorManager {
       });
       const data=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error((data.message||data.error||"Patch commit failed")+(data.rollbackComplete===false?" · rollback incomplete; inspect workspace immediately.":""));
-      const applied=this.agentApplyFiles.map(item=>({path:item.path,content:item.content}));
-      for(const item of this.agentApplyFiles){
+      const applied=selected.map(item=>({path:item.path,content:item.content}));
+      for(const item of selected){
         const saved=(data.files||[]).find(file=>file.path===item.path),tab=this.openTabs.get(item.path);
         if(tab){tab.content=item.content;tab.version=saved?.version||null;tab.isDirty=false;
           const uri=monaco.Uri.parse("file:///"+item.path.split("/").map(encodeURIComponent).join("/"));
           const model=monaco.editor.getModel(uri);if(model)model.setValue(item.content);
         }
       }
-      this.closeAgentApplyReview();this.agentApplyFiles=[];
+      this.agentApplyFiles=this.agentApplyFiles.filter(item=>!this.agentApplyAcceptedPaths.has(item.path));
+      this.agentApplyAcceptedPaths.clear();
+      this.closeAgentApplyReview();
+      if(this.agentApplyFiles.length){this.agentApplySelectedPath=this.agentApplyFiles[0].path;this.renderAgentApplyReview();}
       await window.app?.loadWorkspaceFiles?.();
       window.app?.renderSystemMessage("**Agent patch accepted.** "+applied.length+" file(s) saved with version checks.");
       if(verify)await window.app?.runAgentVerification?.(applied);
@@ -581,15 +835,24 @@ class EditorManager {
   }
 
   rejectAgentChanges() {
-    this.closeAgentApplyReview();this.agentApplyFiles=[];this.agentApplyReady=false;
+    this.closeAgentApplyReview();this.agentApplyFiles=[];this.agentApplyAcceptedPaths.clear();this.agentApplyReady=false;
     window.app?.renderSystemMessage("Agent patch rejected. No proposed files were written.");
   }
 
   closeAgentApplyReview() {
-    this.agentApplyDiffEditor?.setModel(null);this.agentApplyDiffEditor?.dispose();this.agentApplyDiffEditor=null;
-    this.agentApplyDiffModels.forEach(model=>model.dispose());this.agentApplyDiffModels=[];
-    this.agentApplyOverlay?.remove();this.agentApplyOverlay=null;this.agentApplyFileBar=null;
-    this.agentApplyDiffHost=null;this.agentApplyStatus=null;this.agentApplyAcceptButton=null;this.agentApplyVerifyButton=null;
+    if (this.agentApplyViewZoneId && this.agentApplyZoneEditor) {
+      this.agentApplyZoneEditor.changeViewZones(accessor => accessor.removeZone(this.agentApplyViewZoneId));
+      this.agentApplyViewZoneId = null;
+      this.agentApplyZoneEditor = null;
+    }
+    this.agentApplyDecorations?.clear();
+    this.agentApplyDecorations = null;
+    this.agentApplyOverlay?.remove();
+    this.agentApplyOverlay = null;
+    this.agentApplyFileBar = null;
+    this.agentApplyStatus = null;
+    this.agentApplyAcceptButton = null;
+    this.agentApplyVerifyButton = null;
   }
 
   async refreshDocumentSymbols(filePath) {
