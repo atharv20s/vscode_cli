@@ -29,6 +29,7 @@ class EditorManager {
     this.agentApplyViewZoneId = null;
     this.agentApplyDecorations = null;
     this.lspPending = new Map();
+    this.lspChangeTimers = new Map();
     this.lspRequestId = 1;
     this.lspRootUri = null;
     this.lspLanguage = null;
@@ -189,7 +190,7 @@ class EditorManager {
         workspaceFolders: [{ uri: info.rootUri, name: "workspace" }]
       }, id).then(() => {
         window.wsClient.send("lsp.message", { message: { jsonrpc: "2.0", method: "initialized", params: {} } });
-        this.openLspDocument(this.activeTab);
+        if (this.activeTab) this.selectTab(this.activeTab);
       }).catch(error => window.app?.logTerminal("LSP initialize failed: " + error.message, "warning"));
     });
     window.wsClient.on("lsp.error", error => window.app?.logTerminal("LSP: " + (error?.message || "language server error"), "warning"));
@@ -294,11 +295,16 @@ class EditorManager {
     const extension = filePath.toLowerCase().split(".").pop();
     const language = ["py", "pyi"].includes(extension) ? "python" : "typescript";
     if (language !== this.lspLanguage) return;
-    window.wsClient?.send("lsp.message", { message: {
-      jsonrpc: "2.0", method: "textDocument/didChange",
-      params: { textDocument: { uri: this.lspRootUri + filePath.split("/").map(encodeURIComponent).join("/"), version: Date.now() },
-        contentChanges: [{ text: editor.getValue() }] }
-    } });
+    clearTimeout(this.lspChangeTimers.get(filePath));
+    const timer = setTimeout(() => {
+      this.lspChangeTimers.delete(filePath);
+      window.wsClient?.send("lsp.message", { message: {
+        jsonrpc: "2.0", method: "textDocument/didChange",
+        params: { textDocument: { uri: this.lspRootUri + filePath.split("/").map(encodeURIComponent).join("/"), version: Date.now() },
+          contentChanges: [{ text: editor.getValue() }] }
+      } });
+    }, 250);
+    this.lspChangeTimers.set(filePath, timer);
   }
 
   attachEditorGroup(editor, group) {
@@ -519,10 +525,16 @@ class EditorManager {
     if (this.welcomeScreen) this.welcomeScreen.style.display = "none";
     if (this.editorView) this.editorView.style.display = "block";
     if (!this.monacoReady || !editor) { this.pendingModel = filePath; return; }
-    const model = monaco.editor.createModel(tab.content || "", tab.language || this.detectLanguage(filePath), monaco.Uri.parse("file:///" + filePath.split("/").map(encodeURIComponent).join("/")));
+    const modelUri = this.lspRootUri ? this.lspRootUri + filePath.split("/").map(encodeURIComponent).join("/") : "file:///" + filePath.split("/").map(encodeURIComponent).join("/");
+    const previousModel = editor.getModel();
+    const model = monaco.editor.createModel(tab.content || "", tab.language || this.detectLanguage(filePath), monaco.Uri.parse(modelUri));
     const existing = monaco.editor.getModel(model.uri);
     if (existing) { model.dispose(); editor.setModel(existing); }
     else editor.setModel(model);
+    if (previousModel && previousModel !== editor.getModel() && this.activeTab === filePath && previousModel.uri.toString() !== modelUri) {
+      const sharedElsewhere = [this.primaryEditor, this.secondaryEditor].some(other => other && other !== editor && other.getModel() === previousModel);
+      if (!sharedElsewhere) previousModel.dispose();
+    }
     editor.updateOptions({ readOnly: false });
     this.activateGroup(group);
     editor.focus();
