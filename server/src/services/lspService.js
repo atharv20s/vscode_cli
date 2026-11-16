@@ -7,7 +7,7 @@
  */
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 const MAX_LANGUAGE_SERVER_PROCESSES = 8;
@@ -109,7 +109,7 @@ export function sendLanguageServerMessage(ws, message) {
         let absolute;
         try { absolute = fileURLToPath(child); } catch { throw new Error("Invalid file URI in LSP request."); }
         const relative = path.relative(state.workspaceRoot, absolute);
-        if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative) || relative.includes("\\0")) {
+        if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative) || relative.includes("\0")) {
           throw new Error("LSP file access is restricted to the active workspace.");
         }
         const checked = state.workspaceService.resolvePath(relative || ".");
