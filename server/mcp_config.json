@@ -8,7 +8,9 @@
         "./workspace"
       ],
       "transport": "stdio",
-      "enabled": false,
+      "enabled": true,
+      "workspaceScoped": true,
+      "_note": "Enabled after WorkspaceMcpBridge isolation was added (PR #62). All tool calls must be routed through WorkspaceMcpBridge — never called directly. The './workspace' arg is an advisory default; each session uses its own root via the bridge.",
       "allowedTools": [
         "read_file",
         "read_multiple_files",
