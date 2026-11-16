@@ -23,7 +23,7 @@ import { listWorkspaceSessions, createWorkspaceSession } from "../services/works
 import { resolveWorkspaceShare } from "../services/workspaceCollaborationService.js";
 import { getWorkspaceService } from "../services/workspaceService.js";
 import { pullWorkspaceFromRemote } from "../services/remoteExecutionWorker.js";
-import { buildRepositorySymbolIndex } from "../services/repoSymbolIndex.js";
+import { buildRepositorySymbolIndex, getTreeSitterDiagnostics } from "../services/repoSymbolIndex.js";
 
 const router = Router();
 const execFileAsync = promisify(execFile);
@@ -126,13 +126,14 @@ router.use(requireAuth, async (req, res, next) => {
       }
       req.workspaceAccess = share;
       if (req.method !== "GET") {
-        if (share.permission !== "edit") {
+        const isDiagnosticsRequest = req.method === "POST" && req.path === "/diagnostics";
+        if (!isDiagnosticsRequest && share.permission !== "edit") {
           return res.status(403).json({ error: "WorkspaceReadOnly", message: "This collaboration link has read-only access." });
         }
-        if (req.method !== "POST" || req.path !== "/file") {
-          return res.status(403).json({ error: "WorkspaceOperationForbidden", message: "Collaborators may create or update files, but only the owner can move, delete, create folders or execute commands." });
+        if (!isDiagnosticsRequest && (req.method !== "POST" || req.path !== "/file")) {
+          return res.status(403).json({ error: "WorkspaceOperationForbidden", message: "Collaborators may only update files; diagnostics are read-only." });
         }
-        if (!req.get("If-Match") && req.get("If-None-Match") !== "*") {
+        if (!isDiagnosticsRequest && !req.get("If-Match") && req.get("If-None-Match") !== "*") {
           return res.status(428).json({ error: "WorkspaceVersionRequired", message: "Collaborative file writes require If-Match or If-None-Match: *." });
         }
       }
@@ -314,6 +315,23 @@ router.get("/git/diff", async (req, res) => {
     if (error.code === "ENOENT") return res.status(404).json({ error: "FileNotFound" });
     if (error.code === 128 || /not a git repository/i.test(error.message || "")) return res.status(409).json({ error: "GitRepositoryUnavailable" });
     return res.status(503).json({ error: "GitDiffUnavailable", message: "Unable to prepare the selected file diff." });
+  }
+});
+
+
+router.post("/diagnostics", async (req, res) => {
+  const file = String(req.body?.file || "");
+  const content = req.body?.content;
+  if (!file || file.length > 1024 || typeof content !== "string") return res.status(400).json({ error: "InvalidDiagnosticsRequest" });
+  if (Buffer.byteLength(content, "utf8") > 512 * 1024) return res.status(413).json({ error: "DiagnosticsSourceTooLarge" });
+  const workspace = getWorkspaceService(req.workspaceAccess?.ownerUserId || req.user.id, req.workspaceAccess?.workspaceId || req.get("X-Workspace-Id") || "default");
+  const target = workspace.resolvePath(file);
+  if (!target.safe || target.relative === ".") return res.status(403).json({ error: "Forbidden" });
+  try {
+    const result = await getTreeSitterDiagnostics(target.relative, content);
+    return res.json({ file: target.relative, ...result });
+  } catch {
+    return res.status(503).json({ error: "DiagnosticsUnavailable", message: "Tree-sitter diagnostics are unavailable for this file." });
   }
 });
 
