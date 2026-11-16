@@ -57,6 +57,19 @@ async function main() {
     if (error.code !== "ENOENT") throw error;
   }
   await fs.mkdir(targetDir, { recursive: true });
+  const rootReal = await fs.realpath(ROOT);
+  const dirStat = await fs.lstat(targetDir);
+  if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) throw new Error("Skill destination must be a regular directory, not a symlink.");
+  const targetDirReal = await fs.realpath(targetDir);
+  const realRelative = path.relative(rootReal, targetDirReal);
+  if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) throw new Error("Skill destination resolves outside the skill root.");
+  try {
+    const fileStat = await fs.lstat(targetFile);
+    if (fileStat.isSymbolicLink() || !fileStat.isFile()) throw new Error("Skill destination file must be a regular file, not a symlink.");
+    if (!force) throw new Error(`Skill '${metadata.name}' already exists. Pass --force to replace it.`);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   await fs.writeFile(targetFile, content.endsWith("\n") ? content : content + "\n", { encoding: "utf8", flag: force ? "w" : "wx" });
   process.stdout.write(`Imported ${metadata.name} from ${repository}@${ref}/${filePath.join("/")}\n`);
   process.stdout.write(`Destination: ${path.relative(path.resolve(ROOT, ".."), targetFile)}\n`);
