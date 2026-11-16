@@ -25,6 +25,13 @@ class EditorManager {
     this.agentApplyFiles = [];
     this.agentApplySelectedPath = null;
     this.agentApplyReady = false;
+    this.agentApplyAcceptedPaths = new Set();
+    this.agentApplyViewZoneId = null;
+    this.agentApplyDecorations = null;
+    this.lspPending = new Map();
+    this.lspRequestId = 1;
+    this.lspRootUri = null;
+    this.lspLanguage = null;
     this.suppressModelChange = false;
     this.initEventListeners();
     this.restoreStateFromCache();
@@ -122,6 +129,7 @@ class EditorManager {
         });
       });
       this.monacoReady = true;
+      this.initLspProviders();
       if (this.pendingModel) this.selectTab(this.pendingModel);
       window.dispatchEvent(new CustomEvent("ath:monaco-ready"));
     }, (error) => this.showEditorError("Monaco failed to initialize: " + (error?.message || error)));
@@ -491,65 +499,120 @@ class EditorManager {
   }
 
   renderAgentApplyReview() {
-    if (!this.agentApplyFiles.length) return;
+    if (!this.agentApplyFiles.length || !this.monacoEditor || typeof monaco === "undefined") return;
     this.closeAgentApplyReview();
-    const overlay = document.createElement("section");
-    overlay.className = "git-diff-overlay agent-apply-overlay";
-    overlay.id = "agent-apply-overlay";
-    const header = document.createElement("div"); header.className = "git-diff-header";
-    const title = document.createElement("strong");
-    title.textContent = this.agentApplySummary + " · " + this.agentApplyFiles.length + " file(s)";
-    const close = document.createElement("button"); close.type = "button"; close.className = "secondary-btn"; close.textContent = "Close";
-    close.addEventListener("click", () => this.rejectAgentChanges()); header.append(title, close);
-    const fileBar = document.createElement("nav"); fileBar.className = "agent-apply-filebar";
-    const host = document.createElement("div"); host.className = "git-diff-host agent-apply-diff-host";
-    const footer = document.createElement("footer"); footer.className = "agent-apply-footer";
-    const status = document.createElement("span"); status.className = "agent-apply-status";
-    status.textContent = "Review proposed changes. Nothing has been written yet.";
-    const reject = document.createElement("button"); reject.type = "button"; reject.className = "secondary-btn"; reject.textContent = "Reject all";
-    reject.addEventListener("click", () => this.rejectAgentChanges());
-    const accept = document.createElement("button"); accept.type = "button"; accept.className = "primary-btn"; accept.textContent = "Accept changes"; accept.disabled = !this.agentApplyReady;
-    accept.addEventListener("click", () => this.acceptAgentChanges(false));
-    const verify = document.createElement("button"); verify.type = "button"; verify.className = "primary-btn"; verify.textContent = "Accept & verify"; verify.disabled = !this.agentApplyReady;
-    verify.addEventListener("click", () => this.acceptAgentChanges(true));
-    footer.append(status, reject, accept, verify); overlay.append(header, fileBar, host, footer); document.body.appendChild(overlay);
-    this.agentApplyOverlay=overlay;this.agentApplyFileBar=fileBar;this.agentApplyDiffHost=host;this.agentApplyStatus=status;
-    this.agentApplyAcceptButton=accept;this.agentApplyVerifyButton=verify;
-    this.agentApplyFiles.forEach(item=>{
-      const button=document.createElement("button");button.type="button";
-      button.className="agent-apply-file"+(item.path===this.agentApplySelectedPath?" active":"");
-      button.textContent=item.path+(item.isNew?" · new":"");
-      button.addEventListener("click",()=>{this.agentApplySelectedPath=item.path;this.renderAgentApplySelectedDiff();fileBar.querySelectorAll("button").forEach(node=>node.classList.toggle("active",node===button));});
-      fileBar.appendChild(button);
+    const zone = document.createElement("div");
+    zone.className = "agent-inline-review";
+    const heading = document.createElement("div");
+    heading.className = "agent-inline-review-heading";
+    const summary = document.createElement("strong");
+    summary.textContent = this.agentApplySummary + " · " + this.agentApplyFiles.length + " proposed file(s)";
+    const status = document.createElement("span");
+    status.className = "agent-inline-review-status";
+    status.textContent = this.agentApplyReady ? "Ready for review" : "Waiting for agent turn to finish";
+    heading.append(summary, status);
+    const files = document.createElement("div");
+    files.className = "agent-inline-review-files";
+    this.agentApplyFiles.forEach(item => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "agent-inline-review-file";
+      button.textContent = item.path + (this.agentApplyAcceptedPaths.has(item.path) ? " ✓" : "");
+      button.addEventListener("click", () => {
+        this.agentApplySelectedPath = item.path;
+        this.renderAgentApplySelectedDiff();
+        files.querySelectorAll("button").forEach(node => node.classList.toggle("active", node === button));
+      });
+      files.appendChild(button);
     });
+    const actions = document.createElement("div");
+    actions.className = "agent-inline-review-actions";
+    const accept = document.createElement("button");
+    accept.type = "button"; accept.className = "primary-btn"; accept.textContent = "Accept Hunk";
+    accept.disabled = !this.agentApplyReady; accept.addEventListener("click", () => this.acceptAgentHunk());
+    const reject = document.createElement("button");
+    reject.type = "button"; reject.className = "secondary-btn"; reject.textContent = "Reject Hunk";
+    reject.addEventListener("click", () => this.rejectAgentHunk());
+    const apply = document.createElement("button");
+    apply.type = "button"; apply.className = "primary-btn"; apply.textContent = "Apply accepted";
+    apply.disabled = !this.agentApplyReady || this.agentApplyAcceptedPaths.size === 0;
+    apply.addEventListener("click", () => this.acceptAgentChanges(false));
+    const verify = document.createElement("button");
+    verify.type = "button"; verify.className = "primary-btn"; verify.textContent = "Apply & verify";
+    verify.disabled = !this.agentApplyReady || this.agentApplyAcceptedPaths.size === 0;
+    verify.addEventListener("click", () => this.acceptAgentChanges(true));
+    const rejectAll = document.createElement("button");
+    rejectAll.type = "button"; rejectAll.className = "secondary-btn"; rejectAll.textContent = "Reject all";
+    rejectAll.addEventListener("click", () => this.rejectAgentChanges());
+    actions.append(accept, reject, apply, verify, rejectAll);
+    zone.append(heading, files, actions);
+    this.monacoEditor.changeViewZones(accessor => {
+      if (this.agentApplyViewZoneId) accessor.removeZone(this.agentApplyViewZoneId);
+      this.agentApplyViewZoneId = accessor.addZone({ afterLineNumber: 0, heightInLines: 4, domNode: zone, suppressMouseDown: false });
+    });
+    this.agentApplyStatus = status;
+    this.agentApplyAcceptButton = accept;
+    this.agentApplyVerifyButton = apply;
+    this.agentApplyFileBar = files;
+    this.agentApplyOverlay = zone;
     this.renderAgentApplySelectedDiff();
-    overlay.addEventListener("keydown",event=>{if(event.key==="Escape")this.rejectAgentChanges();});
+    this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY, () => this.acceptAgentHunk());
+    this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyN, () => this.rejectAgentHunk());
   }
 
   renderAgentApplySelectedDiff() {
-    const item=this.agentApplyFiles.find(file=>file.path===this.agentApplySelectedPath);
-    if(!item||!this.agentApplyDiffHost||typeof monaco==="undefined")return;
-    if(!this.agentApplyDiffEditor)this.agentApplyDiffEditor=monaco.editor.createDiffEditor(this.agentApplyDiffHost,{
-      theme:"vs-dark",readOnly:true,originalEditable:false,renderSideBySide:this.gitDiffSideBySide,
-      automaticLayout:true,minimap:{enabled:false},scrollBeyondLastLine:false,diffWordWrap:"on",renderIndicators:true
+    const item = this.agentApplyFiles.find(file => file.path === this.agentApplySelectedPath);
+    if (!item || !this.monacoEditor) return;
+    if (this.activeTab !== item.path && this.openTabs.has(item.path)) this.selectTab(item.path);
+    const model = this.monacoEditor.getModel();
+    if (!model) return;
+    const originalLines = String(item.original || "").split("\n");
+    const proposedLines = String(item.content || "").split("\n");
+    const decorations = [];
+    const limit = Math.min(proposedLines.length, 1500);
+    for (let index = 0; index < limit; index++) {
+      if (originalLines[index] !== proposedLines[index]) {
+        const line = Math.min(index + 1, model.getLineCount());
+        decorations.push({ range: new monaco.Range(line, 1, line, model.getLineMaxColumn(line)),
+          options: { isWholeLine: true, className: "agent-inline-added-line", linesDecorationsClassName: "agent-inline-added-gutter" } });
+      }
+    }
+    this.agentApplyDecorations?.clear();
+    this.agentApplyDecorations = this.monacoEditor.createDecorationsCollection(decorations);
+    if (this.agentApplyStatus) this.agentApplyStatus.textContent =
+      this.agentApplyAcceptedPaths.has(item.path) ? "Hunk staged · Ctrl+Y to stage, Ctrl+N to reject" : "Review highlighted changes · Ctrl+Y to stage, Ctrl+N to reject";
+  }
+
+  acceptAgentHunk() {
+    if (!this.agentApplyReady || !this.agentApplySelectedPath) return;
+    this.agentApplyAcceptedPaths.add(this.agentApplySelectedPath);
+    this.agentApplyFileBar?.querySelectorAll("button").forEach(button => {
+      if (button.textContent.startsWith(this.agentApplySelectedPath)) button.textContent = this.agentApplySelectedPath + " ✓";
     });
-    this.agentApplyDiffModels.forEach(model=>model.dispose());
-    const language=this.detectLanguage(item.path),uri="inmemory://ath-agent-apply/"+encodeURIComponent(item.path);
-    const original=monaco.editor.createModel(item.original||"",language,monaco.Uri.parse(uri+"?original"));
-    const modified=monaco.editor.createModel(item.content||"",language,monaco.Uri.parse(uri+"?proposed"));
-    this.agentApplyDiffModels=[original,modified];this.agentApplyDiffEditor.setModel({original,modified});
+    this.agentApplyStatus && (this.agentApplyStatus.textContent = "Hunk staged. Use Apply accepted to write it.");
+    if (this.agentApplyVerifyButton) this.agentApplyVerifyButton.disabled = false;
+  }
+
+  rejectAgentHunk() {
+    if (!this.agentApplySelectedPath) return;
+    this.agentApplyAcceptedPaths.delete(this.agentApplySelectedPath);
+    this.agentApplyFiles = this.agentApplyFiles.filter(item => item.path !== this.agentApplySelectedPath);
+    this.agentApplySelectedPath = this.agentApplyFiles[0]?.path || null;
+    if (!this.agentApplyFiles.length) return this.rejectAgentChanges();
+    this.renderAgentApplyReview();
   }
 
   enableAgentProposalActions() {
     this.agentApplyReady=true;
-    if(this.agentApplyAcceptButton)this.agentApplyAcceptButton.disabled=false;
-    if(this.agentApplyVerifyButton)this.agentApplyVerifyButton.disabled=false;
-    if(this.agentApplyStatus)this.agentApplyStatus.textContent="Agent turn finished. Review and accept when ready.";
+    this.renderAgentApplyReview();
+    if(this.agentApplyStatus)this.agentApplyStatus.textContent="Agent turn finished. Review and stage hunks before applying.";
   }
 
   async acceptAgentChanges(verify) {
     if(!this.agentApplyReady||!this.agentApplyFiles.length)return;
-    const files=this.agentApplyFiles.map(item=>({path:item.path,content:item.content,expectedVersion:item.expectedVersion}));
+    const selected=this.agentApplyFiles.filter(item=>this.agentApplyAcceptedPaths.has(item.path));
+    if(!selected.length)return;
+    const files=selected.map(item=>({path:item.path,content:item.content,expectedVersion:item.expectedVersion}));
     if(this.agentApplyStatus)this.agentApplyStatus.textContent="Applying version-checked patch…";
     if(this.agentApplyAcceptButton)this.agentApplyAcceptButton.disabled=true;
     if(this.agentApplyVerifyButton)this.agentApplyVerifyButton.disabled=true;
@@ -560,15 +623,18 @@ class EditorManager {
       });
       const data=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error((data.message||data.error||"Patch commit failed")+(data.rollbackComplete===false?" · rollback incomplete; inspect workspace immediately.":""));
-      const applied=this.agentApplyFiles.map(item=>({path:item.path,content:item.content}));
-      for(const item of this.agentApplyFiles){
+      const applied=selected.map(item=>({path:item.path,content:item.content}));
+      for(const item of selected){
         const saved=(data.files||[]).find(file=>file.path===item.path),tab=this.openTabs.get(item.path);
         if(tab){tab.content=item.content;tab.version=saved?.version||null;tab.isDirty=false;
           const uri=monaco.Uri.parse("file:///"+item.path.split("/").map(encodeURIComponent).join("/"));
           const model=monaco.editor.getModel(uri);if(model)model.setValue(item.content);
         }
       }
-      this.closeAgentApplyReview();this.agentApplyFiles=[];
+      this.agentApplyFiles=this.agentApplyFiles.filter(item=>!this.agentApplyAcceptedPaths.has(item.path));
+      this.agentApplyAcceptedPaths.clear();
+      this.closeAgentApplyReview();
+      if(this.agentApplyFiles.length){this.agentApplySelectedPath=this.agentApplyFiles[0].path;this.renderAgentApplyReview();}
       await window.app?.loadWorkspaceFiles?.();
       window.app?.renderSystemMessage("**Agent patch accepted.** "+applied.length+" file(s) saved with version checks.");
       if(verify)await window.app?.runAgentVerification?.(applied);
@@ -581,15 +647,23 @@ class EditorManager {
   }
 
   rejectAgentChanges() {
-    this.closeAgentApplyReview();this.agentApplyFiles=[];this.agentApplyReady=false;
+    this.closeAgentApplyReview();this.agentApplyFiles=[];this.agentApplyAcceptedPaths.clear();this.agentApplyReady=false;
     window.app?.renderSystemMessage("Agent patch rejected. No proposed files were written.");
   }
 
   closeAgentApplyReview() {
-    this.agentApplyDiffEditor?.setModel(null);this.agentApplyDiffEditor?.dispose();this.agentApplyDiffEditor=null;
-    this.agentApplyDiffModels.forEach(model=>model.dispose());this.agentApplyDiffModels=[];
-    this.agentApplyOverlay?.remove();this.agentApplyOverlay=null;this.agentApplyFileBar=null;
-    this.agentApplyDiffHost=null;this.agentApplyStatus=null;this.agentApplyAcceptButton=null;this.agentApplyVerifyButton=null;
+    if (this.agentApplyViewZoneId && this.monacoEditor) {
+      this.monacoEditor.changeViewZones(accessor => accessor.removeZone(this.agentApplyViewZoneId));
+      this.agentApplyViewZoneId = null;
+    }
+    this.agentApplyDecorations?.clear();
+    this.agentApplyDecorations = null;
+    this.agentApplyOverlay?.remove();
+    this.agentApplyOverlay = null;
+    this.agentApplyFileBar = null;
+    this.agentApplyStatus = null;
+    this.agentApplyAcceptButton = null;
+    this.agentApplyVerifyButton = null;
   }
 
   async refreshDocumentSymbols(filePath) {
