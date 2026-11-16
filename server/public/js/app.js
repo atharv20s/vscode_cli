@@ -204,6 +204,11 @@ class App {
       this.appendAssistantText(data.content || "");
     });
 
+    window.wsClient.on("agent.apply.proposal", data => {
+      window.editorManager?.reviewAgentChanges(data || {});
+      this.logTerminal("[Agent] A multi-file patch is ready for review.", "info");
+    });
+
     window.wsClient.on("tool_start", (data) => {
       this.renderToolStart(data);
       const agentStateEl = document.getElementById("status-agent-state");
@@ -222,6 +227,7 @@ class App {
     });
 
     window.wsClient.on("done", (data) => {
+      window.editorManager?.enableAgentProposalActions();
       this.finalizeMessage();
       this.setGeneratingState(false);
       this.loadWorkspaceFiles();
@@ -239,6 +245,7 @@ class App {
     });
 
     window.wsClient.on("aborted", (data) => {
+      window.editorManager?.enableAgentProposalActions();
       this.finalizeMessage();
       this.setGeneratingState(false);
       this.logTerminal(`[Agent] Generation stopped.`, "info");
@@ -247,6 +254,7 @@ class App {
     });
 
     window.wsClient.on("error", (data) => {
+      window.editorManager?.enableAgentProposalActions();
       this.renderError(data.message || "An unexpected error occurred.");
       this.finalizeMessage();
       this.setGeneratingState(false);
@@ -2304,6 +2312,42 @@ class App {
       this.setGeneratingState(false);
       this.renderError(err.message);
     }
+  }
+
+  async runAgentVerification(files) {
+    const changed = Array.isArray(files) ? files.slice(0, 20) : [];
+    if (!changed.length) return;
+    const diagnostics = [];
+    for (const file of changed) {
+      try {
+        const response = await fetch("/api/workspace/diagnostics", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + this.token },
+          body: JSON.stringify({ file: file.path, content: file.content })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok) {
+          const entries = [...(Array.isArray(data.diagnostics) ? data.diagnostics : []), ...(Array.isArray(data.semanticDiagnostics) ? data.semanticDiagnostics : [])];
+          for (const item of entries.slice(0, 50)) diagnostics.push({
+            file: file.path, line: item.startLineNumber || 1, column: item.startColumn || 1,
+            severity: item.severity || "error", source: item.source || "Tree-sitter",
+            message: String(item.message || "").slice(0, 300)
+          });
+        } else diagnostics.push({ file: file.path, severity: "unavailable", message: data.message || data.error || "Diagnostics endpoint unavailable" });
+      } catch (error) { diagnostics.push({ file: file.path, severity: "unavailable", message: error.message }); }
+    }
+    const prompt = [
+      "Post-apply verification and bounded self-healing task.",
+      "The user accepted this patch:", ...changed.map(file => "- " + file.path), "",
+      "Diagnostics collected immediately after apply:",
+      diagnostics.length ? JSON.stringify(diagnostics, null, 2) : "No parser or linter findings were reported for the proposed files.",
+      "",
+      "Inspect changed files and relevant imports/callers. Inspect package scripts, then run relevant existing tests and build/type-check commands without installing dependencies. Capture exit codes and useful output. If diagnostics or tests reveal a regression, prepare a focused follow-up with propose_changes; do not write files directly or bypass review. Do not run destructive commands, deploy, install packages, or mutate databases. If checks cannot run, report exactly why. Do not claim success without actual command results."
+    ].join("\n");
+    const composer = document.getElementById("composer-input");
+    if (!composer) return;
+    composer.value = prompt;
+    this.sendMessage();
   }
 
   /**
