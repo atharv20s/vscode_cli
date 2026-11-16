@@ -1928,6 +1928,15 @@ textarea {
 .git-diff-header { min-height:42px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 14px; color:var(--text-main); background:var(--bg-sidebar); border-bottom:1px solid var(--border-subtle); font-size:12px; }
 .git-diff-header strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .git-diff-host { flex:1; min-height:0; }
+.agent-apply-overlay { z-index:10060; }
+.agent-apply-filebar { min-height:34px; display:flex; align-items:center; gap:6px; overflow-x:auto; padding:4px 10px; background:#151923; border-bottom:1px solid var(--border-subtle); }
+.agent-apply-file { flex:0 0 auto; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:6px 9px; color:var(--text-muted); background:transparent; border:1px solid transparent; border-radius:5px; cursor:pointer; font:10px var(--font-mono); }
+.agent-apply-file.active { color:var(--text-main); background:rgba(99,102,241,.16); border-color:var(--border-bright); }
+.agent-apply-diff-host { flex:1; min-height:0; }
+.agent-apply-footer { min-height:48px; display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; padding:7px 12px; background:var(--bg-sidebar); border-top:1px solid var(--border-subtle); }
+.agent-apply-status { margin-right:auto; color:var(--text-dim); font-size:11px; }
+.agent-apply-footer button:disabled { opacity:.45; cursor:not-allowed; }
+@media (max-width:640px) { .agent-apply-footer { justify-content:stretch; } .agent-apply-status { flex:1 0 100%; } .agent-apply-footer button { flex:1; min-height:40px; } }
 
 /* Independent primary and secondary Monaco editor groups */
 #code-editor-view.split-primary { width:var(--editor-split-ratio, 50%); right:auto; }
