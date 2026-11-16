@@ -5,7 +5,7 @@
 import { Router } from "express";
 import fs from "fs/promises";
 import path from "path";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { requireAuth } from "../middleware/auth.js";
 import {
@@ -337,6 +337,92 @@ router.get("/git/diff", async (req, res) => {
 });
 
 
+const SEMANTIC_DIAGNOSTIC_TIMEOUT_MS = 4500;
+const SEMANTIC_DIAGNOSTIC_MAX_OUTPUT = 1024 * 1024;
+
+function runDiagnosticTool(command, args, source, cwd) {
+  return new Promise(resolve => {
+    let child;
+    try {
+      child = spawn(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    } catch {
+      resolve({ available: false, diagnostics: [] });
+      return;
+    }
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish({ available: true, timedOut: true, diagnostics: [] });
+    }, SEMANTIC_DIAGNOSTIC_TIMEOUT_MS);
+    child.stdout.on("data", chunk => {
+      stdout += chunk.toString("utf8");
+      if (stdout.length > SEMANTIC_DIAGNOSTIC_MAX_OUTPUT) {
+        child.kill("SIGKILL");
+        finish({ available: true, diagnostics: [] });
+      }
+    });
+    child.stderr.on("data", chunk => {
+      stderr += chunk.toString("utf8").slice(0, 4096);
+    });
+    child.on("error", error => finish({ available: error.code !== "ENOENT", diagnostics: [] }));
+    child.on("close", () => finish({ available: true, stdout, stderr, diagnostics: [] }));
+    child.stdin.on("error", () => {});
+    child.stdin.end(source);
+  });
+}
+
+async function getSemanticDiagnostics(file, content, workspaceRoot) {
+  const extension = path.extname(file).toLowerCase();
+  if ([".js", ".jsx", ".mjs", ".cjs"].includes(extension)) {
+    const result = await runDiagnosticTool("eslint", [
+      "--no-config-lookup", "--stdin", "--stdin-filename", file, "--format", "json",
+      "--rule", "no-undef:error", "--rule", "no-unreachable:error",
+      "--rule", "no-dupe-keys:error", "--rule", "no-constant-condition:error"
+    ], content, workspaceRoot);
+    if (!result.available || !result.stdout) return { available: false, diagnostics: [] };
+    try {
+      const report = JSON.parse(result.stdout);
+      const messages = Array.isArray(report?.[0]?.messages) ? report[0].messages : [];
+      return { available: true, diagnostics: messages.slice(0, 200).map(item => ({
+        startLineNumber: item.line || 1,
+        startColumn: item.column || 1,
+        endLineNumber: item.endLine || item.line || 1,
+        endColumn: item.endColumn || (item.column || 1) + 1,
+        severity: item.severity === 1 ? "warning" : "error",
+        message: String(item.message || "Lint diagnostic").slice(0, 500),
+        source: "ESLint"
+      })) };
+    } catch { return { available: true, diagnostics: [] }; }
+  }
+  if (extension === ".py") {
+    const result = await runDiagnosticTool("ruff", [
+      "check", "--isolated", "--output-format", "json", "--stdin-filename", file, "-"
+    ], content, workspaceRoot);
+    if (!result.available || !result.stdout) return { available: false, diagnostics: [] };
+    try {
+      const messages = JSON.parse(result.stdout);
+      return { available: true, diagnostics: (Array.isArray(messages) ? messages : []).slice(0, 200).map(item => ({
+        startLineNumber: item.location?.row || 1,
+        startColumn: item.location?.column || 1,
+        endLineNumber: item.end_location?.row || item.location?.row || 1,
+        endColumn: item.end_location?.column || (item.location?.column || 1) + 1,
+        severity: "warning",
+        message: String(item.message || item.code || "Lint diagnostic").slice(0, 500),
+        source: "Ruff"
+      })) };
+    } catch { return { available: true, diagnostics: [] }; }
+  }
+  return { available: false, diagnostics: [] };
+}
+
 router.post("/diagnostics", async (req, res) => {
   const file = String(req.body?.file || "");
   const content = req.body?.content;
@@ -347,7 +433,15 @@ router.post("/diagnostics", async (req, res) => {
   if (!target.safe || target.relative === ".") return res.status(403).json({ error: "Forbidden" });
   try {
     const result = await getTreeSitterDiagnostics(target.relative, content);
-    return res.json({ file: target.relative, ...result });
+    const semantic = await getSemanticDiagnostics(target.relative, content, workspace.workspaceRoot);
+    const treeDiagnostics = (result.diagnostics || []).map(item => ({ ...item, source: item.source || "Tree-sitter" }));
+    return res.json({
+      file: target.relative,
+      available: result.available,
+      diagnostics: treeDiagnostics,
+      semanticAvailable: semantic.available,
+      semanticDiagnostics: semantic.diagnostics
+    });
   } catch {
     return res.status(503).json({ error: "DiagnosticsUnavailable", message: "Tree-sitter diagnostics are unavailable for this file." });
   }

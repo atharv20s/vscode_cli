@@ -16,6 +16,9 @@ class EditorManager {
     this.gitDecorationIds = new Map();
     this.gitDiffEditor = null;
     this.gitDiffOverlay = null;
+    this.gitDiffSideBySide = true;
+    this.splitRatio = 0.5;
+    this.splitSash = null;
     this.suppressModelChange = false;
     this.initEventListeners();
     this.restoreStateFromCache();
@@ -159,6 +162,8 @@ class EditorManager {
     if (this.secondaryEditor) {
       this.secondaryEditor.dispose();
       this.secondaryEditor = null;
+      this.splitSash?.remove();
+      this.splitSash = null;
       this.secondaryHost?.remove();
       this.secondaryHost = null;
       this.groupTabs.secondary = null;
@@ -172,7 +177,43 @@ class EditorManager {
     this.secondaryHost = document.createElement("div");
     this.secondaryHost.id = "code-editor-view-secondary";
     this.secondaryHost.className = "code-editor-view-secondary";
-    wrapper.appendChild(this.secondaryHost);
+    this.splitSash = document.createElement("div");
+    this.splitSash.className = "editor-split-sash";
+    this.splitSash.setAttribute("role", "separator");
+    this.splitSash.setAttribute("aria-label", "Resize editor groups");
+    this.splitSash.setAttribute("aria-orientation", "vertical");
+    this.splitSash.tabIndex = 0;
+    const resizeGroups = clientX => {
+      const bounds = wrapper.getBoundingClientRect();
+      if (!bounds.width) return;
+      this.splitRatio = Math.max(0.25, Math.min(0.75, (clientX - bounds.left) / bounds.width));
+      wrapper.style.setProperty("--editor-split-ratio", (this.splitRatio * 100).toFixed(1) + "%");
+      this.primaryEditor?.layout();
+      this.secondaryEditor?.layout();
+    };
+    this.splitSash.addEventListener("pointerdown", event => {
+      event.preventDefault();
+      this.splitSash.setPointerCapture(event.pointerId);
+      const move = moveEvent => resizeGroups(moveEvent.clientX);
+      const finish = () => {
+        this.splitSash?.removeEventListener("pointermove", move);
+        this.splitSash?.removeEventListener("pointerup", finish);
+        this.splitSash?.removeEventListener("pointercancel", finish);
+      };
+      this.splitSash.addEventListener("pointermove", move);
+      this.splitSash.addEventListener("pointerup", finish);
+      this.splitSash.addEventListener("pointercancel", finish);
+    });
+    this.splitSash.addEventListener("keydown", event => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      this.splitRatio = Math.max(0.25, Math.min(0.75, this.splitRatio + (event.key === "ArrowLeft" ? -0.03 : 0.03)));
+      wrapper.style.setProperty("--editor-split-ratio", (this.splitRatio * 100).toFixed(1) + "%");
+      this.primaryEditor?.layout();
+      this.secondaryEditor?.layout();
+    });
+    wrapper.style.setProperty("--editor-split-ratio", (this.splitRatio * 100).toFixed(1) + "%");
+    wrapper.append(this.splitSash, this.secondaryHost);
     this.editorView.classList.add("split-primary");
     this.secondaryEditor = monaco.editor.create(this.secondaryHost, { ...this.editorOptions, value: "" });
     this.attachEditorGroup(this.secondaryEditor, "secondary");
@@ -369,12 +410,23 @@ class EditorManager {
       header.className = "git-diff-header";
       const title = document.createElement("strong");
       title.textContent = data.file + " · HEAD ↔ Working Tree";
+      const modeToggle = document.createElement("button");
+      modeToggle.type = "button";
+      modeToggle.className = "secondary-btn";
+      modeToggle.textContent = this.gitDiffSideBySide ? "Inline diff" : "Side-by-side";
+      modeToggle.setAttribute("aria-pressed", String(this.gitDiffSideBySide));
+      modeToggle.addEventListener("click", () => {
+        this.gitDiffSideBySide = !this.gitDiffSideBySide;
+        this.gitDiffEditor?.updateOptions({ renderSideBySide: this.gitDiffSideBySide });
+        modeToggle.textContent = this.gitDiffSideBySide ? "Inline diff" : "Side-by-side";
+        modeToggle.setAttribute("aria-pressed", String(this.gitDiffSideBySide));
+      });
       const close = document.createElement("button");
       close.type = "button";
       close.className = "secondary-btn";
       close.textContent = "Close";
       close.addEventListener("click", () => this.closeGitDiff());
-      header.append(title, close);
+      header.append(title, modeToggle, close);
       const host = document.createElement("div");
       host.className = "git-diff-host";
       overlay.append(header, host);
@@ -385,7 +437,7 @@ class EditorManager {
       const original = monaco.editor.createModel(data.original || "", language, monaco.Uri.parse(uriBase + "?side=original"));
       const modified = monaco.editor.createModel(data.modified || "", language, monaco.Uri.parse(uriBase + "?side=modified"));
       this.gitDiffEditor = monaco.editor.createDiffEditor(host, {
-        theme: "vs-dark", readOnly: true, originalEditable: false, renderSideBySide: true,
+        theme: "vs-dark", readOnly: true, originalEditable: false, renderSideBySide: this.gitDiffSideBySide,
         automaticLayout: true, minimap: { enabled: false }, scrollBeyondLastLine: false,
         diffWordWrap: "on", renderIndicators: true
       });
@@ -475,14 +527,43 @@ class EditorManager {
       close.textContent = "×";
       close.addEventListener("click", () => { panel.hidden = true; });
       header.append(title, close);
+      const search = document.createElement("input");
+      search.type = "search";
+      search.className = "ath-outline-filter";
+      search.placeholder = "Filter symbols… (@symbol)";
+      search.setAttribute("aria-label", "Filter symbols");
+      search.autocomplete = "off";
+      search.addEventListener("input", () => {
+        this.outlineQuery = search.value;
+        this.renderSymbolOutline(this.activeTab);
+      });
       const list = document.createElement("div");
       list.className = "ath-symbol-outline-list";
-      panel.append(header, list);
+      panel.append(header, search, list);
       this.editorView?.parentElement?.appendChild(panel);
     }
     panel.hidden = forceOpen ? false : !panel.hidden;
     this.renderSymbolOutline(this.activeTab);
     return panel;
+  }
+
+  symbolMatchScore(item, query) {
+    const name = String(item.name || "").toLowerCase();
+    const kind = String(item.kind || "").toLowerCase();
+    const target = name + " " + kind;
+    const needle = String(query || "").trim().toLowerCase().replace(/^@/, "");
+    if (!needle) return 0;
+    const direct = target.indexOf(needle);
+    if (direct >= 0) return direct;
+    let cursor = 0;
+    let gaps = 0;
+    for (const char of needle) {
+      const found = target.indexOf(char, cursor);
+      if (found < 0) return -1;
+      gaps += found - cursor;
+      cursor = found + 1;
+    }
+    return 100 + gaps;
   }
 
   renderSymbolOutline(filePath) {
@@ -492,14 +573,19 @@ class EditorManager {
     if (!list) return;
     list.replaceChildren();
     const symbols = this.documentSymbols.get(filePath) || [];
-    if (!symbols.length) {
+    const query = panel.querySelector(".ath-outline-filter")?.value || "";
+    const visible = symbols.map(item => ({ item, score: this.symbolMatchScore(item, query) }))
+      .filter(entry => entry.score >= 0)
+      .sort((a, b) => a.score - b.score || a.item.line - b.item.line)
+      .map(entry => entry.item);
+    if (!visible.length) {
       const empty = document.createElement("div");
       empty.className = "ath-outline-empty";
-      empty.textContent = "No indexed symbols in this file.";
+      empty.textContent = query ? "No matching symbols." : "No indexed symbols in this file.";
       list.appendChild(empty);
       return;
     }
-    symbols.forEach(item => {
+    visible.forEach(item => {
       const row = document.createElement("button");
       row.type = "button";
       row.className = "ath-outline-item";
@@ -536,14 +622,17 @@ class EditorManager {
       });
       if (!response.ok) return;
       const data = await response.json();
-      const diagnostics = Array.isArray(data.diagnostics) ? data.diagnostics : [];
-      monaco.editor.setModelMarkers(model, "ath-tree-sitter", diagnostics.map(item => ({
+      const diagnostics = [
+        ...(Array.isArray(data.diagnostics) ? data.diagnostics : []),
+        ...(Array.isArray(data.semanticDiagnostics) ? data.semanticDiagnostics : [])
+      ];
+      monaco.editor.setModelMarkers(model, "ath-workspace-diagnostics", diagnostics.map(item => ({
         startLineNumber: item.startLineNumber,
         startColumn: item.startColumn,
         endLineNumber: item.endLineNumber,
         endColumn: item.endColumn,
         message: item.message,
-        source: "Tree-sitter",
+        source: item.source || "Tree-sitter",
         severity: item.severity === "warning" ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Error
       })));
       this.renderProblems(filePath, diagnostics);

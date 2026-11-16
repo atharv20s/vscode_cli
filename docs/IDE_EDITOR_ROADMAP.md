@@ -11,10 +11,11 @@ This document tracks the editor UX implementation sequence. The pull requests ar
 | #55 | Inline diagnostics and Problems panel | Tree-sitter syntax diagnostics, Monaco markers and navigable Problems list. |
 | #56 | Breadcrumbs and symbol outline | File-path breadcrumbs, active declaration context and per-file symbol navigation. |
 | #57 | Multiple terminal sessions | Independent xterm views, PTY session IDs, per-session WebSockets and explicit session close. |
+| #58 | Editor workflow polish | Diff viewer inline/side-by-side toggle, split editor draggable sash, symbol outline fuzzy search, semantic diagnostics (ESLint/Ruff), and terminal tab rename. |
 
 ## Merge order
 
-Merge #51, then #52, #53, #54, #55, #56 and #57. Each later PR is based on the cumulative feature branch and targets `main`; after its predecessor merges, GitHub should reduce the later PR's diff to its incremental changes.
+Merge #51, then #52, #53, #54, #55, #56, #57, and #58. Each later PR is based on the cumulative feature branch and targets `main`; after its predecessor merges, GitHub should reduce the later PR's diff to its incremental changes.
 
 ## Acceptance boundary
 
