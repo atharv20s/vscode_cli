@@ -10,6 +10,7 @@ This document tracks the editor UX implementation sequence. The pull requests ar
 | #54 | Split editor panes | Independent primary and secondary Monaco editor groups sharing workspace file models. |
 | #55 | Inline diagnostics and Problems panel | Tree-sitter syntax diagnostics, Monaco markers and navigable Problems list. |
 | #56 | Breadcrumbs and symbol outline | File-path breadcrumbs, active declaration context and per-file symbol navigation. |
+| #57 | Multiple terminal sessions | Independent xterm views, PTY session IDs, per-session WebSockets and explicit session close. |
 
 ## Merge order
 

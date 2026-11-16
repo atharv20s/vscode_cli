@@ -1960,3 +1960,16 @@ textarea {
 .ath-outline-item { display:block; width:100%; padding:7px 8px; border:0; border-radius:4px; text-align:left; color:var(--text-muted); background:transparent; font:10px var(--font-mono); cursor:pointer; }
 .ath-outline-item:hover { color:var(--text-main); background:rgba(99,102,241,.12); }
 .ath-outline-empty { padding:12px; color:var(--text-dim); font-size:11px; }
+
+/* Multiple independent terminal sessions */
+.terminal-session-tabs { min-height:30px; flex:0 0 30px; display:flex; align-items:center; gap:4px; overflow-x:auto; padding:0 8px; background:#11131a; border-bottom:1px solid var(--border-subtle); }
+.terminal-session-tab { display:flex; align-items:center; border:1px solid transparent; border-radius:4px 4px 0 0; background:transparent; }
+.terminal-session-tab.active { background:rgba(99,102,241,.14); border-color:var(--border-bright); }
+.terminal-session-tab-label,.terminal-session-tab-close,.terminal-session-add { border:0; color:var(--text-muted); background:transparent; cursor:pointer; font:10px var(--font-mono); }
+.terminal-session-tab-label { padding:6px 9px; white-space:nowrap; }
+.terminal-session-tab.active .terminal-session-tab-label { color:var(--text-main); }
+.terminal-session-tab-close { padding:4px 7px; font-size:14px; }
+.terminal-session-tab-close:hover,.terminal-session-add:hover { color:var(--text-main); }
+.terminal-session-add { width:24px; height:24px; border:1px dashed var(--border-bright); border-radius:4px; font-size:15px; }
+.terminal-session-container { flex:1 1 auto; min-height:0; width:100%; overflow:hidden; background:#0d0e12; padding:8px; }
+.terminal-session-container[hidden] { display:none !important; }

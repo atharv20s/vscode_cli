@@ -23,16 +23,16 @@ class WebSocketClient {
     this.isConnected = false;
     this.lastToken = null;
     this.pingInterval = null;
+    this.shouldReconnect = true;
+    this.reconnectTimeout = null;
 
     // Auto-reconnect when user refocuses tab
     window.addEventListener("focus", () => {
-      if (!this.isConnected) {
-        this.connect(this.lastToken);
-      }
+      if (this.shouldReconnect && !this.isConnected) this.connect(this.lastToken);
     });
 
     window.addEventListener("online", () => {
-      this.connect(this.lastToken);
+      if (this.shouldReconnect && !this.isConnected) this.connect(this.lastToken);
     });
   }
 
@@ -40,6 +40,7 @@ class WebSocketClient {
    * Connect to WebSocket server.
    */
   connect(token) {
+    this.shouldReconnect = true;
     if (token) this.lastToken = token;
     const protocols = [];
     if (this.lastToken) protocols.push("ath-auth", this.lastToken);
@@ -88,7 +89,7 @@ class WebSocketClient {
         if (this.pingInterval) clearInterval(this.pingInterval);
         this.updateStatus(false);
         this.emit("close");
-        this.attemptReconnect();
+        if (this.shouldReconnect) this.attemptReconnect();
       };
 
       this.ws.onerror = (err) => {
@@ -100,15 +101,28 @@ class WebSocketClient {
     }
   }
 
+
+  disconnect() {
+    this.shouldReconnect = false;
+    if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+    this.reconnectTimeout = null;
+    if (this.pingInterval) clearInterval(this.pingInterval);
+    this.pingInterval = null;
+    this.isConnected = false;
+    if (this.ws && this.ws.readyState < WebSocket.CLOSING) this.ws.close(1000, "Client disconnected");
+  }
+
   /**
    * Attempt to reconnect with exponential backoff.
    */
   attemptReconnect() {
+    if (!this.shouldReconnect) return;
     this.reconnectAttempts++;
     const delay = Math.min(this.reconnectDelay * Math.pow(1.3, Math.min(this.reconnectAttempts, 8)), 5000);
 
-    setTimeout(() => {
-      this.connect(this.lastToken);
+    this.reconnectTimeout = setTimeout(() => {
+      this.reconnectTimeout = null;
+      if (this.shouldReconnect) this.connect(this.lastToken);
     }, delay);
   }
 
