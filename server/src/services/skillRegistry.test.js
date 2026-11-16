@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { selectSkills, formatSkills, skillCatalog } from "./skillRegistry.js";
+import { selectSkills, formatSkills, skillCatalog, parseSkillFrontmatter, discoverSkillCatalog } from "./skillRegistry.js";
 
 test("skill registry selects relevant engineering guidance", async () => {
   const skills = await selectSkills("Build a React frontend with a PostgreSQL database and debug tests");
@@ -17,9 +17,24 @@ test("skill selection is bounded and ignores unrelated prompts", async () => {
   assert.ok(skillCatalog.length >= 7);
 });
 
-test("formatSkills produces explicit skill context", async () => {
-  const skills = await selectSkills("deploy a Docker app");
-  const formatted = formatSkills(skills);
+test("formatSkills marks imported skill text as untrusted guidance", async () => {
+  const formatted = formatSkills(await selectSkills("deploy a Docker app"));
   assert.match(formatted, /Retrieved engineering skills/);
   assert.match(formatted, /docker-deployment/);
+  assert.match(formatted, /untrusted engineering reference material/);
+});
+
+test("parses Agent Skills frontmatter and rejects invalid metadata", () => {
+  assert.deepEqual(parseSkillFrontmatter("---\nname: python-engineering\ndescription: Python async and pytest practices.\nlicense: MIT\n---\n# Python"), {
+    name: "python-engineering", description: "Python async and pytest practices."
+  });
+  assert.equal(parseSkillFrontmatter("# no frontmatter"), null);
+  assert.equal(parseSkillFrontmatter("---\nname: ../escape\ndescription: bad\n---\n"), null);
+  assert.equal(parseSkillFrontmatter("---\nname: missing-description\n---\n"), null);
+});
+
+test("discovers existing on-disk skills without a hard-coded catalog entry", async () => {
+  const catalog = await discoverSkillCatalog();
+  assert.ok(catalog.some(skill => skill.id === "application-planning"));
+  assert.ok(catalog.some(skill => skill.id === "security-review"));
 });
