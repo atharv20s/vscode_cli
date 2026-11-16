@@ -455,12 +455,12 @@ function validateAgentApplyFiles(input,workspace,requireVersion){
   const seen=new Set();let total=0;
   return input.map(item=>{
     const file=typeof item?.path==="string"?item.path.trim():"",content=item?.content;
-    if(!file||file.length>1024||path.isAbsolute(file)||file.includes("\\0")||typeof content!=="string"){const e=new Error("Each patch file needs a relative path and UTF-8 content.");e.status=400;throw e;}
-    const normalized=file.replace(/\\\\/g,"/").replace(/^\\.\\//,"");
+    if(!file||file.length>1024||path.isAbsolute(file)||file.includes("\0")||typeof content!=="string"){const e=new Error("Each patch file needs a relative path and UTF-8 content.");e.status=400;throw e;}
+    const normalized=file.replace(/\\/g,"/").replace(/^\.\//,"");
     if(seen.has(normalized)){const e=new Error("Duplicate file path in patch.");e.status=400;throw e;}seen.add(normalized);
     if(AGENT_APPLY_SECRET_PATH.test(normalized)||normalized.split("/").some(part=>[".git",".ath-locks","node_modules"].includes(part))){const e=new Error("Sensitive or generated paths cannot be changed through Agent Apply.");e.status=403;throw e;}
     const bytes=Buffer.byteLength(content,"utf8");total+=bytes;
-    if(bytes>AGENT_APPLY_MAX_FILE_BYTES||total>AGENT_APPLY_MAX_TOTAL_BYTES||content.includes("\\u0000")){const e=new Error("Patch exceeds text file or total patch size limits.");e.status=413;throw e;}
+    if(bytes>AGENT_APPLY_MAX_FILE_BYTES||total>AGENT_APPLY_MAX_TOTAL_BYTES||content.includes("\u0000")){const e=new Error("Patch exceeds text file or total patch size limits.");e.status=413;throw e;}
     const target=workspace.resolvePath(normalized);if(!target.safe||target.relative==="."){const e=new Error("Patch path is outside the active workspace.");e.status=403;throw e;}
     if(requireVersion&&!Object.prototype.hasOwnProperty.call(item,"expectedVersion")){const e=new Error("Every accepted file must include its preview version.");e.status=400;throw e;}
     return{path:target.relative,content,expectedVersion:item.expectedVersion};
@@ -476,7 +476,7 @@ router.post("/agent/apply",async(req,res)=>{
       let original="",expectedVersion=null;
       try{const current=await workspace.readFile(item.path);original=current.content;expectedVersion=current.version;}
       catch(error){if(error.code!=="ENOENT")throw error;}
-      if(original.includes("\\u0000"))return res.status(415).json({error:"BinaryPatchUnsupported",path:item.path});
+      if(original.includes("\u0000"))return res.status(415).json({error:"BinaryPatchUnsupported",path:item.path});
       previews.push({path:item.path,original,content:item.content,expectedVersion,isNew:expectedVersion===null});
     }
     return res.json({summary:String(req.body?.summary||"Agent proposed workspace changes").slice(0,240),files:previews});
