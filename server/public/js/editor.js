@@ -181,7 +181,7 @@ class EditorManager {
         },
         workspaceFolders: [{ uri: info.rootUri, name: "workspace" }]
       }, id).then(() => {
-        this.lspRequest("initialized", {}).catch(() => {});
+        window.wsClient.send("lsp.message", { message: { jsonrpc: "2.0", method: "initialized", params: {} } });
         this.openLspDocument(this.activeTab);
       }).catch(error => window.app?.logTerminal("LSP initialize failed: " + error.message, "warning"));
     });
