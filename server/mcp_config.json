@@ -2,13 +2,32 @@
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./workspace"],
-      "transport": "stdio"
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "./workspace"
+      ],
+      "transport": "stdio",
+      "enabled": false,
+      "allowedTools": [
+        "read_file",
+        "read_multiple_files",
+        "list_directory",
+        "directory_tree",
+        "get_file_info",
+        "search_files"
+      ]
     },
     "github-architecture": {
       "command": "node",
-      "args": ["src/mcp/githubMcpServer.js"],
-      "transport": "stdio"
+      "args": [
+        "src/mcp/githubMcpServer.js"
+      ],
+      "transport": "stdio",
+      "enabled": true,
+      "allowedTools": [
+        "github_get_repo_info"
+      ]
     }
   }
 }
