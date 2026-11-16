@@ -421,8 +421,10 @@ class EditorManager {
       const data = await response.json();
       const symbols = Array.isArray(data.symbols) ? data.symbols : [];
       this.documentSymbols.set(filePath, symbols);
-      this.renderSymbolOutline(filePath);
-      this.updateSymbolBreadcrumb(filePath, this.monacoEditor?.getPosition()?.lineNumber || 1);
+      if (this.activeTab === filePath) {
+        this.renderSymbolOutline(filePath);
+        this.updateSymbolBreadcrumb(filePath, this.monacoEditor?.getPosition()?.lineNumber || 1);
+      }
     } catch (error) { console.warn("Document symbol refresh failed:", error); }
   }
 
