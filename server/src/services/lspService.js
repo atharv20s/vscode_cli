@@ -85,7 +85,12 @@ export function startLanguageServer(ws, language) {
     const message = chunk.toString("utf8").slice(0, 2000);
     if (message.trim()) send(ws, "lsp.log", { message });
   });
-  child.on("error", error => send(ws, "lsp.error", { message: "Unable to start " + config.bin + ": " + error.message }));
+  child.on("error", error => {
+    state.closed = true;
+    activeProcesses.delete(child);
+    if (ws.languageServer === state) ws.languageServer = null;
+    send(ws, "lsp.error", { message: "Unable to start " + config.bin + ": " + error.message });
+  });
   child.on("exit", (code, signal) => {
     if (ws.languageServer === state) ws.languageServer = null;
     state.closed = true;
