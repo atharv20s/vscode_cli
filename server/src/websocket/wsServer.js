@@ -10,6 +10,7 @@ import crypto from "crypto";
 import { WebSocketServer } from "ws";
 import { verifyToken, generatePreviewToken } from "../middleware/auth.js";
 import { runAgent } from "../services/agentService.js";
+import { startLanguageServer, sendLanguageServerMessage, stopLanguageServer } from "../services/lspService.js";
 import { config } from "../config/env.js";
 import { getWorkspaceService } from "../services/workspaceService.js";
 import { ensureWorkspaceSession } from "../services/workspaceSessionService.js";
@@ -298,6 +299,7 @@ export function initWebSocketServer(httpServer) {
     ws.on("close", () => {
       executionService.detachInteractive(ws.terminalSessionId, ws);
       try { ws.remoteTerminal?.close(); } catch {}
+      stopLanguageServer(ws);
       removeConnection(ws);
       broadcastPresence(ws.workspaceId);
     });
@@ -306,6 +308,7 @@ export function initWebSocketServer(httpServer) {
       logger.error("WebSocket error", { error: err.message });
       executionService.detachInteractive(ws.terminalSessionId, ws);
       try { ws.remoteTerminal?.close(); } catch {}
+      stopLanguageServer(ws);
       removeConnection(ws);
       broadcastPresence(ws.workspaceId);
     });
@@ -347,6 +350,31 @@ async function handleMessage(ws, msg, user) {
   switch (type) {
     case "ping":
       sendMessage(ws, "pong", { timestamp: Date.now() });
+      break;
+
+    case "lsp.start":
+      try {
+        const result = startLanguageServer(ws, payload?.language);
+        sendMessage(ws, "lsp.ready", result);
+      } catch (error) {
+        sendMessage(ws, "lsp.error", { message: error.message });
+      }
+      break;
+
+    case "lsp.message":
+      try {
+        if (!payload?.message || typeof payload.message !== "object" || Array.isArray(payload.message)) {
+          throw new Error("LSP message must be a JSON-RPC object.");
+        }
+        sendLanguageServerMessage(ws, payload.message);
+      } catch (error) {
+        sendMessage(ws, "lsp.error", { message: error.message });
+      }
+      break;
+
+    case "lsp.stop":
+      stopLanguageServer(ws);
+      sendMessage(ws, "lsp.stopped", {});
       break;
 
     case "chat":
