@@ -9,6 +9,7 @@ This document tracks the editor UX implementation sequence. The pull requests ar
 | #53 | Monaco Git diff viewer | Read-only side-by-side comparison of a workspace file against HEAD. |
 | #54 | Split editor panes | Independent primary and secondary Monaco editor groups sharing workspace file models. |
 | #55 | Inline diagnostics and Problems panel | Tree-sitter syntax diagnostics, Monaco markers and navigable Problems list. |
+| #56 | Breadcrumbs and symbol outline | File-path breadcrumbs, active declaration context and per-file symbol navigation. |
 
 ## Merge order
 
