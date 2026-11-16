@@ -26,7 +26,7 @@ function send(ws, type, payload) {
   if (ws.readyState === 1) ws.send(JSON.stringify({ type, payload }));
 }
 
-function parseFrames(state, chunk, onMessage) {
+export function parseLspFrames(state, chunk, onMessage) {
   state.buffer = Buffer.concat([state.buffer, chunk]);
   if (state.buffer.length > MAX_BUFFER_BYTES) throw new Error("LSP output buffer limit exceeded.");
   while (true) {
@@ -72,7 +72,7 @@ export function startLanguageServer(ws, language) {
   activeProcesses.add(child);
   child.stdout.on("data", chunk => {
     try {
-      parseFrames(state, chunk, message => send(ws, "lsp.message", message));
+      parseLspFrames(state, chunk, message => send(ws, "lsp.message", message));
     } catch (error) {
       send(ws, "lsp.error", { message: error.message });
       stopLanguageServer(ws);
