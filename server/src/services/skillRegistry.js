@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../skills");
 const MAX_SKILLS = 4;
 const MAX_SKILL_CHARS = 32_000;
-const STOP_WORDS = new Set(["about","after","also","always","application","based","build","code","create","ensure","from","guide","into","make","more","only","project","should","skill","that","their","then","these","this","through","using","when","where","with","your"]);
+const STOP_WORDS = new Set(["about","after","also","always","and","application","are","based","build","can","code","create","ensure","for","from","guide","into","make","more","not","only","project","should","skill","that","the","their","then","these","this","through","using","when","where","with","your"]);
 
 const CATALOG = [
   { id: "application-planning", terms: ["build","create","application","app","full stack","saas","architecture","plan","design","implement"] },
