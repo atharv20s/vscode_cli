@@ -246,6 +246,7 @@ class EditorManager {
 
   lspRequest(method, params, requestId = null) {
     if (!window.wsClient) return Promise.reject(new Error("Workspace WebSocket is unavailable."));
+    if (method !== "initialize" && !this.lspRootUri) return Promise.reject(new Error("Language server is not initialized."));
     const id = requestId ?? this.lspRequestId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -729,7 +730,11 @@ class EditorManager {
   renderAgentApplySelectedDiff() {
     const item = this.agentApplyFiles.find(file => file.path === this.agentApplySelectedPath);
     if (!item || !this.monacoEditor) return;
-    if (this.activeTab !== item.path && this.openTabs.has(item.path)) this.selectTab(item.path);
+    if (!this.openTabs.has(item.path)) {
+      this.openTabs.set(item.path, { content: item.original || "", version: item.expectedVersion || null, isDirty: false, language: this.detectLanguage(item.path) });
+      this.createTabElement(item.path);
+    }
+    if (this.activeTab !== item.path) this.selectTab(item.path);
     const model = this.monacoEditor.getModel();
     if (!model) return;
     const originalLines = String(item.original || "").split("\n");
