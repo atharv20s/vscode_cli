@@ -1,14 +1,6 @@
 /**
- * MCP Client — Connects to external MCP servers and integrates their tools.
- *
- * Flow:
- * 1. Read mcp_config.json for server definitions
- * 2. Spawn each server process via StdioTransport
- * 3. Send `initialize` → `tools/list` to discover available tools
- * 4. Register discovered tools in the agent's tool registry
- * 5. Proxy `tools/call` from agent loop to the MCP server
+ * MCP Client — Connects to configured external MCP servers and registers tools.
  */
-
 import fs from "fs/promises";
 import fsSync from "fs";
 import path from "path";
@@ -20,98 +12,77 @@ import { logger } from "../config/logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.resolve(__dirname, "../../mcp_config.json");
-
-/** @type {Map<string, { transport: StdioTransport, tools: object[] }>} */
+const MAX_MCP_TOOLS = 100;
+const MAX_TOOL_OUTPUT_CHARS = 32_000;
 const connectedServers = new Map();
 
-/**
- * Initialize all MCP servers from config.
- */
+export function filterMcpTools(tools, allowedTools) {
+  if (!Array.isArray(tools)) return [];
+  const allow = Array.isArray(allowedTools) ? new Set(allowedTools) : null;
+  return tools.filter(tool =>
+    tool &&
+    typeof tool.name === "string" &&
+    /^[A-Za-z0-9_.-]{1,48}$/.test(tool.name) &&
+    (!allow || allow.has(tool.name)) &&
+    tool.inputSchema && typeof tool.inputSchema === "object" &&
+    !Array.isArray(tool.inputSchema) &&
+    tool.inputSchema.type === "object" &&
+    JSON.stringify(tool.inputSchema).length <= 16_384
+  ).slice(0, MAX_MCP_TOOLS);
+}
+
 export async function initMcpServers() {
   let configData;
-
   try {
-    const raw = await fs.readFile(CONFIG_PATH, "utf8");
-    configData = JSON.parse(raw);
-  } catch (err) {
-    logger.info("No mcp_config.json found or invalid — MCP servers disabled.", {
-      path: CONFIG_PATH,
-    });
+    configData = JSON.parse(await fs.readFile(CONFIG_PATH, "utf8"));
+  } catch {
+    logger.info("No mcp_config.json found or invalid — MCP servers disabled.", { path: CONFIG_PATH });
     return;
   }
-
-  const servers = configData.mcpServers || {};
-
-  for (const [name, serverConfig] of Object.entries(servers)) {
-    try {
-      await connectServer(name, serverConfig);
-    } catch (err) {
-      logger.error(`Failed to connect MCP server '${name}'`, {
-        error: err.message,
-      });
-    }
+  for (const [name, serverConfig] of Object.entries(configData.mcpServers || {})) {
+    try { await connectServer(name, serverConfig); }
+    catch (err) { logger.error(`Failed to connect MCP server '${name}'`, { error: err.message }); }
   }
-
   logger.info(`MCP client initialized: ${connectedServers.size} server(s) connected`);
 }
 
-/**
- * Connect to a single MCP server.
- */
 async function connectServer(name, serverConfig) {
-  const { command, args = [], env = {}, transport = "stdio" } = serverConfig;
-
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(name)) throw new Error("Invalid MCP server name.");
+  if (!serverConfig || typeof serverConfig !== "object" || serverConfig.enabled === false) return;
+  const { command, args = [], env = {}, transport = "stdio", allowedTools } = serverConfig;
   if (transport !== "stdio") {
     logger.warn(`MCP server '${name}' uses unsupported transport '${transport}' — skipping`);
     return;
   }
+  if (typeof command !== "string" || !command.trim() || command.length > 256) throw new Error("MCP command must be a non-empty executable name.");
+  if (!Array.isArray(args) || args.length > 100 || args.some(arg => typeof arg !== "string" || arg.length > 2048)) throw new Error("MCP args must be an array of bounded strings.");
+  if (allowedTools !== undefined && (!Array.isArray(allowedTools) || allowedTools.some(tool => typeof tool !== "string"))) throw new Error("MCP allowedTools must be an array of tool names.");
 
-  const resolvedArgs = args.map((arg) => {
+  const resolvedArgs = args.map(arg => {
     if (arg === "./workspace" || arg === "workspace") {
-      try {
-        if (!fsSync.existsSync(config.workspaceRoot)) {
-          fsSync.mkdirSync(config.workspaceRoot, { recursive: true });
-        }
-      } catch {}
+      try { if (!fsSync.existsSync(config.workspaceRoot)) fsSync.mkdirSync(config.workspaceRoot, { recursive: true }); } catch {}
       return config.workspaceRoot;
     }
-    if (arg.startsWith("src/")) {
-      return path.resolve(__dirname, "..", arg.slice(4));
-    }
+    if (arg.startsWith("src/")) return path.resolve(__dirname, "..", arg.slice(4));
     return arg;
   });
 
-  logger.info(`Connecting to MCP server '${name}': ${command} ${resolvedArgs.join(" ")}`);
-
+  logger.info(`Connecting MCP server '${name}' using executable '${command}'`);
   const tp = new StdioTransport(command, resolvedArgs, env);
-
-  tp.on("error", (err) => {
-    logger.error(`MCP server '${name}' error: ${err.message}`);
-  });
-
-  tp.on("close", (code) => {
+  tp.on("error", err => logger.error(`MCP server '${name}' error: ${err.message}`));
+  tp.on("close", code => {
     logger.warn(`MCP server '${name}' exited with code ${code}`);
     connectedServers.delete(name);
   });
-
   await tp.connect();
 
-  // Initialize the MCP session
   try {
     const initResult = await tp.request("initialize", {
       protocolVersion: "2024-11-05",
-      capabilities: {
-        tools: {},
-      },
-      clientInfo: {
-        name: "agentic-cli",
-        version: "1.0.0",
-      },
+      capabilities: { tools: {} },
+      clientInfo: { name: "agentic-cli", version: "1.0.0" },
     });
-
     logger.debug(`MCP '${name}' initialized`, { serverInfo: initResult?.serverInfo });
-
-    // Send initialized notification
     tp.notify("notifications/initialized");
   } catch (err) {
     logger.error(`MCP '${name}' initialization failed: ${err.message}`);
@@ -119,63 +90,50 @@ async function connectServer(name, serverConfig) {
     return;
   }
 
-  // Discover tools
-  let tools = [];
+  let discovered = [];
   try {
     const result = await tp.request("tools/list", {});
-    tools = result?.tools || [];
-    logger.info(`MCP '${name}': discovered ${tools.length} tool(s)`, {
-      tools: tools.map((t) => t.name),
+    discovered = filterMcpTools(result?.tools, allowedTools);
+    logger.info(`MCP '${name}': registered ${discovered.length} of ${result?.tools?.length || 0} discovered tool(s)`, {
+      tools: discovered.map(tool => tool.name),
     });
   } catch (err) {
     logger.warn(`MCP '${name}': tools/list failed: ${err.message}`);
   }
+  connectedServers.set(name, { transport: tp, tools: discovered });
 
-  connectedServers.set(name, { transport: tp, tools });
-
-  // Register discovered tools in the agent's tool registry
-  for (const tool of tools) {
+  for (const tool of discovered) {
     const mcpToolName = `mcp_${name}_${tool.name}`;
-
-    registerTool(
-      {
-        type: "function",
-        function: {
-          name: mcpToolName,
-          description: `[MCP:${name}] ${tool.description || tool.name}`,
-          parameters: tool.inputSchema || { type: "object", properties: {} },
-        },
+    if (mcpToolName.length > 64) {
+      logger.warn(`Skipping overlong MCP tool name from '${name}': ${tool.name}`);
+      continue;
+    }
+    registerTool({
+      type: "function",
+      function: {
+        name: mcpToolName,
+        description: `[MCP:${name}] ${String(tool.description || tool.name).slice(0, 1024)}`,
+        parameters: tool.inputSchema,
       },
-      async (args) => {
-        try {
-          const result = await tp.request("tools/call", {
-            name: tool.name,
-            arguments: args,
-          });
-
-          // MCP tools return content array
-          const content = result?.content || [];
-          const textParts = content
-            .filter((c) => c.type === "text")
-            .map((c) => c.text);
-
-          return {
-            success: !result?.isError,
-            output: textParts.join("\n") || "Tool executed successfully.",
-          };
-        } catch (err) {
-          return { success: false, error: `MCP tool error: ${err.message}` };
-        }
+    }, async args => {
+      try {
+        const result = await tp.request("tools/call", { name: tool.name, arguments: args });
+        const textParts = (Array.isArray(result?.content) ? result.content : [])
+          .filter(item => item?.type === "text" && typeof item.text === "string")
+          .map(item => item.text);
+        const output = textParts.join("\n");
+        return {
+          success: !result?.isError,
+          output: output.length > MAX_TOOL_OUTPUT_CHARS ? output.slice(0, MAX_TOOL_OUTPUT_CHARS) + "\n[output truncated]" : output || "Tool executed successfully.",
+        };
+      } catch (err) {
+        return { success: false, error: `MCP tool error: ${err.message}` };
       }
-    );
-
+    });
     logger.debug(`Registered MCP tool: ${mcpToolName}`);
   }
 }
 
-/**
- * Disconnect all MCP servers.
- */
 export async function shutdownMcpServers() {
   for (const [name, { transport }] of connectedServers) {
     logger.info(`Disconnecting MCP server '${name}'`);
@@ -184,17 +142,10 @@ export async function shutdownMcpServers() {
   connectedServers.clear();
 }
 
-/**
- * Get status of all connected MCP servers.
- */
 export function getMcpStatus() {
   const status = {};
   for (const [name, { transport, tools }] of connectedServers) {
-    status[name] = {
-      connected: transport.isConnected,
-      toolCount: tools.length,
-      tools: tools.map((t) => t.name),
-    };
+    status[name] = { connected: transport.isConnected, toolCount: tools.length, tools: tools.map(tool => tool.name) };
   }
   return status;
 }
