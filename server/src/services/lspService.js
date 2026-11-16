@@ -7,10 +7,7 @@
  */
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { fileURLToPath } from "node:url";
-
-const SERVER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+import { pathToFileURL } from "node:url";
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 const MAX_LANGUAGE_SERVER_PROCESSES = 8;
