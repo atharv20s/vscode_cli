@@ -260,8 +260,7 @@ class EditorManager {
   }
 
   lspUriForModel(model) {
-    const relative = decodeURIComponent(String(model.uri.path || "").replace(/^\//, ""));
-    return this.lspRootUri + relative.split("/").map(encodeURIComponent).join("/");
+    return model.uri.toString();
   }
 
   ensureLspForFile(filePath, tab) {
