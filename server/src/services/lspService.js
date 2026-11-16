@@ -7,7 +7,7 @@
  */
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 
 const SERVER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -19,7 +19,8 @@ const COMMANDS = Object.freeze({
 });
 
 function executable(name) {
-  return path.join(SERVER_ROOT, "node_modules", ".bin", process.platform === "win32" ? name + ".cmd" : name);
+  const override = name === "typescript-language-server" ? process.env.ATH_LSP_TYPESCRIPT_BIN : process.env.ATH_LSP_PYTHON_BIN;
+  return override || name;
 }
 
 function send(ws, type, payload) {
@@ -66,7 +67,7 @@ export function startLanguageServer(ws, language) {
       NODE_OPTIONS: "",
     },
   });
-  const state = { child, buffer: Buffer.alloc(0), language, closed: false };
+  const state = { child, buffer: Buffer.alloc(0), language, closed: false, workspaceRoot: ws.workspaceService.workspaceRoot, workspaceService: ws.workspaceService };
   ws.languageServer = state;
   child.stdout.on("data", chunk => {
     try {
@@ -94,6 +95,22 @@ export function startLanguageServer(ws, language) {
 export function sendLanguageServerMessage(ws, message) {
   const state = ws.languageServer;
   if (!state || state.closed || !state.child.stdin.writable) throw new Error("Language server is not running.");
+  const validateUris = value => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if (typeof child === "string" && /(?:^|_)uri$/i.test(key) && child.startsWith("file:")) {
+        let absolute;
+        try { absolute = fileURLToPath(child); } catch { throw new Error("Invalid file URI in LSP request."); }
+        const relative = path.relative(state.workspaceRoot, absolute);
+        if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative) || relative.includes("\\0")) {
+          throw new Error("LSP file access is restricted to the active workspace.");
+        }
+        const checked = state.workspaceService.resolvePath(relative || ".");
+        if (!checked.safe) throw new Error("LSP file access is restricted to the active workspace.");
+      } else if (child && typeof child === "object") validateUris(child);
+    }
+  };
+  validateUris(message.params);
   const body = Buffer.from(JSON.stringify(message), "utf8");
   if (!body.length || body.length > MAX_FRAME_BYTES) throw new Error("LSP request exceeds the allowed size.");
   state.child.stdin.write(Buffer.concat([Buffer.from("Content-Length: " + body.length + "\r\n\r\n", "ascii"), body]));
