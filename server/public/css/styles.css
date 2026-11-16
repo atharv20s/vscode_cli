@@ -1928,3 +1928,11 @@ textarea {
 .git-diff-header { min-height:42px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 14px; color:var(--text-main); background:var(--bg-sidebar); border-bottom:1px solid var(--border-subtle); font-size:12px; }
 .git-diff-header strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .git-diff-host { flex:1; min-height:0; }
+
+/* Independent primary and secondary Monaco editor groups */
+#code-editor-view.split-primary { width:50%; right:auto; }
+.code-editor-view-secondary { position:absolute; top:0; right:0; bottom:0; width:50%; overflow:hidden; background:#1e1e1e; border-left:1px solid var(--border-bright); }
+@media (max-width: 900px) {
+  #code-editor-view.split-primary { width:100%; }
+  .code-editor-view-secondary { display:none; }
+}
