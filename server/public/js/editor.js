@@ -140,6 +140,13 @@ class EditorManager {
     if (this.lspProvidersRegistered || !window.wsClient) return;
     this.lspProvidersRegistered = true;
     window.wsClient.on("lsp.message", message => {
+      if (message?.method && message.id !== undefined) {
+        const result = message.method === "workspace/workspaceFolders"
+          ? [{ uri: this.lspRootUri, name: "workspace" }]
+          : message.method === "workspace/configuration" ? (message.params?.items || []).map(() => null) : null;
+        window.wsClient.send("lsp.message", { message: { jsonrpc: "2.0", id: message.id, result } });
+        return;
+      }
       if (message?.id !== undefined && this.lspPending.has(message.id)) {
         const pending = this.lspPending.get(message.id);
         clearTimeout(pending.timer);
