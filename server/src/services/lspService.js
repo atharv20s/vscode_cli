@@ -7,6 +7,7 @@
  */
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 
 const SERVER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -85,8 +86,9 @@ export function startLanguageServer(ws, language) {
     state.closed = true;
     send(ws, "lsp.exit", { language, code, signal });
   });
-  send(ws, "lsp.started", { language, pid: child.pid });
-  return { language, pid: child.pid };
+  const rootUri = pathToFileURL(ws.workspaceService.workspaceRoot + path.sep).href;
+  send(ws, "lsp.started", { language, pid: child.pid, rootUri });
+  return { language, pid: child.pid, rootUri };
 }
 
 export function sendLanguageServerMessage(ws, message) {
