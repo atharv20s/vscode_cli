@@ -27,6 +27,7 @@ class EditorManager {
     this.agentApplyReady = false;
     this.agentApplyAcceptedPaths = new Set();
     this.agentApplyViewZoneId = null;
+    this.agentApplyZoneEditor = null;
     this.agentApplyDecorations = null;
     this.lspPending = new Map();
     this.lspChangeTimers = new Map();
@@ -728,7 +729,8 @@ class EditorManager {
     rejectAll.addEventListener("click", () => this.rejectAgentChanges());
     actions.append(accept, reject, apply, verify, rejectAll);
     zone.append(heading, files, actions);
-    this.monacoEditor.changeViewZones(accessor => {
+    this.agentApplyZoneEditor = this.monacoEditor;
+    this.agentApplyZoneEditor.changeViewZones(accessor => {
       if (this.agentApplyViewZoneId) accessor.removeZone(this.agentApplyViewZoneId);
       this.agentApplyViewZoneId = accessor.addZone({ afterLineNumber: 0, heightInLines: 4, domNode: zone, suppressMouseDown: false });
     });
@@ -838,9 +840,10 @@ class EditorManager {
   }
 
   closeAgentApplyReview() {
-    if (this.agentApplyViewZoneId && this.monacoEditor) {
-      this.monacoEditor.changeViewZones(accessor => accessor.removeZone(this.agentApplyViewZoneId));
+    if (this.agentApplyViewZoneId && this.agentApplyZoneEditor) {
+      this.agentApplyZoneEditor.changeViewZones(accessor => accessor.removeZone(this.agentApplyViewZoneId));
       this.agentApplyViewZoneId = null;
+      this.agentApplyZoneEditor = null;
     }
     this.agentApplyDecorations?.clear();
     this.agentApplyDecorations = null;
