@@ -3216,6 +3216,31 @@ class App {
       activate.className = "terminal-session-tab-label";
       activate.textContent = session.label || (session.id === "default" ? "Terminal 1" : "Terminal " + (index + 1));
       activate.addEventListener("click", () => this.switchTerminalSession(session.id));
+      activate.addEventListener("dblclick", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const input = document.createElement("input");
+        input.type = "text";
+        input.maxLength = 40;
+        input.className = "terminal-session-rename";
+        input.value = session.label || activate.textContent;
+        input.setAttribute("aria-label", "Rename terminal session");
+        activate.replaceWith(input);
+        input.focus();
+        input.select();
+        let finished = false;
+        const finish = save => {
+          if (finished) return;
+          finished = true;
+          if (save) session.label = input.value.trim().slice(0, 40) || session.label;
+          this.renderTerminalTabs();
+        };
+        input.addEventListener("keydown", keyEvent => {
+          if (keyEvent.key === "Enter") finish(true);
+          if (keyEvent.key === "Escape") finish(false);
+        });
+        input.addEventListener("blur", () => finish(true));
+      });
       tab.appendChild(activate);
       if (session.id !== "default") {
         const close = document.createElement("button");
