@@ -291,6 +291,9 @@
             <button id="btn-live-preview" class="tab-action-btn" title="Open Live Web Preview (localhost)" style="display:flex;align-items:center;gap:4px;background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.4);border-radius:4px;padding:3px 8px;color:#c084fc;font-size:11px;font-weight:600;cursor:pointer;">
               <i data-lucide="globe" style="width:13px;height:13px;"></i> <span>Live Preview</span>
             </button>
+            <button id="btn-symbol-outline" class="tab-action-btn" title="Show symbol outline">
+              <i data-lucide="list-tree"></i>
+            </button>
             <button id="btn-problems-panel" class="tab-action-btn" title="Show Problems panel">
               <i data-lucide="alert-circle"></i>
             </button>
@@ -305,6 +308,8 @@
             </button>
           </div>
         </div>
+
+        <div id="editor-breadcrumbs" class="editor-breadcrumbs" aria-label="Editor breadcrumbs"></div>
 
         <!-- Code Editor Area -->
         <div class="code-editor-wrapper" id="editor-container">

@@ -138,6 +138,7 @@ class EditorManager {
     editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyUp, () => editor.getAction("editor.action.moveLinesUpAction").run());
     editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyDown, () => editor.getAction("editor.action.moveLinesDownAction").run());
     editor.onDidFocusEditorText(() => this.activateGroup(group));
+    editor.onDidChangeCursorPosition(event => this.updateSymbolBreadcrumb(this.groupTabs[group], event.position.lineNumber));
     editor.onDidBlurEditorText(() => this.editorView.classList.remove("monaco-focused"));
   }
 
@@ -307,6 +308,7 @@ class EditorManager {
     this.saveStateToCache();
     this.refreshGitDecorations(filePath);
     this.scheduleDiagnostics(filePath, editor);
+    this.refreshDocumentSymbols(filePath);
   }
 
   closeTab(filePath) {
@@ -407,6 +409,110 @@ class EditorManager {
     this.gitDiffOverlay = null;
   }
 
+
+
+  async refreshDocumentSymbols(filePath) {
+    if (!filePath) return;
+    try {
+      const response = await fetch("/api/workspace/symbols/document?file=" + encodeURIComponent(filePath), {
+        headers: { Authorization: "Bearer " + (localStorage.getItem("token") || "") }
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const symbols = Array.isArray(data.symbols) ? data.symbols : [];
+      this.documentSymbols.set(filePath, symbols);
+      if (this.activeTab === filePath) {
+        this.renderSymbolOutline(filePath);
+        this.updateSymbolBreadcrumb(filePath, this.monacoEditor?.getPosition()?.lineNumber || 1);
+      }
+    } catch (error) { console.warn("Document symbol refresh failed:", error); }
+  }
+
+  updateSymbolBreadcrumb(filePath, lineNumber = 1) {
+    const bar = document.getElementById("editor-breadcrumbs");
+    if (!bar) return;
+    bar.replaceChildren();
+    if (!filePath) return;
+    const parts = filePath.split("/");
+    parts.forEach((part, index) => {
+      const crumb = document.createElement("span");
+      crumb.className = "editor-breadcrumb";
+      crumb.textContent = part;
+      bar.appendChild(crumb);
+      if (index < parts.length - 1) {
+        const separator = document.createElement("span");
+        separator.className = "editor-breadcrumb-separator";
+        separator.textContent = "›";
+        bar.appendChild(separator);
+      }
+    });
+    const symbols = this.documentSymbols.get(filePath) || [];
+    const active = symbols.filter(item => item.line <= lineNumber && (item.endLine || item.line) >= lineNumber)
+      .sort((a, b) => b.line - a.line)[0] || symbols.filter(item => item.line <= lineNumber).sort((a, b) => b.line - a.line)[0];
+    if (active) {
+      const separator = document.createElement("span");
+      separator.className = "editor-breadcrumb-separator";
+      separator.textContent = "›";
+      const symbol = document.createElement("span");
+      symbol.className = "editor-breadcrumb editor-breadcrumb-symbol";
+      symbol.textContent = active.name;
+      bar.append(separator, symbol);
+    }
+  }
+
+  toggleSymbolOutline(forceOpen = false) {
+    let panel = document.getElementById("ath-symbol-outline");
+    if (!panel) {
+      panel = document.createElement("aside");
+      panel.id = "ath-symbol-outline";
+      panel.className = "ath-symbol-outline";
+      panel.hidden = true;
+      const header = document.createElement("header");
+      const title = document.createElement("strong");
+      title.textContent = "Outline";
+      const close = document.createElement("button");
+      close.type = "button";
+      close.textContent = "×";
+      close.addEventListener("click", () => { panel.hidden = true; });
+      header.append(title, close);
+      const list = document.createElement("div");
+      list.className = "ath-symbol-outline-list";
+      panel.append(header, list);
+      this.editorView?.parentElement?.appendChild(panel);
+    }
+    panel.hidden = forceOpen ? false : !panel.hidden;
+    this.renderSymbolOutline(this.activeTab);
+    return panel;
+  }
+
+  renderSymbolOutline(filePath) {
+    const panel = document.getElementById("ath-symbol-outline");
+    if (!panel || !filePath) return;
+    const list = panel.querySelector(".ath-symbol-outline-list");
+    if (!list) return;
+    list.replaceChildren();
+    const symbols = this.documentSymbols.get(filePath) || [];
+    if (!symbols.length) {
+      const empty = document.createElement("div");
+      empty.className = "ath-outline-empty";
+      empty.textContent = "No indexed symbols in this file.";
+      list.appendChild(empty);
+      return;
+    }
+    symbols.forEach(item => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "ath-outline-item";
+      row.textContent = item.name + "  ·  " + item.kind + "  :" + item.line;
+      row.addEventListener("click", () => {
+        const position = { lineNumber: item.line, column: item.col || 1 };
+        this.monacoEditor?.setPosition(position);
+        this.monacoEditor?.revealPositionInCenter(position);
+        this.monacoEditor?.focus();
+      });
+      list.appendChild(row);
+    });
+  }
 
   scheduleDiagnostics(filePath, editor) {
     if (!filePath || !editor) return;
