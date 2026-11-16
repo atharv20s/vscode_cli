@@ -448,7 +448,7 @@ router.post("/diagnostics", async (req, res) => {
 });
 
 const AGENT_APPLY_MAX_FILES=20, AGENT_APPLY_MAX_TOTAL_BYTES=5*1024*1024, AGENT_APPLY_MAX_FILE_BYTES=1024*1024;
-const AGENT_APPLY_SECRET_PATH=/(^|\\/)(?:\\.env(?:\\..*)?|credentials(?:\\..*)?|id_rsa|id_ed25519|.*\\.(?:pem|key|p12|pfx|keystore))$/i;
+const AGENT_APPLY_SECRET_PATH=/(^|\/)(?:\.env(?:\..*)?|credentials(?:\..*)?|id_rsa|id_ed25519|.*\.(?:pem|key|p12|pfx|keystore))$/i;
 function agentApplyWorkspace(req){return getWorkspaceService(req.workspaceAccess?.ownerUserId||req.user.id,req.workspaceAccess?.workspaceId||req.get("X-Workspace-Id")||"default");}
 function validateAgentApplyFiles(input,workspace,requireVersion){
   if(!Array.isArray(input)||input.length<1||input.length>AGENT_APPLY_MAX_FILES){const e=new Error("A patch must contain between 1 and 20 files.");e.status=400;throw e;}
