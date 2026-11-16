@@ -193,7 +193,10 @@ class EditorManager {
         if (this.activeTab) this.selectTab(this.activeTab);
       }).catch(error => window.app?.logTerminal("LSP initialize failed: " + error.message, "warning"));
     });
-    window.wsClient.on("lsp.error", error => window.app?.logTerminal("LSP: " + (error?.message || "language server error"), "warning"));
+    window.wsClient.on("lsp.error", error => {
+      this.lspLanguage = null; this.lspRootUri = null;
+      window.app?.logTerminal("LSP: " + (error?.message || "language server error"), "warning");
+    });
     const languages = ["typescript", "javascript", "python"];
     languages.forEach(language => {
       monaco.languages.registerCompletionItemProvider(language, {
@@ -270,6 +273,7 @@ class EditorManager {
     if (!language || !window.wsClient) return;
     if (this.lspLanguage !== language) {
       this.lspLanguage = language;
+      this.lspRootUri = null;
       window.wsClient.send("lsp.start", { language });
       return;
     }
