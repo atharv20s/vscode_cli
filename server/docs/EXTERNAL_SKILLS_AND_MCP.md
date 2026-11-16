@@ -58,6 +58,12 @@ servers to `server/mcp_config.json` under `mcpServers`:
   variables explicitly in that server's `env` object.
 - MCP tool output is capped before it is returned to the agent.
 
+The bundled filesystem server is disabled by default because the current MCP client
+is process-global and cannot yet prove per-user workspace isolation. Keep it disabled
+until the integration is made workspace-scoped. The bundled GitHub MCP server is
+restricted to repository metadata lookup; other actions remain unavailable through
+that connection.
+
 MCP server configuration is privileged operator configuration because it starts
 subprocesses. Only trusted administrators should change it. Prefer workspace-scoped
 servers and read-only tool allowlists. Do not point a filesystem server at a shared
