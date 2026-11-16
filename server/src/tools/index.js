@@ -148,6 +148,7 @@ import { registerDocTools } from "./docTools.js";
 import { registerSpecialistTools } from "./specialistTools.js";
 import { registerVerificationTools } from "./verificationTools.js";
 import { registerBrowserVerificationTool } from "./browserVerificationTools.js";
+import { registerAgentApplyTools } from "./agentApplyTools.js";
 
 /**
  * Initialize all built-in tools.
@@ -166,4 +167,5 @@ export function initializeTools() {
   registerSpecialistTools();
   registerVerificationTools();
   registerBrowserVerificationTool();
+  registerAgentApplyTools(registerTool);
 }
