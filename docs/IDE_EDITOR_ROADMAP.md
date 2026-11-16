@@ -6,6 +6,7 @@ This document tracks the editor UX implementation sequence. The pull requests ar
 |---|---|---|
 | #51 | Tree-sitter → Monaco Go to Definition and Hover | Workspace-scoped symbol resolution, declaration locations, hover metadata and cached Tree-sitter indexing. |
 | #52 | Find-in-Files and Git status decorations | Bounded workspace search, changed-file indicators and Monaco changed-line markers. |
+| #53 | Monaco Git diff viewer | Read-only side-by-side comparison of a workspace file against HEAD. |
 
 ## Merge order
 
