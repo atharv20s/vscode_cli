@@ -13,6 +13,8 @@ import { fileURLToPath } from "node:url";
 const SERVER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
+const MAX_LANGUAGE_SERVER_PROCESSES = 8;
+const activeProcesses = new Set();
 const COMMANDS = Object.freeze({
   typescript: { bin: "typescript-language-server", args: ["--stdio"], extensions: new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]) },
   python: { bin: "pyright-langserver", args: ["--stdio"], extensions: new Set([".py", ".pyi"]) },
@@ -53,6 +55,7 @@ export function startLanguageServer(ws, language) {
   const config = COMMANDS[language];
   if (!config) throw new Error("Unsupported language server.");
   stopLanguageServer(ws);
+  if (activeProcesses.size >= MAX_LANGUAGE_SERVER_PROCESSES) throw new Error("Language server capacity is full. Close another editor session and retry.");
   const child = spawn(executable(config.bin), config.args, {
     cwd: ws.workspaceService.workspaceRoot,
     shell: false,
@@ -60,7 +63,7 @@ export function startLanguageServer(ws, language) {
     stdio: ["pipe", "pipe", "pipe"],
     env: {
       PATH: process.env.PATH || "",
-      HOME: process.env.HOME || "",
+      HOME: ws.workspaceService.workspaceRoot,
       TMPDIR: process.env.TMPDIR || "/tmp",
       TEMP: process.env.TEMP || "/tmp",
       LANG: process.env.LANG || "C.UTF-8",
@@ -69,6 +72,7 @@ export function startLanguageServer(ws, language) {
   });
   const state = { child, buffer: Buffer.alloc(0), language, closed: false, workspaceRoot: ws.workspaceService.workspaceRoot, workspaceService: ws.workspaceService };
   ws.languageServer = state;
+  activeProcesses.add(child);
   child.stdout.on("data", chunk => {
     try {
       parseFrames(state, chunk, message => send(ws, "lsp.message", message));
@@ -85,6 +89,7 @@ export function startLanguageServer(ws, language) {
   child.on("exit", (code, signal) => {
     if (ws.languageServer === state) ws.languageServer = null;
     state.closed = true;
+    activeProcesses.delete(child);
     send(ws, "lsp.exit", { language, code, signal });
   });
   const rootUri = pathToFileURL(ws.workspaceService.workspaceRoot + path.sep).href;
@@ -98,7 +103,7 @@ export function sendLanguageServerMessage(ws, message) {
   const validateUris = value => {
     if (!value || typeof value !== "object") return;
     for (const [key, child] of Object.entries(value)) {
-      if (typeof child === "string" && /(?:^|_)uri$/i.test(key) && child.startsWith("file:")) {
+      if (typeof child === "string" && /uri$/i.test(key) && child.startsWith("file:")) {
         let absolute;
         try { absolute = fileURLToPath(child); } catch { throw new Error("Invalid file URI in LSP request."); }
         const relative = path.relative(state.workspaceRoot, absolute);
