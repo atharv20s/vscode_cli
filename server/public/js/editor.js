@@ -67,6 +67,47 @@ class EditorManager {
         links: true,
         mouseWheelZoom: true
       });
+
+      const symbolLanguages = ["javascript", "typescript", "python", "rust", "go", "java"];
+      const symbolHeaders = () => ({ Authorization: "Bearer " + (localStorage.getItem("token") || "") });
+      const activeFileForModel = model => decodeURIComponent(String(model?.uri?.path || "").replace(/^\//, "")) || this.activeTab;
+      const symbolRequest = async (endpoint, model, position) => {
+        const word = model.getWordAtPosition(position);
+        const file = activeFileForModel(model);
+        if (!word || !file) return null;
+        const params = new URLSearchParams({ file, symbol: word.word, line: String(position.lineNumber) });
+        const response = await fetch("/api/workspace/symbols/" + endpoint + "?" + params.toString(), { headers: symbolHeaders() });
+        if (!response.ok) return null;
+        return response.json();
+      };
+      symbolLanguages.forEach(language => {
+        monaco.languages.registerDefinitionProvider(language, {
+          provideDefinition: async (model, position) => {
+            const data = await symbolRequest("definition", model, position);
+            if (!data?.definition) return null;
+            const definition = data.definition;
+            const uri = monaco.Uri.parse("file:///" + String(definition.file).split("/").map(encodeURIComponent).join("/"));
+            const line = Math.max(1, Number(definition.line) || 1);
+            const column = Math.max(1, Number(definition.col) || 1);
+            return { uri, range: new monaco.Range(line, column, line, column + String(data.symbol || "").length) };
+          }
+        });
+        monaco.languages.registerHoverProvider(language, {
+          provideHover: async (model, position) => {
+            const data = await symbolRequest("hover", model, position);
+            if (!data?.hover) return null;
+            const item = data.hover;
+            return {
+              range: model.getWordAtPosition(position),
+              contents: [
+                { value: "**" + String(item.name || "") + "** (" + String(item.kind || "symbol") + ")" },
+                { value: "Signature: " + String(item.signature || item.name || "").slice(0, 240) },
+                { value: String(item.file || "") + ":" + String(item.line || "") }
+              ]
+            };
+          }
+        });
+      });
       this.monacoReady = true;
       this.monacoEditor.onDidChangeModelContent(() => {
         if (this.suppressModelChange || !this.activeTab || !this.openTabs.has(this.activeTab)) return;

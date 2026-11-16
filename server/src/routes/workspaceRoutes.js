@@ -3,6 +3,8 @@
  */
 
 import { Router } from "express";
+import fs from "fs/promises";
+import path from "path";
 import { requireAuth } from "../middleware/auth.js";
 import {
   listFiles,
@@ -17,6 +19,9 @@ import { LocalBackend } from "../services/backends/localBackend.js";
 import { config } from "../config/env.js";
 import { listWorkspaceSessions, createWorkspaceSession } from "../services/workspaceSessionService.js";
 import { resolveWorkspaceShare } from "../services/workspaceCollaborationService.js";
+import { getWorkspaceService } from "../services/workspaceService.js";
+import { pullWorkspaceFromRemote } from "../services/remoteExecutionWorker.js";
+import { buildRepositorySymbolIndex } from "../services/repoSymbolIndex.js";
 
 const router = Router();
 
@@ -78,6 +83,81 @@ router.use(requireAuth, async (req, res, next) => {
     return next();
   } catch (error) {
     return res.status(503).json({ error: "WorkspaceRegistryUnavailable", message: "Workspace registry is unavailable." });
+  }
+});
+
+
+const SYMBOL_SKIP_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", "coverage", ".cache", ".worktrees", ".agent-runs", "vendor", "target", ".venv", "venv"]);
+async function collectSymbolFiles(root) {
+  const files = [];
+  const stack = [{ absolute: root, relative: "" }];
+  let visited = 0;
+  while (stack.length && visited < 5000 && files.length < 2200) {
+    const current = stack.pop();
+    let entries;
+    try { entries = await fs.readdir(current.absolute, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (++visited > 5000 || files.length >= 2200) break;
+      if (entry.isSymbolicLink() || SYMBOL_SKIP_DIRS.has(entry.name) || entry.name.startsWith(".ath-")) continue;
+      const relative = current.relative ? current.relative + "/" + entry.name : entry.name;
+      const absolute = path.join(current.absolute, entry.name);
+      if (entry.isDirectory()) stack.push({ absolute, relative });
+      else if (entry.isFile()) files.push(relative);
+    }
+  }
+  return files;
+}
+const symbolIndexCache = new Map();
+async function symbolIndexForRequest(req) {
+  const workspace = getWorkspaceService(req.workspaceAccess?.ownerUserId || req.user.id, req.workspaceAccess?.workspaceId || req.get("X-Workspace-Id") || "default");
+  if (config.executionRuntime === "remote") await pullWorkspaceFromRemote({ workspaceId: workspace.workspaceId, workspaceDir: workspace.workspaceRoot });
+  const cacheKey = workspace.workspaceId + ":" + workspace.workspaceRoot;
+  const cached = symbolIndexCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 10000) return cached.index;
+  const files = await collectSymbolFiles(workspace.workspaceRoot);
+  const index = await buildRepositorySymbolIndex(workspace.workspaceRoot, files, "", { includeAll: true, maxFiles: 1000 });
+  symbolIndexCache.set(cacheKey, { createdAt: Date.now(), index });
+  if (symbolIndexCache.size > 20) symbolIndexCache.delete(symbolIndexCache.keys().next().value);
+  return index;
+}
+function symbolQuery(req) {
+  const file = String(req.query.file || "");
+  const symbol = String(req.query.symbol || "");
+  if (!file || file.length > 1024 || !symbol || symbol.length > 120 || !/^[A-Za-z_$][\w$]*$/.test(symbol)) return null;
+  return { file, symbol, line: Math.max(1, Number.parseInt(req.query.line, 10) || 1) };
+}
+router.get("/symbols/definition", async (req, res) => {
+  const query = symbolQuery(req);
+  if (!query) return res.status(400).json({ error: "InvalidSymbolQuery" });
+  try {
+    const workspace = getWorkspaceService(req.workspaceAccess?.ownerUserId || req.user.id, req.workspaceAccess?.workspaceId || req.get("X-Workspace-Id") || "default");
+    const target = workspace.resolvePath(query.file);
+    if (!target.safe) return res.status(403).json({ error: "Forbidden" });
+    const index = await symbolIndexForRequest(req);
+    const matches = (index.declarations || []).filter(item => item.name === query.symbol);
+    if (!matches.length) return res.json({ symbol: query.symbol, definition: null, parsedFileCount: index.parsedFileCount });
+    matches.sort((a, b) => (a.path === target.relative ? 0 : 1) - (b.path === target.relative ? 0 : 1) || Math.abs(a.startLine - query.line) - Math.abs(b.startLine - query.line) || a.path.localeCompare(b.path));
+    const item = matches[0];
+    return res.json({ symbol: query.symbol, definition: { file: item.path, line: item.startLine, col: item.column || 1, kind: item.kind, signature: item.signature || item.name } });
+  } catch {
+    return res.status(503).json({ error: "SymbolIndexUnavailable", message: "The workspace symbol index could not be built." });
+  }
+});
+router.get("/symbols/hover", async (req, res) => {
+  const query = symbolQuery(req);
+  if (!query) return res.status(400).json({ error: "InvalidSymbolQuery" });
+  try {
+    const workspace = getWorkspaceService(req.workspaceAccess?.ownerUserId || req.user.id, req.workspaceAccess?.workspaceId || req.get("X-Workspace-Id") || "default");
+    const target = workspace.resolvePath(query.file);
+    if (!target.safe) return res.status(403).json({ error: "Forbidden" });
+    const index = await symbolIndexForRequest(req);
+    const matches = (index.declarations || []).filter(item => item.name === query.symbol);
+    if (!matches.length) return res.json({ hover: null });
+    matches.sort((a, b) => (a.path === target.relative ? 0 : 1) - (b.path === target.relative ? 0 : 1) || Math.abs(a.startLine - query.line) - Math.abs(b.startLine - query.line));
+    const item = matches[0];
+    return res.json({ hover: { name: item.name, kind: item.kind, file: item.path, line: item.startLine, signature: item.signature || item.name } });
+  } catch {
+    return res.status(503).json({ error: "SymbolIndexUnavailable", message: "The workspace symbol index could not be built." });
   }
 });
 
