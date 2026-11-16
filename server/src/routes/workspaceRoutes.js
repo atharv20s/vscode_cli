@@ -447,6 +447,71 @@ router.post("/diagnostics", async (req, res) => {
   }
 });
 
+const AGENT_APPLY_MAX_FILES=20, AGENT_APPLY_MAX_TOTAL_BYTES=5*1024*1024, AGENT_APPLY_MAX_FILE_BYTES=1024*1024;
+const AGENT_APPLY_SECRET_PATH=/(^|\/)(?:\.env(?:\..*)?|credentials(?:\..*)?|id_rsa|id_ed25519|.*\.(?:pem|key|p12|pfx|keystore))$/i;
+function agentApplyWorkspace(req){return getWorkspaceService(req.workspaceAccess?.ownerUserId||req.user.id,req.workspaceAccess?.workspaceId||req.get("X-Workspace-Id")||"default");}
+function validateAgentApplyFiles(input,workspace,requireVersion){
+  if(!Array.isArray(input)||input.length<1||input.length>AGENT_APPLY_MAX_FILES){const e=new Error("A patch must contain between 1 and 20 files.");e.status=400;throw e;}
+  const seen=new Set();let total=0;
+  return input.map(item=>{
+    const file=typeof item?.path==="string"?item.path.trim():"",content=item?.content;
+    if(!file||file.length>1024||path.isAbsolute(file)||file.includes("\0")||typeof content!=="string"){const e=new Error("Each patch file needs a relative path and UTF-8 content.");e.status=400;throw e;}
+    const normalized=file.replace(/\\/g,"/").replace(/^\.\//,"");
+    if(seen.has(normalized)){const e=new Error("Duplicate file path in patch.");e.status=400;throw e;}seen.add(normalized);
+    if(AGENT_APPLY_SECRET_PATH.test(normalized)||normalized.split("/").some(part=>[".git",".ath-locks","node_modules"].includes(part))){const e=new Error("Sensitive or generated paths cannot be changed through Agent Apply.");e.status=403;throw e;}
+    const bytes=Buffer.byteLength(content,"utf8");total+=bytes;
+    if(bytes>AGENT_APPLY_MAX_FILE_BYTES||total>AGENT_APPLY_MAX_TOTAL_BYTES||content.includes("\u0000")){const e=new Error("Patch exceeds text file or total patch size limits.");e.status=413;throw e;}
+    const target=workspace.resolvePath(normalized);if(!target.safe||target.relative==="."){const e=new Error("Patch path is outside the active workspace.");e.status=403;throw e;}
+    if(requireVersion&&!Object.prototype.hasOwnProperty.call(item,"expectedVersion")){const e=new Error("Every accepted file must include its preview version.");e.status=400;throw e;}
+    return{path:target.relative,content,expectedVersion:item.expectedVersion};
+  });
+}
+router.post("/agent/apply",async(req,res)=>{
+  if(req.workspaceAccess?.permission!=="owner")return res.status(403).json({error:"AgentApplyOwnerOnly"});
+  try{
+    const workspace=agentApplyWorkspace(req),files=validateAgentApplyFiles(req.body?.files,workspace,false);
+    if(config.executionRuntime==="remote")await pullWorkspaceFromRemote({workspaceId:workspace.workspaceId,workspaceDir:workspace.workspaceRoot});
+    const previews=[];
+    for(const item of files){
+      let original="",expectedVersion=null;
+      try{const current=await workspace.readFile(item.path);original=current.content;expectedVersion=current.version;}
+      catch(error){if(error.code!=="ENOENT")throw error;}
+      if(original.includes("\u0000"))return res.status(415).json({error:"BinaryPatchUnsupported",path:item.path});
+      previews.push({path:item.path,original,content:item.content,expectedVersion,isNew:expectedVersion===null});
+    }
+    return res.json({summary:String(req.body?.summary||"Agent proposed workspace changes").slice(0,240),files:previews});
+  }catch(error){return res.status(error.status||400).json({error:error.code||"AgentApplyPreviewFailed",message:error.message});}
+});
+router.post("/agent/apply/commit",async(req,res)=>{
+  if(req.workspaceAccess?.permission!=="owner")return res.status(403).json({error:"AgentApplyOwnerOnly"});
+  const workspace=agentApplyWorkspace(req);let files;
+  try{
+    files=validateAgentApplyFiles(req.body?.files,workspace,true);
+    if(config.executionRuntime==="remote")await pullWorkspaceFromRemote({workspaceId:workspace.workspaceId,workspaceDir:workspace.workspaceRoot});
+    for(const item of files){
+      let currentVersion=null;try{currentVersion=(await workspace.readFile(item.path)).version;}catch(error){if(error.code!=="ENOENT")throw error;}
+      if(currentVersion!==item.expectedVersion)return res.status(409).json({error:"AgentApplyConflict",path:item.path,message:"A file changed after preview. Ask the agent to regenerate the patch."});
+    }
+  }catch(error){return res.status(error.status||400).json({error:error.code||"AgentApplyValidationFailed",message:error.message});}
+  const applied=[];
+  try{
+    for(const item of files){
+      let original=null;try{original=await workspace.readFile(item.path);}catch(error){if(error.code!=="ENOENT")throw error;}
+      const result=await workspace.writeFile(item.path,item.content,{expectedVersion:item.expectedVersion,source:"agent_apply",actor:req.user.id});
+      applied.push({path:item.path,original,appliedVersion:result.version});
+    }
+    return res.json({success:true,files:applied.map(item=>({path:item.path,version:item.appliedVersion,isNew:!item.original}))});
+  }catch(error){
+    let rollbackComplete=true;
+    for(const item of applied.reverse()){
+      try{
+        if(item.original)await workspace.writeFile(item.path,item.original.content,{expectedVersion:item.appliedVersion,source:"agent_apply_rollback",actor:req.user.id});
+        else await workspace.deleteFile(item.path,{expectedVersion:item.appliedVersion,source:"agent_apply_rollback",actor:req.user.id});
+      }catch{rollbackComplete=false;}
+    }
+    return res.status(rollbackComplete?409:500).json({error:"AgentApplyCommitFailed",message:error.message,rollbackComplete,rollbackWarning:rollbackComplete?undefined:"A file could not be rolled back safely because it changed during recovery."});
+  }
+});
 router.get("/files", listFiles);
 router.get("/file", readFile);
 router.post("/file", writeFile);

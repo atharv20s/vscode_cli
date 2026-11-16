@@ -19,6 +19,12 @@ class EditorManager {
     this.gitDiffSideBySide = true;
     this.splitRatio = 0.5;
     this.splitSash = null;
+    this.agentApplyOverlay = null;
+    this.agentApplyDiffEditor = null;
+    this.agentApplyDiffModels = [];
+    this.agentApplyFiles = [];
+    this.agentApplySelectedPath = null;
+    this.agentApplyReady = false;
     this.suppressModelChange = false;
     this.initEventListeners();
     this.restoreStateFromCache();
@@ -462,6 +468,129 @@ class EditorManager {
   }
 
 
+
+  async reviewAgentChanges(proposal) {
+    const incoming = Array.isArray(proposal?.files) ? proposal.files : [];
+    if (!incoming.length) return;
+    try {
+      const response = await fetch("/api/workspace/agent/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + (localStorage.getItem("token") || "") },
+        body: JSON.stringify({ summary: proposal.summary, files: incoming })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || data.error || "Unable to prepare the agent patch.");
+      const merged = new Map(this.agentApplyFiles.map(item => [item.path, item]));
+      for (const item of data.files || []) merged.set(item.path, item);
+      this.agentApplyFiles = Array.from(merged.values());
+      this.agentApplySummary = data.summary || proposal.summary || "Agent proposed changes";
+      this.agentApplySelectedPath = this.agentApplyFiles[0]?.path || null;
+      this.agentApplyReady = false;
+      this.renderAgentApplyReview();
+    } catch (error) { window.app?.renderError("Agent patch preview failed: " + error.message); }
+  }
+
+  renderAgentApplyReview() {
+    if (!this.agentApplyFiles.length) return;
+    this.closeAgentApplyReview();
+    const overlay = document.createElement("section");
+    overlay.className = "git-diff-overlay agent-apply-overlay";
+    overlay.id = "agent-apply-overlay";
+    const header = document.createElement("div"); header.className = "git-diff-header";
+    const title = document.createElement("strong");
+    title.textContent = this.agentApplySummary + " · " + this.agentApplyFiles.length + " file(s)";
+    const close = document.createElement("button"); close.type = "button"; close.className = "secondary-btn"; close.textContent = "Close";
+    close.addEventListener("click", () => this.rejectAgentChanges()); header.append(title, close);
+    const fileBar = document.createElement("nav"); fileBar.className = "agent-apply-filebar";
+    const host = document.createElement("div"); host.className = "git-diff-host agent-apply-diff-host";
+    const footer = document.createElement("footer"); footer.className = "agent-apply-footer";
+    const status = document.createElement("span"); status.className = "agent-apply-status";
+    status.textContent = "Review proposed changes. Nothing has been written yet.";
+    const reject = document.createElement("button"); reject.type = "button"; reject.className = "secondary-btn"; reject.textContent = "Reject all";
+    reject.addEventListener("click", () => this.rejectAgentChanges());
+    const accept = document.createElement("button"); accept.type = "button"; accept.className = "primary-btn"; accept.textContent = "Accept changes"; accept.disabled = !this.agentApplyReady;
+    accept.addEventListener("click", () => this.acceptAgentChanges(false));
+    const verify = document.createElement("button"); verify.type = "button"; verify.className = "primary-btn"; verify.textContent = "Accept & verify"; verify.disabled = !this.agentApplyReady;
+    verify.addEventListener("click", () => this.acceptAgentChanges(true));
+    footer.append(status, reject, accept, verify); overlay.append(header, fileBar, host, footer); document.body.appendChild(overlay);
+    this.agentApplyOverlay=overlay;this.agentApplyFileBar=fileBar;this.agentApplyDiffHost=host;this.agentApplyStatus=status;
+    this.agentApplyAcceptButton=accept;this.agentApplyVerifyButton=verify;
+    this.agentApplyFiles.forEach(item=>{
+      const button=document.createElement("button");button.type="button";
+      button.className="agent-apply-file"+(item.path===this.agentApplySelectedPath?" active":"");
+      button.textContent=item.path+(item.isNew?" · new":"");
+      button.addEventListener("click",()=>{this.agentApplySelectedPath=item.path;this.renderAgentApplySelectedDiff();fileBar.querySelectorAll("button").forEach(node=>node.classList.toggle("active",node===button));});
+      fileBar.appendChild(button);
+    });
+    this.renderAgentApplySelectedDiff();
+    overlay.addEventListener("keydown",event=>{if(event.key==="Escape")this.rejectAgentChanges();});
+  }
+
+  renderAgentApplySelectedDiff() {
+    const item=this.agentApplyFiles.find(file=>file.path===this.agentApplySelectedPath);
+    if(!item||!this.agentApplyDiffHost||typeof monaco==="undefined")return;
+    if(!this.agentApplyDiffEditor)this.agentApplyDiffEditor=monaco.editor.createDiffEditor(this.agentApplyDiffHost,{
+      theme:"vs-dark",readOnly:true,originalEditable:false,renderSideBySide:this.gitDiffSideBySide,
+      automaticLayout:true,minimap:{enabled:false},scrollBeyondLastLine:false,diffWordWrap:"on",renderIndicators:true
+    });
+    this.agentApplyDiffModels.forEach(model=>model.dispose());
+    const language=this.detectLanguage(item.path),uri="inmemory://ath-agent-apply/"+encodeURIComponent(item.path);
+    const original=monaco.editor.createModel(item.original||"",language,monaco.Uri.parse(uri+"?original"));
+    const modified=monaco.editor.createModel(item.content||"",language,monaco.Uri.parse(uri+"?proposed"));
+    this.agentApplyDiffModels=[original,modified];this.agentApplyDiffEditor.setModel({original,modified});
+  }
+
+  enableAgentProposalActions() {
+    this.agentApplyReady=true;
+    if(this.agentApplyAcceptButton)this.agentApplyAcceptButton.disabled=false;
+    if(this.agentApplyVerifyButton)this.agentApplyVerifyButton.disabled=false;
+    if(this.agentApplyStatus)this.agentApplyStatus.textContent="Agent turn finished. Review and accept when ready.";
+  }
+
+  async acceptAgentChanges(verify) {
+    if(!this.agentApplyReady||!this.agentApplyFiles.length)return;
+    const files=this.agentApplyFiles.map(item=>({path:item.path,content:item.content,expectedVersion:item.expectedVersion}));
+    if(this.agentApplyStatus)this.agentApplyStatus.textContent="Applying version-checked patch…";
+    if(this.agentApplyAcceptButton)this.agentApplyAcceptButton.disabled=true;
+    if(this.agentApplyVerifyButton)this.agentApplyVerifyButton.disabled=true;
+    try{
+      const response=await fetch("/api/workspace/agent/apply/commit",{
+        method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+(localStorage.getItem("token")||"")},
+        body:JSON.stringify({files})
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error((data.message||data.error||"Patch commit failed")+(data.rollbackComplete===false?" · rollback incomplete; inspect workspace immediately.":""));
+      const applied=this.agentApplyFiles.map(item=>({path:item.path,content:item.content}));
+      for(const item of this.agentApplyFiles){
+        const saved=(data.files||[]).find(file=>file.path===item.path),tab=this.openTabs.get(item.path);
+        if(tab){tab.content=item.content;tab.version=saved?.version||null;tab.isDirty=false;
+          const uri=monaco.Uri.parse("file:///"+item.path.split("/").map(encodeURIComponent).join("/"));
+          const model=monaco.editor.getModel(uri);if(model)model.setValue(item.content);
+        }
+      }
+      this.closeAgentApplyReview();this.agentApplyFiles=[];
+      await window.app?.loadWorkspaceFiles?.();
+      window.app?.renderSystemMessage("**Agent patch accepted.** "+applied.length+" file(s) saved with version checks.");
+      if(verify)await window.app?.runAgentVerification?.(applied);
+    }catch(error){
+      if(this.agentApplyStatus)this.agentApplyStatus.textContent="Apply failed: "+error.message;
+      if(this.agentApplyAcceptButton)this.agentApplyAcceptButton.disabled=false;
+      if(this.agentApplyVerifyButton)this.agentApplyVerifyButton.disabled=false;
+      window.app?.renderError("Agent Apply failed: "+error.message);
+    }
+  }
+
+  rejectAgentChanges() {
+    this.closeAgentApplyReview();this.agentApplyFiles=[];this.agentApplyReady=false;
+    window.app?.renderSystemMessage("Agent patch rejected. No proposed files were written.");
+  }
+
+  closeAgentApplyReview() {
+    this.agentApplyDiffEditor?.setModel(null);this.agentApplyDiffEditor?.dispose();this.agentApplyDiffEditor=null;
+    this.agentApplyDiffModels.forEach(model=>model.dispose());this.agentApplyDiffModels=[];
+    this.agentApplyOverlay?.remove();this.agentApplyOverlay=null;this.agentApplyFileBar=null;
+    this.agentApplyDiffHost=null;this.agentApplyStatus=null;this.agentApplyAcceptButton=null;this.agentApplyVerifyButton=null;
+  }
 
   async refreshDocumentSymbols(filePath) {
     if (!filePath) return;
