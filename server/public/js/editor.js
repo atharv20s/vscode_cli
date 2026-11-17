@@ -11,6 +11,10 @@ class EditorManager {
     this.editorView = document.getElementById("code-editor-view");
     this.saveBtn = document.getElementById("btn-save-file");
     this.monacoEditor = null;
+    this.primaryEditor = null;
+    this.secondaryEditor = null;
+    this.activeGroup = "primary";
+    this.groupTabs = { primary: null, secondary: null };
     this.monacoReady = false;
     this.pendingModel = null;
     this.gitDecorationIds = new Map();
@@ -99,6 +103,7 @@ class EditorManager {
         links: true,
         mouseWheelZoom: true
       });
+      this.primaryEditor = this.monacoEditor;
 
       const symbolLanguages = ["javascript", "typescript", "python", "rust", "go", "java"];
       const symbolHeaders = () => ({ Authorization: "Bearer " + (localStorage.getItem("token") || "") });
@@ -711,14 +716,15 @@ class EditorManager {
     this.suppressModelChange = false;
   }
 
-  selectTab(filePath, group = this.activeGroup) {
+  selectTab(filePath, group = this.activeGroup || "primary") {
+    if (!this.groupTabs) this.groupTabs = { primary: null, secondary: null };
     const tab = this.openTabs.get(filePath);
     if (!tab) return;
     if (group === "secondary" && !this.secondaryEditor) group = "primary";
     this.groupTabs[group] = filePath;
     this.activeGroup = group;
     this.activeTab = filePath;
-    const editor = group === "secondary" ? this.secondaryEditor : this.primaryEditor;
+    const editor = group === "secondary" ? this.secondaryEditor : (this.primaryEditor || this.monacoEditor);
     if (this.welcomeScreen) this.welcomeScreen.style.display = "none";
     if (this.editorView) this.editorView.style.display = "block";
     if (!this.monacoReady || !editor) { this.pendingModel = filePath; return; }
