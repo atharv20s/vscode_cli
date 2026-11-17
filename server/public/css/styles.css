@@ -2014,3 +2014,15 @@ textarea {
 .agent-inline-hunk-controls button:disabled { opacity:.45; cursor:not-allowed; }
 .monaco-editor .agent-inline-accepted-line { background:rgba(96,165,250,.16); }
 @media (max-width:760px) { .agent-inline-hunk { grid-template-columns:1fr auto; gap:4px; } .agent-inline-hunk-preview { grid-column:1 / -1; grid-row:2; max-height:36px; } .agent-inline-hunk-controls { grid-column:2; grid-row:1; } }
+
+/* Focused Monaco inline edit surface */
+.code-editor-view { position: relative; }
+.ath-inline-edit { position: absolute; z-index: 40; top: 12px; right: 16px; width: min(680px, calc(100% - 32px)); max-height: calc(100% - 24px); overflow: auto; display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid rgba(129,140,248,.55); border-radius: 12px; background: rgba(18,19,24,.97); box-shadow: 0 18px 55px rgba(0,0,0,.55); backdrop-filter: blur(16px); }
+.ath-inline-edit-header, .ath-inline-edit-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.ath-inline-edit-header strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; color:var(--text-main); }
+.ath-inline-edit textarea { width:100%; resize:vertical; border:1px solid var(--border-bright); border-radius:8px; background:var(--bg-input); color:var(--text-main); padding:9px 10px; font:12px/1.5 var(--font-mono); outline:none; }
+.ath-inline-edit textarea:focus { border-color:var(--accent); }
+.ath-inline-edit-preview { min-height:150px; max-height:42vh; }
+.ath-inline-edit-status { color:var(--text-muted); font-size:11px; }
+.ath-inline-edit-actions { justify-content:flex-end; flex-wrap:wrap; }
+.ath-inline-edit-actions button { font-size:11px; padding:6px 10px; }
