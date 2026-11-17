@@ -110,7 +110,7 @@ function validateEditorState(value) {
   const tabs = Array.isArray(value.tabs) ? value.tabs.slice(0, 40) : [];
   let bytes = 0;
   const safeTabs = tabs.filter(tab => tab && typeof tab.path === "string" && tab.path.length <= 1024 &&
-    typeof tab.content === "string" && !tab.path.startsWith("/") && !tab.path.split(/[\\/]/).includes(".."))
+    typeof tab.content === "string" && !tab.path.startsWith("/") && !/^[A-Za-z]:/.test(tab.path) && !tab.path.split(/[\\/]/).includes(".."))
     .map(tab => {
       bytes += Buffer.byteLength(tab.content, "utf8");
       return { path: tab.path, content: tab.content, version: typeof tab.version === "string" ? tab.version : null, isDirty: tab.isDirty === true };
@@ -203,7 +203,7 @@ export async function completeAgentRunSnapshot(workspace, runId) {
   await pruneSnapshots(path.dirname(runDir));
   return { runId, state: record.state, changedFiles: record.before.entries.filter(item => {
     const after = record.after.entries.find(value => value.path === item.path);
-    return !after || after.digest !== item.digest || after.type !== item.type;
+    return !after || after.digest !== item.digest || after.type !== item.type || after.mode !== item.mode || after.mtimeMs !== item.mtimeMs;
   }).length + record.after.entries.filter(item => !record.before.entries.some(value => value.path === item.path)).length };
 }
 
@@ -257,7 +257,7 @@ export async function rollbackAgentRunSnapshot(workspace, runId) {
   const current = await walk(path.resolve(workspace.workspaceRoot));
   const currentIndex = await readGitIndex(path.resolve(workspace.workspaceRoot));
   const currentIndexDigest = currentIndex ? hash(currentIndex) : null;
-  const fingerprint = entries => JSON.stringify(entries.map(item => [item.path, item.type, item.digest || item.target || ""]).sort((a, b) => a[0].localeCompare(b[0])));
+  const fingerprint = entries => JSON.stringify(entries.map(item => [item.path, item.type, item.digest || item.target || "", item.mode ?? null, item.mtimeMs ?? null]).sort((a, b) => a[0].localeCompare(b[0])));
   if (fingerprint(current.entries) !== fingerprint(record.after.entries) ||
       currentIndexDigest !== (record.after.gitIndex?.digest || null)) {
     const error = new Error("Workspace changed after this agent run. Rollback refused to avoid overwriting newer work.");
