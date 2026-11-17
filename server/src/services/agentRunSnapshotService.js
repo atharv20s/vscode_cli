@@ -15,7 +15,7 @@ const inside = (root, target) => {
 };
 
 function storageRoot(workspace) {
-  const identity = hash(String(workspace.workspaceId || workspace.workspaceRoot)).slice(0, 32);
+  const identity = hash(String(workspace.workspaceId || "default") + "\\0" + path.resolve(workspace.workspaceRoot)).slice(0, 32);
   return path.join(config.workspaceRoot, ".ath-agent-run-snapshots", identity);
 }
 
