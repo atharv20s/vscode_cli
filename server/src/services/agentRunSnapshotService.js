@@ -29,10 +29,12 @@ async function walk(root) {
       const relative = current.relative ? current.relative + "/" + child.name : child.name;
       const absolute = path.join(current.absolute, child.name);
       if (child.isSymbolicLink()) {
+        const stat = await fs.lstat(absolute);
         const target = await fs.readlink(absolute);
-        entries.push({ path: relative, type: "symlink", target, digest: hash(target) });
+        entries.push({ path: relative, type: "symlink", target, digest: hash(target), mode: stat.mode & 0o777, mtimeMs: stat.mtimeMs });
       } else if (child.isDirectory()) {
-        entries.push({ path: relative, type: "directory" });
+        const stat = await fs.stat(absolute);
+        entries.push({ path: relative, type: "directory", mode: stat.mode & 0o777, mtimeMs: stat.mtimeMs });
         stack.push({ absolute, relative });
       } else if (child.isFile()) {
         const stat = await fs.stat(absolute);
@@ -43,7 +45,7 @@ async function walk(root) {
           throw error;
         }
         const bytes = await fs.readFile(absolute);
-        entries.push({ path: relative, type: "file", digest: hash(bytes), size: bytes.length });
+        entries.push({ path: relative, type: "file", digest: hash(bytes), size: bytes.length, mode: stat.mode & 0o777, mtimeMs: stat.mtimeMs });
       }
       if (entries.length > MAX_FILES) {
         const error = new Error("Agent run snapshot exceeds its file-count budget.");
@@ -64,6 +66,10 @@ async function copySnapshotFiles(root, destination, entries) {
     const target = path.join(destination, ...entry.path.split("/"));
     await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
     await fs.copyFile(source, target);
+    const copied = await fs.readFile(target);
+    if (hash(copied) !== entry.digest) throw new Error("Workspace changed while snapshotting: " + entry.path);
+    await fs.chmod(target, entry.mode ?? 0o600);
+    if (Number.isFinite(entry.mtimeMs)) await fs.utimes(target, new Date(entry.mtimeMs), new Date(entry.mtimeMs));
   }
 }
 
@@ -183,7 +189,8 @@ async function restoreTree(workspace, runDir, entries) {
   for (const item of entries.filter(value => value.type === "directory").sort((a, b) => a.path.length - b.path.length)) {
     const target = path.join(root, ...item.path.split("/"));
     if (!inside(root, target)) throw new Error("Snapshot directory escaped the workspace.");
-    await fs.mkdir(target, { recursive: true, mode: 0o700 });
+    await fs.mkdir(target, { recursive: true, mode: item.mode ?? 0o700 });
+    if (Number.isFinite(item.mtimeMs)) await fs.utimes(target, new Date(item.mtimeMs), new Date(item.mtimeMs));
   }
   for (const item of entries.filter(value => value.type !== "directory")) {
     const target = path.join(root, ...item.path.split("/"));
@@ -198,6 +205,8 @@ async function restoreTree(workspace, runDir, entries) {
       const temporary = target + ".ath-restore-" + crypto.randomBytes(5).toString("hex");
       await fs.writeFile(temporary, bytes, { mode: 0o600, flag: "wx" });
       await fs.rename(temporary, target);
+      await fs.chmod(target, item.mode ?? 0o600);
+      if (Number.isFinite(item.mtimeMs)) await fs.utimes(target, new Date(item.mtimeMs), new Date(item.mtimeMs));
     }
   }
 }
