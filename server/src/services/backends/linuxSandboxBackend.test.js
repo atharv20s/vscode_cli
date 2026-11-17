@@ -22,7 +22,7 @@ test("builds an isolated namespace command with network disabled by default", ()
   assert.ok(!args.includes("--share-net"));
   assert.ok(args.includes("--clearenv"));
   assert.ok(!args.includes("/etc/shadow"));
-  assert.ok(!args.includes("--ro-bind") || !args.includes("/etc"));
+  assert.ok(!args.some((arg, i) => arg === "--ro-bind" && args[i + 1] === "/etc"));
   assert.ok(args.includes("/srv/workspaces/user-a"));
   assert.ok(args.includes("npm test"));
 });
