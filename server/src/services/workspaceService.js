@@ -155,7 +155,7 @@ export class WorkspaceService {
       try { entries = await fsp.readdir(current, { withFileTypes: true }); }
       catch (error) { if (error.code === "ENOENT") continue; throw error; }
       for (const entry of entries) {
-        if (entry.name === ".ath-locks" || entry.name === ".ath-workspaces.json") continue;
+        if (entry.name === ".ath-locks" || entry.name === ".ath-workspaces.json" || entry.name === ".ath-agent-run-snapshots") continue;
         const target = path.join(current, entry.name);
         if (entry.isSymbolicLink()) continue;
         if (entry.isDirectory()) stack.push(target);
