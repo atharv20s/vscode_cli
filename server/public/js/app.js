@@ -15,6 +15,7 @@ class App {
     this.chatHistory = [];
     this.agentStateMachine = window.AgentStateMachine ? new window.AgentStateMachine() : null;
     this.activeAgentRunId = null;
+    this.agentAwaitingApproval = false;
     this.agentRunHistory = [];
     this.completionLatencySamples = [];
     this.agentStateMachine?.subscribe(event => {
@@ -292,6 +293,7 @@ class App {
     });
 
     window.wsClient.on("agent.apply.proposal", data => {
+      this.agentAwaitingApproval = true;
       this.transitionAgentState("awaiting_approval", { source: "composer-proposal" });
       window.editorManager?.reviewAgentChanges(data || {});
       this.logTerminal("[Agent] A multi-file patch is ready for review.", "info");
@@ -323,7 +325,7 @@ class App {
       this.finalizeMessage();
       this.setGeneratingState(false);
       this.loadWorkspaceFiles();
-      await this.completeAgentRunSnapshot();
+      if (!this.agentAwaitingApproval) await this.completeAgentRunSnapshot();
       if (this.agentStateMachine?.state !== "awaiting_approval") this.transitionAgentState("idle", { source: "composer-done" });
       if (data.totalTokens) {
         this.sessionTokens += data.totalTokens;
@@ -342,8 +344,10 @@ class App {
       window.editorManager?.enableAgentProposalActions();
       this.finalizeMessage();
       this.setGeneratingState(false);
-      await this.completeAgentRunSnapshot();
-      this.transitionAgentState("idle", { source: "composer-aborted" });
+      if (!this.agentAwaitingApproval) {
+        await this.completeAgentRunSnapshot();
+        this.transitionAgentState("idle", { source: "composer-aborted" });
+      }
       this.logTerminal(`[Agent] Generation stopped.`, "info");
       const agentStateEl = document.getElementById("status-agent-state");
       if (agentStateEl) agentStateEl.textContent = "Agent: Idle";
@@ -354,8 +358,10 @@ class App {
       this.renderError(data.message || "An unexpected error occurred.");
       this.finalizeMessage();
       this.setGeneratingState(false);
-      await this.completeAgentRunSnapshot();
-      this.transitionAgentState("idle", { source: "composer-error" });
+      if (!this.agentAwaitingApproval) {
+        await this.completeAgentRunSnapshot();
+        this.transitionAgentState("idle", { source: "composer-error" });
+      }
       this.logTerminal(`[Agent Error] ${data.message}`, "error");
       const agentStateEl = document.getElementById("status-agent-state");
       if (agentStateEl) agentStateEl.textContent = "Agent: Stopped/Error";
