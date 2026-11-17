@@ -505,6 +505,8 @@ router.post("/inline-completion", async (req, res) => {
   const prefix = typeof req.body?.prefix === "string" ? req.body.prefix : "";
   const suffix = typeof req.body?.suffix === "string" ? req.body.suffix : "";
   const language = typeof req.body?.language === "string" ? req.body.language.slice(0, 40) : "plaintext";
+  const sensitivePath = /(^|\/)(?:\.env(?:\..*)?|credentials(?:\..*)?|id_rsa|id_ed25519|.*\.(?:pem|key|p12|pfx|keystore))$/i;
+  if (sensitivePath.test(file)) return res.status(403).json({ error: "SensitiveFileCompletionBlocked" });
   if (!file || file.length > 1024 || prefix.length > 12000 || suffix.length > 6000 || !prefix.trim()) {
     return res.status(400).json({ error: "InvalidInlineCompletionContext" });
   }
