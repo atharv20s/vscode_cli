@@ -5,6 +5,8 @@ import { config } from "../config/env.js";
 
 const MAX_FILES = 10000;
 const MAX_BYTES = 100 * 1024 * 1024;
+const MAX_COMPLETED_SNAPSHOTS = 10;
+const INCOMPLETE_TTL_MS = 24 * 60 * 60 * 1000;
 const IGNORED = new Set(["node_modules", ".cache", ".next", "dist", "build", ".ath-locks", ".ath-agent-runs", ".ath-agent-run-snapshots"]);
 const hash = value => crypto.createHash("sha256").update(value).digest("hex");
 const inside = (root, target) => {
@@ -153,6 +155,26 @@ export async function createAgentRunSnapshot(workspace, editorState = {}) {
   }
 }
 
+async function pruneSnapshots(base) {
+  const entries = await fs.readdir(base, { withFileTypes: true });
+  const completed = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^[0-9a-f-]{36}$/i.test(entry.name)) continue;
+    const directory = path.join(base, entry.name);
+    try {
+      const record = JSON.parse(await fs.readFile(path.join(directory, "snapshot.json"), "utf8"));
+      const stat = await fs.stat(path.join(directory, "snapshot.json"));
+      if (record.state === "completed") completed.push({ directory, mtimeMs: stat.mtimeMs });
+      else if (Date.now() - stat.mtimeMs > INCOMPLETE_TTL_MS) await fs.rm(directory, { recursive: true, force: true });
+    } catch (error) {
+      if (error.code === "ENOENT" || error instanceof SyntaxError) await fs.rm(directory, { recursive: true, force: true });
+      else throw error;
+    }
+  }
+  completed.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  for (const stale of completed.slice(MAX_COMPLETED_SNAPSHOTS)) await fs.rm(stale.directory, { recursive: true, force: true });
+}
+
 async function readRecord(workspace, runId) {
   if (typeof runId !== "string" || !/^[0-9a-f-]{36}$/i.test(runId)) {
     const error = new Error("Invalid agent run ID.");
@@ -178,6 +200,7 @@ export async function completeAgentRunSnapshot(workspace, runId) {
   const temporary = path.join(runDir, "snapshot.json.tmp");
   await fs.writeFile(temporary, JSON.stringify(record), { mode: 0o600 });
   await fs.rename(temporary, path.join(runDir, "snapshot.json"));
+  await pruneSnapshots(path.dirname(runDir));
   return { runId, state: record.state, changedFiles: record.before.entries.filter(item => {
     const after = record.after.entries.find(value => value.path === item.path);
     return !after || after.digest !== item.digest || after.type !== item.type;
