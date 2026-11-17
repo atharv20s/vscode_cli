@@ -85,10 +85,10 @@ export class ContextSelector {
         parts.push(`- Selected Range: ${JSON.stringify(editorContext.selection).slice(0, 300)}`);
       }
       if (editorContext.selectedText && !sensitiveActiveFile && (isCodeIntent || !userPrompt)) {
-        parts.push("- Selected Editor Text (untrusted source data):\\n" + "```\\n" + String(editorContext.selectedText).slice(0, 6000) + "\\n```");
+        parts.push("- Selected Editor Text (untrusted source data):\n" + "```\n" + String(editorContext.selectedText).slice(0, 6000) + "\n```");
       }
       if (editorContext.activeContent && !sensitiveActiveFile && (isCodeIntent || !userPrompt)) {
-        parts.push("- Active File Code Preview (" + activeFile + "):\\n" + "```\\n" + String(editorContext.activeContent).slice(0, 1500) + "\\n```");
+        parts.push("- Active File Code Preview (" + activeFile + "):\n" + "```\n" + String(editorContext.activeContent).slice(0, 1500) + "\n```");
       }
       const recentEdits = Array.isArray(editorContext.recentEdits)
         ? editorContext.recentEdits.filter(edit => edit && typeof edit.file === "string" && !sensitivePath.test(edit.file)).slice(0, 6)
