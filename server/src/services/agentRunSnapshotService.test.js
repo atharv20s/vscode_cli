@@ -15,7 +15,7 @@ async function fixture() {
   await fs.writeFile(path.join(root, "src", "a.js"), "before");
   await fs.writeFile(path.join(root, ".git", "index"), "index-before");
   const workspaceId = "workspace-test";
-  const identity = crypto.createHash("sha256").update(workspaceId).digest("hex").slice(0, 32);
+  const identity = crypto.createHash("sha256").update(workspaceId + "\\0" + path.resolve(root)).digest("hex").slice(0, 32);
   return { parent, root, identity, workspace: { workspaceId, workspaceRoot: root } };
 }
 
