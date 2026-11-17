@@ -694,7 +694,7 @@ async function handleInlineEdit(ws, payload, user) {
       ].join("\n\n")
     }
   ];
-  let finalText = "", failure = null;
+  let finalText = "", failure = null, finishReason = null;
   try {
     sendMessage(ws, "inline.edit.started", { requestId, filePath: target.relative });
     await streamChatCompletion({
@@ -707,14 +707,15 @@ async function handleInlineEdit(ws, payload, user) {
           sendMessage(ws, "inline.edit.delta", { requestId, content: event.data?.content || "" });
         } else if (event.type === "text_complete") {
           finalText = event.data?.content || finalText;
+          finishReason = event.data?.finishReason || null;
         } else if (event.type === "error") {
           failure = event.data?.message || "Inline Edit provider failed.";
         }
       }
     });
     if (controller.signal.aborted) return;
-    if (failure || !finalText.trim()) {
-      sendMessage(ws, "inline.edit.error", { requestId, message: failure || "The model returned an empty edit." });
+    if (failure || !finalText.trim() || finishReason === "length") {
+      sendMessage(ws, "inline.edit.error", { requestId, message: failure || (finishReason === "length" ? "The model output was truncated by its token limit. Narrow the selection and retry." : "The model returned an empty edit.") });
       return;
     }
     sendMessage(ws, "inline.edit.complete", { requestId, filePath: target.relative, replacement: finalText });
