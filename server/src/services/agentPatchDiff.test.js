@@ -41,3 +41,11 @@ test("keeps large-file fallback bounded and correct for a localized edit", () =>
   assert.equal(hunks.length, 1);
   assert.equal(applyHunks(original, hunks, [hunks[0].id]), proposed);
 });
+
+test("applies manually edited replacement text for an accepted hunk", () => {
+  const original = "alpha\nbeta\ngamma";
+  const proposed = "alpha\nBETA\ngamma";
+  const hunks = diffLines(original, proposed);
+  const edited = hunks.map(hunk => ({ ...hunk, replacement: ["beta // manually refined"] }));
+  assert.equal(applyHunks(original, edited, [hunks[0].id]), "alpha\nbeta // manually refined\ngamma");
+});
