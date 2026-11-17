@@ -38,6 +38,8 @@
     getSnapshotEditorState() {
       return {
         activeTab: this.editor.activeTab, activeGroup: this.editor.activeGroup || "primary",
+        groupTabs: { primary: this.editor.groupTabs?.primary || null, secondary: this.editor.groupTabs?.secondary || null },
+        splitRatio: Number.isFinite(this.editor.splitRatio) ? this.editor.splitRatio : 0.5,
         tabs: Array.from(this.editor.openTabs.entries()).slice(0, 40).map(([filePath, tab]) => ({
           path: filePath, content: tab.content || "", version: tab.version || null, isDirty: tab.isDirty === true
         }))
@@ -61,9 +63,19 @@
         });
         this.editor.createTabElement(tab.path);
       });
+      const groupTabs = state.groupTabs && typeof state.groupTabs === "object" ? state.groupTabs : {};
+      const primary = this.editor.openTabs.has(groupTabs.primary) ? groupTabs.primary : null;
+      const secondary = this.editor.openTabs.has(groupTabs.secondary) ? groupTabs.secondary : null;
+      if (secondary && !this.editor.secondaryEditor) this.editor.toggleSplitEditor();
+      else if (!secondary && this.editor.secondaryEditor) this.editor.toggleSplitEditor();
+      this.editor.groupTabs = { primary, secondary };
+      if (primary) this.editor.selectTab(primary, "primary");
+      if (secondary) this.editor.selectTab(secondary, "secondary");
       const active = state.activeTab && this.editor.openTabs.has(state.activeTab)
-        ? state.activeTab : this.editor.openTabs.keys().next().value;
-      if (active) this.editor.selectTab(active, state.activeGroup === "secondary" ? "secondary" : "primary");
+        ? state.activeTab : (state.activeGroup === "secondary" ? secondary : primary) || this.editor.openTabs.keys().next().value;
+      this.editor.splitRatio = Math.max(0.25, Math.min(0.75, Number(state.splitRatio) || 0.5));
+      this.editor.editorView?.parentElement?.style.setProperty("--editor-split-ratio", (this.editor.splitRatio * 100).toFixed(1) + "%");
+      if (active) this.editor.selectTab(active, state.activeGroup === "secondary" && this.editor.secondaryEditor ? "secondary" : "primary");
       this.editor.saveStateToCache();
     }
   }
