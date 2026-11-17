@@ -14,7 +14,8 @@
     getActiveEditorContext() {
       const editor = this.editor.monacoEditor, model = editor?.getModel();
       const position = editor?.getPosition(), selection = editor?.getSelection();
-      const selectedText = model && selection && !selection.isEmpty() ? model.getValueInRange(selection) : "";
+      const sensitive = /(^|\/)(?:\.env(?:\..*)?|credentials(?:\..*)?|id_rsa|id_ed25519|.*\.(?:pem|key|p12|pfx|keystore))$/i.test(this.editor.activeTab || "");
+      const selectedText = !sensitive && model && selection && !selection.isEmpty() ? model.getValueInRange(selection) : "";
       const file = this.editor.activeTab;
       const symbols = file ? (this.editor.documentSymbols?.get(file) || []).slice(0, 40).map(item => ({
         name: item.name, kind: item.kind, line: item.line
@@ -26,7 +27,7 @@
           startLineNumber: selection.startLineNumber, startColumn: selection.startColumn,
           endLineNumber: selection.endLineNumber, endColumn: selection.endColumn
         } : null,
-        selectedText: selectedText.slice(0, 12000), activeContent: model ? model.getValue().slice(0, 12000) : null,
+        selectedText: selectedText.slice(0, 12000), activeContent: !sensitive && model ? model.getValue().slice(0, 12000) : null,
         openFiles: Array.from(this.editor.openTabs.keys()).slice(0, 40),
         recentEdits: this.recentEdits.slice(0, 8), importedSymbols: symbols
       };
