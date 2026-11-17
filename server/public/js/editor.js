@@ -47,6 +47,8 @@ class EditorManager {
     this.lspRootUri = null;
     this.lspLanguage = null;
     this.suppressModelChange = false;
+    this.diagnosticTimers = new Map();
+    this.documentSymbols = new Map();
     this.initEventListeners();
     this.initInlineEditListeners();
     this.restoreStateFromCache();
@@ -1301,6 +1303,7 @@ class EditorManager {
 
   scheduleDiagnostics(filePath, editor) {
     if (!filePath || !editor) return;
+    if (!this.diagnosticTimers) this.diagnosticTimers = new Map();
     clearTimeout(this.diagnosticTimers.get(filePath));
     const timer = setTimeout(() => this.refreshDiagnostics(filePath, editor), 650);
     this.diagnosticTimers.set(filePath, timer);
