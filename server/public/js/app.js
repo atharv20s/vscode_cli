@@ -216,6 +216,14 @@ class App {
       }
     } catch (error) {
       this.logTerminal("Agent recovery snapshot could not be finalized: " + error.message, "error");
+      const message = document.querySelector("#ai-timeline .chat-msg.agent:last-child .chat-bubble");
+      if (message && !message.querySelector(".agent-run-snapshot-retry")) {
+        const retry = document.createElement("button");
+        retry.type = "button"; retry.className = "secondary-btn agent-run-snapshot-retry";
+        retry.textContent = "Retry recovery snapshot";
+        retry.addEventListener("click", async () => { retry.disabled = true; retry.textContent = "Retrying…"; await this.completeAgentRunSnapshot(); if (this.activeAgentRunId) { retry.disabled = false; retry.textContent = "Retry recovery snapshot"; } else retry.remove(); });
+        message.appendChild(retry);
+      }
     }
   }
 
@@ -344,7 +352,7 @@ class App {
         this.logTerminal(`[Agent] Task completed successfully.`, "success");
       }
       const agentStateEl = document.getElementById("status-agent-state");
-      if (agentStateEl) agentStateEl.textContent = "Agent: Idle";
+      if (agentStateEl) agentStateEl.textContent = this.agentAwaitingApproval ? "Agent: Awaiting review" : "Agent: Idle";
     });
 
     window.wsClient.on("aborted", async (data) => {
