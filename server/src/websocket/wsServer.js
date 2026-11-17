@@ -641,8 +641,9 @@ async function handleInlineEdit(ws, payload, user) {
     sendMessage(ws, "inline.edit.error", { requestId, message: "Inline Edit request is invalid or exceeds the size limit." });
     return;
   }
+  const sensitivePath = /(^|\/)(?:\.env(?:\..*)?|credentials(?:\..*)?|id_rsa|id_ed25519|.*\.(?:pem|key|p12|pfx|keystore))$/i;
   const target = ws.workspaceService.resolvePath(filePath);
-  if (!target.safe || target.relative === "." || target.relative.split("/").some(part => [".git", ".ath-locks", "node_modules"].includes(part))) {
+  if (sensitivePath.test(filePath) || !target.safe || target.relative === "." || target.relative.split("/").some(part => [".git", ".ath-locks", "node_modules"].includes(part))) {
     sendMessage(ws, "inline.edit.error", { requestId, message: "Inline Edit cannot access this workspace path." });
     return;
   }
@@ -662,7 +663,11 @@ async function handleInlineEdit(ws, payload, user) {
   }
   let controllers = activeInlineEdits.get(ws);
   if (!controllers) { controllers = new Map(); activeInlineEdits.set(ws, controllers); }
-  if (controllers.size >= 2) {
+  if (controllers.has(requestId)) {
+    sendMessage(ws, "inline.edit.error", { requestId, message: "An inline edit with this request ID is already active." });
+    return;
+  }
+  if (controllers.size >= 1) {
     sendMessage(ws, "inline.edit.error", { requestId, message: "Two inline edit requests are already running. Cancel one and retry." });
     return;
   }
