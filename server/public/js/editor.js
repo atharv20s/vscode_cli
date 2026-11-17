@@ -402,7 +402,7 @@ class EditorManager {
       this.inlineEditRequest.status.textContent = "Review the replacement. You can edit it before accepting.";
       this.inlineEditRequest.accept.disabled = false;
       this.inlineEditRequest.openComposer.disabled = false;
-      window.app?.agentStateMachine?.transition("awaiting_approval", { source: "inline-edit" });
+      window.app?.transitionAgentState?.("awaiting_approval", { source: "inline-edit" });
     });
     window.wsClient.on("inline.edit.error", data => {
       if (this.inlineEditRequest?.requestId !== data?.requestId) return;
@@ -483,7 +483,7 @@ class EditorManager {
     const tab = this.openTabs.get(request.filePath);
     if (tab) { tab.content = request.model.getValue(); tab.isDirty = true; this.updateTabUI(request.filePath); }
     this.saveStateToCache(); this.closeInlineEdit();
-    window.app?.agentStateMachine?.transition("idle", { source: "inline-edit-accepted" });
+    window.app?.transitionAgentState?.("idle", { source: "inline-edit-accepted" });
     window.app?.logTerminal("Inline edit accepted into the editor buffer. Save the file to persist it.", "success");
   }
 
