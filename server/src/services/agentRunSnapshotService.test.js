@@ -22,7 +22,7 @@ async function fixture() {
 test("restores workspace files, untracked files, Git index and editor state", async () => {
   const f = await fixture();
   try {
-    const snapshot = await createAgentRunSnapshot(f.workspace, { activeTab: "src/a.js", tabs: [{ path: "src/a.js", content: "dirty editor buffer", isDirty: true }] });
+    const snapshot = await createAgentRunSnapshot(f.workspace, { activeTab: "src/a.js", activeGroup: "secondary", groupTabs: { primary: "src/a.js", secondary: "src/a.js" }, splitRatio: 0.62, tabs: [{ path: "src/a.js", content: "dirty editor buffer", isDirty: true }] });
     await fs.writeFile(path.join(f.root, "src", "a.js"), "after");
     await fs.writeFile(path.join(f.root, "new.txt"), "untracked");
     await fs.writeFile(path.join(f.root, ".git", "index"), "index-after");
@@ -32,6 +32,8 @@ test("restores workspace files, untracked files, Git index and editor state", as
     await assert.rejects(fs.access(path.join(f.root, "new.txt")));
     assert.equal(await fs.readFile(path.join(f.root, ".git", "index"), "utf8"), "index-before");
     assert.equal(result.editorState.tabs[0].content, "dirty editor buffer");
+    assert.equal(result.editorState.groupTabs.secondary, "src/a.js");
+    assert.equal(result.editorState.splitRatio, 0.62);
   } finally { await fs.rm(f.parent, { recursive: true, force: true }); await fs.rm(path.join(config.workspaceRoot, ".ath-agent-run-snapshots", f.identity), { recursive: true, force: true }); }
 });
 
