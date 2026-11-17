@@ -3,6 +3,7 @@
   class AgentContextService {
     constructor(editor) { this.editor = editor; this.recentEdits = []; }
     recordRecentEdit(filePath, event, activeEditor) {
+      if (/(^|\\/)(?:\\.env(?:\\..*)?|credentials(?:\\..*)?|id_rsa|id_ed25519|.*\\.(?:pem|key|p12|pfx|keystore))$/i.test(filePath || "")) return;
       const change = event?.changes?.[0];
       const position = change?.range?.startLineNumber || activeEditor.getPosition()?.lineNumber || 1;
       this.recentEdits.unshift({
@@ -17,7 +18,7 @@
       const sensitive = /(^|\/)(?:\.env(?:\..*)?|credentials(?:\..*)?|id_rsa|id_ed25519|.*\.(?:pem|key|p12|pfx|keystore))$/i.test(this.editor.activeTab || "");
       const selectedText = !sensitive && model && selection && !selection.isEmpty() ? model.getValueInRange(selection) : "";
       const file = this.editor.activeTab;
-      const symbols = file ? (this.editor.documentSymbols?.get(file) || []).slice(0, 40).map(item => ({
+      const symbols = file && !sensitive ? (this.editor.documentSymbols?.get(file) || []).slice(0, 40).map(item => ({
         name: item.name, kind: item.kind, line: item.line
       })) : [];
       return {
@@ -29,7 +30,7 @@
         } : null,
         selectedText: selectedText.slice(0, 12000), activeContent: !sensitive && model ? model.getValue().slice(0, 12000) : null,
         openFiles: Array.from(this.editor.openTabs.keys()).slice(0, 40),
-        recentEdits: this.recentEdits.slice(0, 8), importedSymbols: symbols
+        recentEdits: this.recentEdits.filter(edit => !/(^|\\/)(?:\\.env(?:\\..*)?|credentials(?:\\..*)?|id_rsa|id_ed25519|.*\\.(?:pem|key|p12|pfx|keystore))$/i.test(edit.file || "")).slice(0, 8), importedSymbols: symbols
       };
     }
     getSnapshotEditorState() {
