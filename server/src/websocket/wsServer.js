@@ -313,6 +313,8 @@ export function initWebSocketServer(httpServer) {
       executionService.detachInteractive(ws.terminalSessionId, ws);
       try { ws.remoteTerminal?.close(); } catch {}
       stopLanguageServer(ws);
+      for (const controller of activeInlineEdits.get(ws)?.values() || []) controller.abort();
+      activeInlineEdits.delete(ws);
       removeConnection(ws);
       broadcastPresence(ws.workspaceId);
     });
