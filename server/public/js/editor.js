@@ -416,6 +416,7 @@ class EditorManager {
   openInlineEdit() {
     const editor = this.monacoEditor, model = editor?.getModel();
     if (!editor || !model || !this.activeTab) { window.app?.logTerminal("Open a file before using Inline Edit.", "warning"); return; }
+    if (window.app?.isGenerating) { window.app?.logTerminal("Wait for the current Composer run to finish before starting Inline Edit.", "warning"); return; }
     this.closeInlineEdit();
     const selection = editor.getSelection();
     const hasSelection = Boolean(selection && !selection.isEmpty());
@@ -449,7 +450,7 @@ class EditorManager {
         hasSelection, selectedText, instruction: request, output: "", preview, status, accept, openComposer };
       preview.value = ""; preview.readOnly = true; accept.disabled = true; openComposer.disabled = true;
       status.textContent = "Connecting to the focused edit model…";
-      window.app?.agentStateMachine?.transition("planning", { source: "inline-edit" });
+      window.app?.transitionAgentState?.("planning", { source: "inline-edit" });
       if (!window.wsClient?.isConnected) window.wsClient?.connect(localStorage.getItem("token") || "");
       window.wsClient?.send("inline.edit", {
         requestId, filePath: this.activeTab, instruction: request, content: model.getValue(), selectedText,
@@ -1111,7 +1112,7 @@ class EditorManager {
       }
       await window.app?.loadWorkspaceFiles?.();
       window.app?.renderSystemMessage("**Agent patch accepted.** " + applied.length + " file(s) updated with version checks; unaccepted hunks remain available for review.");
-      window.app?.transitionAgentState?.("idle", { source: "agent-apply-accepted" });
+      if (!this.agentApplyFiles.length) window.app?.transitionAgentState?.("idle", { source: "agent-apply-accepted" });
       if (verify) await window.app?.runAgentVerification?.(applied);
     } catch (error) {
       if (this.agentApplyStatus) this.agentApplyStatus.textContent = "Apply failed: " + error.message;
