@@ -23,6 +23,8 @@ import { getWorkspaceService } from "./workspaceService.js";
 import { selectSkills, formatSkills } from "./skillRegistry.js";
 import { buildRepositoryContext, formatRepositoryContext } from "./repoContextEngine.js";
 import { registerAgentHook, runAgentHooks } from "./agentLifecycleHooks.js";
+import { classifyCommandForPolicy, classifyFileOperationForPolicy } from "./permissionEngine.js";
+import { sanitizeSecrets } from "./secretSanitizer.js";
 
 /** Default system prompt */
 const DEFAULT_SYSTEM_PROMPT = `You are ATH Agent, an autonomous software engineering agent operating inside ATH IDE.
@@ -91,6 +93,24 @@ registerAgentHook("before_tool", async ({ toolName, allowedTools }) => {
     return { block: true, reason: "Tool is not in this turn's server-approved allowlist." };
   }
 }, { id: "agent-tool-allowlist", priority: 1000, critical: true });
+
+registerAgentHook("before_tool", async ({ toolName, args }) => {
+  if (toolName === "run_command" || toolName === "shell") {
+    const cmd = args?.command || "";
+    const decision = classifyCommandForPolicy(cmd);
+    if (decision === "DENY") {
+      return { block: true, reason: `Command rejected by runtime security policy: forbidden or destructive command pattern.` };
+    }
+  }
+  if (["read_file", "write_file", "edit_file", "delete_file"].includes(toolName)) {
+    const filePath = args?.path || "";
+    const action = toolName.startsWith("read") ? "read" : toolName.startsWith("delete") ? "delete" : "write";
+    const decision = classifyFileOperationForPolicy(action, filePath);
+    if (decision === "DENY") {
+      return { block: true, reason: `File access rejected by runtime security policy: cannot access secret or protected file '${filePath}'.` };
+    }
+  }
+}, { id: "agent-permission-policy-gate", priority: 950, critical: true });
 
 registerAgentHook("after_tool", async ({ toolName, success, durationMs }) => {
   logger.info("Agent tool lifecycle completed", {
@@ -510,6 +530,7 @@ export async function runAgent({
         const toolMetadata = {
           userId, workspaceId, sessionId, turnId: currentTurnId,
           toolName: tc.name, toolCallId: tc.id,
+          args,
           argumentKeys: Object.keys(args || {}).slice(0, 40),
           allowedTools: Array.isArray(allowedTools) ? allowedTools : null,
         };
@@ -525,6 +546,9 @@ export async function runAgent({
             await runLifecycle("on_error", { ...toolMetadata, errorCode: error.code || "TOOL_EXECUTION_FAILED" }, onEvent);
             throw error;
           }
+        }
+        if (result && typeof result.output === "string") {
+          result.output = sanitizeSecrets(result.output);
         }
         await runLifecycle("after_tool", {
           ...toolMetadata,
