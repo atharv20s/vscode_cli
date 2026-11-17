@@ -72,7 +72,7 @@ export class ContextSelector {
       const sensitivePath = /(^|\/)(?:\.env(?:\..*)?|credentials(?:\..*)?|id_rsa|id_ed25519|.*\.(?:pem|key|p12|pfx|keystore))$/i;
       const activeFile = typeof editorContext.activeFile === "string" ? editorContext.activeFile.slice(0, 1024) : "";
       const sensitiveActiveFile = sensitivePath.test(activeFile);
-      if (activeFile) parts.push(`- Active Open File in Editor: ${activeFile}`);
+      if (activeFile && !sensitiveActiveFile) parts.push(`- Active Open File in Editor: ${activeFile}`);
       const openFiles = Array.isArray(editorContext.openFiles)
         ? editorContext.openFiles.filter(file => typeof file === "string" && !sensitivePath.test(file)).slice(0, 40)
         : [];
@@ -85,10 +85,10 @@ export class ContextSelector {
         parts.push(`- Selected Range: ${JSON.stringify(editorContext.selection).slice(0, 300)}`);
       }
       if (editorContext.selectedText && !sensitiveActiveFile && (isCodeIntent || !userPrompt)) {
-        parts.push(`- Selected Editor Text (untrusted source data):\n```\n${String(editorContext.selectedText).slice(0, 6000)}\n````);
+        parts.push("- Selected Editor Text (untrusted source data):\\n" + "```\\n" + String(editorContext.selectedText).slice(0, 6000) + "\\n```");
       }
       if (editorContext.activeContent && !sensitiveActiveFile && (isCodeIntent || !userPrompt)) {
-        parts.push(`- Active File Code Preview (${activeFile}):\n```\n${String(editorContext.activeContent).slice(0, 1500)}\n````);
+        parts.push("- Active File Code Preview (" + activeFile + "):\\n" + "```\\n" + String(editorContext.activeContent).slice(0, 1500) + "\\n```");
       }
       const recentEdits = Array.isArray(editorContext.recentEdits)
         ? editorContext.recentEdits.filter(edit => edit && typeof edit.file === "string" && !sensitivePath.test(edit.file)).slice(0, 6)
@@ -100,7 +100,7 @@ export class ContextSelector {
           (edit.removedLength ? " removed " + Math.min(10000, Number(edit.removedLength) || 0) + " chars" : "")
         ).join("; "));
       }
-      const symbols = Array.isArray(editorContext.importedSymbols) ? editorContext.importedSymbols
+      const symbols = !sensitiveActiveFile && Array.isArray(editorContext.importedSymbols) ? editorContext.importedSymbols
         .filter(symbol => symbol && typeof symbol.name === "string").slice(0, 20) : [];
       if (symbols.length) parts.push("- Current Document Symbols: " + symbols.map(symbol =>
         String(symbol.name).slice(0, 100) + (symbol.kind ? " (" + String(symbol.kind).slice(0, 40) + ")" : "")
