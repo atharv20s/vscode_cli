@@ -47,13 +47,13 @@ Pull requests are cumulative and should be reviewed and merged in order.
 
 Merge in ascending PR number order.  Each PR builds on its predecessor and targets `main`.
 
-## Remaining phases
+## Remaining phases & Status
 
-| Phase | Description | Prerequisite |
-|---|---|---|
-| Distributed LSP pool | Replace per-instance 8-process limit with a shared LSP daemon registry backed by Redis or a sidecar for multi-node deployments. | PR #61 merged |
-| OS-level sandbox | Wrap MCP and LSP child processes in Docker or seccomp/namespace isolation for production multi-tenant safety. | PR #62 merged |
-| Production acceptance | Live runtime checks: DATABASE_URL, Redis, multi-user workspace isolation, browser acceptance suite. | All above |
+| Phase | Description | Implementation | Status |
+|---|---|---|---|
+| Distributed LSP pool | Replace per-instance 8-process limit with a shared LSP daemon registry backed by Redis or a sidecar for multi-node deployments. | `distributedLspPool.js` + Redis registry + LRU eviction | ✅ Implemented |
+| OS-level sandbox | Wrap MCP and LSP child processes in Docker or seccomp/namespace isolation for production multi-tenant safety. | `sandboxProcessWrapper.js` + Bubblewrap + safe env | ✅ Implemented |
+| Production acceptance | Live runtime checks: DATABASE_URL, Redis, multi-user workspace isolation, browser acceptance suite. | `productionAcceptanceRunner.js` (6-pillar live audit) | ✅ Implemented |
 
 ## Acceptance boundary
 
