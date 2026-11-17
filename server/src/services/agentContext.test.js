@@ -24,8 +24,8 @@ test("ambient context excludes secret-bearing active files and their edit histor
   assert.equal(context.activeContent, null);
   assert.equal(context.selectedText, "");
   assert.equal(context.selection, null);
-  assert.deepEqual(context.importedSymbols, []);
-  assert.deepEqual(context.recentEdits, []);
+  assert.equal(context.importedSymbols.length, 0);
+  assert.equal(context.recentEdits.length, 0);
   service.recordRecentEdit(".env.local", { changes: [{ text: "SECRET=again" }] }, { getPosition: () => ({ lineNumber: 1 }) });
   assert.equal(service.recentEdits.length, 1);
   assert.equal(service.recentEdits[0].file, ".env.local");
