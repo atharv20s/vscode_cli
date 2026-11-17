@@ -1107,6 +1107,7 @@ class EditorManager {
         this.renderAgentApplyReview();
       } else {
         this.agentApplyReady = false;
+        if (window.app) { window.app.agentAwaitingApproval = false; await window.app.completeAgentRunSnapshot?.(); }
       }
       await window.app?.loadWorkspaceFiles?.();
       window.app?.renderSystemMessage("**Agent patch accepted.** " + applied.length + " file(s) updated with version checks; unaccepted hunks remain available for review.");
@@ -1120,8 +1121,9 @@ class EditorManager {
     }
   }
 
-  rejectAgentChanges() {
+  async rejectAgentChanges() {
     this.closeAgentApplyReview();this.agentApplyFiles=[];this.agentApplyAcceptedPaths.clear();this.agentApplyHunkStates.clear();this.agentApplyHunkOverrides.clear();this.agentApplyReady=false;
+    if (window.app) { window.app.agentAwaitingApproval = false; await window.app.completeAgentRunSnapshot?.(); window.app.transitionAgentState?.("idle", { source: "agent-patch-rejected" }); }
     window.app?.renderSystemMessage("Agent patch rejected. No proposed files were written.");
   }
 
