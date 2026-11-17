@@ -193,13 +193,13 @@ class App {
   async completeAgentRunSnapshot() {
     const runId = this.activeAgentRunId;
     if (!runId) return;
-    this.activeAgentRunId = null;
     try {
       const response = await fetch("/api/workspace/agent-runs/" + encodeURIComponent(runId) + "/complete", {
         method: "POST", headers: { Authorization: "Bearer " + this.token }
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || data.error || "Post-run snapshot failed.");
+      this.activeAgentRunId = null;
       this.agentRunHistory.unshift({ runId, completedAt: Date.now(), changedFiles: data.changedFiles || 0 });
       this.agentRunHistory = this.agentRunHistory.slice(0, 10);
       localStorage.setItem("ath_agent_run_history", JSON.stringify(this.agentRunHistory));
@@ -2299,6 +2299,7 @@ class App {
    * Send User Message to AI Agent
    */
   async sendMessage() {
+    if (this.isGenerating) return;
     try {
       const composerInput = document.getElementById("composer-input");
       if (!composerInput) return;
@@ -2352,7 +2353,7 @@ class App {
       }
       // ── End Slash Command Interceptor ────────────────────────────────
 
-      if ((this.currentMode || "agent") === "agent" && !window.ATH_IS_WORKSPACE_COLLABORATOR) {
+      if (!window.ATH_IS_WORKSPACE_COLLABORATOR) {
         try { await this.beginAgentRunSnapshot(); }
         catch (snapshotError) {
           this.renderError(snapshotError.message);
@@ -2422,6 +2423,7 @@ class App {
         },
       });
     } catch (err) {
+      await this.completeAgentRunSnapshot();
       console.error("Failed to send message:", err);
       this.setGeneratingState(false);
       this.renderError(err.message);
@@ -2492,6 +2494,7 @@ class App {
    * Toggle Generating State in UI (Send vs Stop button)
    */
   setGeneratingState(isGenerating) {
+    this.isGenerating = Boolean(isGenerating);
     const sendBtn = document.getElementById("btn-send-agent");
     const stopBtn = document.getElementById("btn-stop-agent");
     if (sendBtn && stopBtn) {
