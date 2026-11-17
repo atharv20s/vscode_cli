@@ -31,6 +31,7 @@ class EditorManager {
     this.agentApplyDecorations = null;
     this.agentApplyHunkZoneIds = [];
     this.agentApplyHunkStates = new Map();
+    this.agentApplyHunkOverrides = new Map();
     this.agentApplyHunks = [];
     this.agentApplySelectedHunkId = null;
     this.recentEdits = [];
@@ -878,6 +879,7 @@ class EditorManager {
       for (const item of data.files || []) {
         merged.set(item.path, item);
         this.agentApplyHunkStates.delete(item.path);
+        this.agentApplyHunkOverrides.delete(item.path);
         this.agentApplyAcceptedPaths.delete(item.path);
       }
       this.agentApplyFiles = Array.from(merged.values());
@@ -983,12 +985,16 @@ class EditorManager {
       title.className = "agent-inline-hunk-title";
       title.textContent = "Hunk " + (index + 1) + " · +" + hunk.additions + " −" + hunk.deletions +
         (state === "accepted" ? " · accepted" : " · pending");
-      const preview = document.createElement("pre");
-      preview.className = "agent-inline-hunk-preview";
-      const oldPreview = hunk.originalLines.slice(0, 4).map(line => "- " + line);
-      const newPreview = hunk.replacement.slice(0, 4).map(line => "+ " + line);
-      preview.textContent = [...oldPreview, ...newPreview].join("\n") || "(empty change)";
-      if (hunk.originalLines.length > 4 || hunk.replacement.length > 4) preview.textContent += "\n…";
+      const overrides = this.agentApplyHunkOverrides.get(item.path) || new Map();
+      this.agentApplyHunkOverrides.set(item.path, overrides);
+      const preview = document.createElement("textarea");
+      preview.className = "agent-inline-hunk-preview agent-inline-hunk-editor";
+      preview.rows = 2;
+      preview.value = overrides.has(hunk.id) ? overrides.get(hunk.id) : hunk.replacement.join("\n");
+      preview.setAttribute("aria-label", "Edit replacement for hunk " + (index + 1));
+      preview.title = "Edit this proposed replacement before accepting the hunk";
+      preview.addEventListener("click", event => event.stopPropagation());
+      preview.addEventListener("input", () => overrides.set(hunk.id, preview.value));
       const controls = document.createElement("div");
       controls.className = "agent-inline-hunk-controls";
       const accept = document.createElement("button");
@@ -1051,7 +1057,10 @@ class EditorManager {
     const selected = this.agentApplyFiles.filter(item => this.agentApplyAcceptedPaths.has(item.path));
     if (!selected.length) return;
     const prepared = selected.map(item => {
-      const hunks = window.AgentPatchDiff.diffLines(item.original || "", item.content || "");
+      const rawHunks = window.AgentPatchDiff.diffLines(item.original || "", item.content || "");
+      const overrides = this.agentApplyHunkOverrides.get(item.path) || new Map();
+      const hunks = rawHunks.map(hunk => overrides.has(hunk.id)
+        ? { ...hunk, replacement: String(overrides.get(hunk.id)).split("\n") } : hunk);
       const states = this.agentApplyHunkStates.get(item.path) || new Map();
       const acceptedIds = hunks.filter(hunk => states.get(hunk.id) === "accepted").map(hunk => hunk.id);
       const retainedIds = hunks.filter(hunk => states.get(hunk.id) !== "rejected").map(hunk => hunk.id);
@@ -1100,6 +1109,7 @@ class EditorManager {
       }
       this.agentApplyFiles = this.agentApplyFiles.filter(item => !prepared.some(done => done.path === item.path) || remainingFiles.some(left => left.path === item.path));
       this.agentApplyHunkStates.clear();
+      this.agentApplyHunkOverrides.clear();
       this.agentApplyAcceptedPaths.clear();
       this.closeAgentApplyReview();
       if (this.agentApplyFiles.length) {
@@ -1110,6 +1120,7 @@ class EditorManager {
       }
       await window.app?.loadWorkspaceFiles?.();
       window.app?.renderSystemMessage("**Agent patch accepted.** " + applied.length + " file(s) updated with version checks; unaccepted hunks remain available for review.");
+      window.app?.transitionAgentState?.("idle", { source: "agent-apply-accepted" });
       if (verify) await window.app?.runAgentVerification?.(applied);
     } catch (error) {
       if (this.agentApplyStatus) this.agentApplyStatus.textContent = "Apply failed: " + error.message;
@@ -1120,7 +1131,7 @@ class EditorManager {
   }
 
   rejectAgentChanges() {
-    this.closeAgentApplyReview();this.agentApplyFiles=[];this.agentApplyAcceptedPaths.clear();this.agentApplyHunkStates.clear();this.agentApplyReady=false;
+    this.closeAgentApplyReview();this.agentApplyFiles=[];this.agentApplyAcceptedPaths.clear();this.agentApplyHunkStates.clear();this.agentApplyHunkOverrides.clear();this.agentApplyReady=false;
     window.app?.renderSystemMessage("Agent patch rejected. No proposed files were written.");
   }
 
