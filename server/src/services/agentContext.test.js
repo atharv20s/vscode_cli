@@ -38,7 +38,7 @@ test("ordinary source files retain bounded editor context", () => {
     monacoEditor: { getModel: () => model, getPosition: () => ({ lineNumber: 1, column: 7 }),
       getSelection: () => ({ isEmpty: () => false, startLineNumber: 1, startColumn: 7, endLineNumber: 1, endColumn: 13 }) },
     activeTab: "src/app.js", openTabs: new Map([["src/app.js", { content: model.getValue() }]]),
-    documentSymbols: new Map([["src/app.js", [{ name: "answer", kind: 13, line: 1 }]])]
+    documentSymbols: new Map([["src/app.js", [{ name: "answer", kind: 13, line: 1 }]]])
   };
   const service = new AgentContextService(editor);
   const context = service.getActiveEditorContext();
