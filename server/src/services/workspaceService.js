@@ -14,7 +14,7 @@ import { logger } from "../config/logger.js";
 import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 
 /** Ignored directories for watching and listing */
-const IGNORED_DIRS = new Set(["node_modules", ".git", ".worktrees", "dist", "build", ".next", ".cache"]);
+const IGNORED_DIRS = new Set(["node_modules", ".git", ".worktrees", "dist", "build", ".next", ".cache", ".ath-agent-run-snapshots"]);
 
 export class WorkspaceService {
   constructor(root = config.workspaceRoot, workspaceId = "system", options = {}) {
@@ -51,7 +51,7 @@ export class WorkspaceService {
     }
 
     // Internal locking metadata is not part of the user workspace API.
-    if (relativePath.split(path.sep).some((part) => part === ".ath-locks" || part === ".ath-workspaces.json")) {
+    if (relativePath.split(path.sep).some((part) => part === ".ath-locks" || part === ".ath-workspaces.json" || part === ".ath-agent-run-snapshots")) {
       return { safe: false, resolved, relative: relativePath.split(path.sep).join("/") };
     }
 
