@@ -1,10 +1,11 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { config } from "../config/env.js";
 
 const MAX_FILES = 10000;
 const MAX_BYTES = 100 * 1024 * 1024;
-const IGNORED = new Set(["node_modules", ".cache", ".next", "dist", "build", ".ath-locks", ".ath-agent-runs"]);
+const IGNORED = new Set(["node_modules", ".cache", ".next", "dist", "build", ".ath-locks", ".ath-agent-runs", ".ath-agent-run-snapshots"]);
 const hash = value => crypto.createHash("sha256").update(value).digest("hex");
 const inside = (root, target) => {
   const relative = path.relative(root, target);
@@ -13,7 +14,7 @@ const inside = (root, target) => {
 
 function storageRoot(workspace) {
   const identity = hash(String(workspace.workspaceId || workspace.workspaceRoot)).slice(0, 32);
-  return path.join(path.dirname(workspace.workspaceRoot), ".ath-agent-run-snapshots", identity);
+  return path.join(config.workspaceRoot, ".ath-agent-run-snapshots", identity);
 }
 
 async function walk(root) {
@@ -127,7 +128,14 @@ function validateEditorState(value) {
 export async function createAgentRunSnapshot(workspace, editorState = {}) {
   const root = path.resolve(workspace.workspaceRoot);
   const base = storageRoot(workspace);
+  await fs.mkdir(path.dirname(base), { recursive: true, mode: 0o700 });
+  const baseStat = await fs.lstat(path.dirname(base));
+  if (!baseStat.isDirectory() || baseStat.isSymbolicLink()) throw new Error("Agent snapshot storage root is not a private directory.");
+  await fs.chmod(path.dirname(base), 0o700);
   await fs.mkdir(base, { recursive: true, mode: 0o700 });
+  const workspaceSnapshotStat = await fs.lstat(base);
+  if (!workspaceSnapshotStat.isDirectory() || workspaceSnapshotStat.isSymbolicLink()) throw new Error("Workspace snapshot storage is not a directory.");
+  await fs.chmod(base, 0o700);
   const runId = crypto.randomUUID();
   const runDir = path.join(base, runId);
   await fs.mkdir(runDir, { recursive: true, mode: 0o700 });
