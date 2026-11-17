@@ -42,6 +42,13 @@
     }
     restoreSnapshotEditorState(state) {
       if (!state || !Array.isArray(state.tabs)) return;
+      this.editor.primaryEditor?.setModel(null);
+      this.editor.secondaryEditor?.setModel(null);
+      for (const filePath of this.editor.openTabs.keys()) {
+        const uri = root.monaco?.Uri?.parse("file:///" + filePath.split("/").map(encodeURIComponent).join("/"));
+        if (uri) root.monaco.editor.getModel(uri)?.dispose();
+      }
+      this.editor.groupTabs = { primary: null, secondary: null };
       this.editor.openTabs.clear(); this.editor.tabsContainer?.replaceChildren();
       state.tabs.slice(0, 40).forEach(tab => {
         this.editor.openTabs.set(tab.path, {
