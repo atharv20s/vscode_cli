@@ -17,6 +17,10 @@ class App {
     this.activeAgentRunId = null;
     this.agentRunHistory = [];
     this.completionLatencySamples = [];
+    this.agentStateMachine?.subscribe(event => {
+      const state = document.getElementById("status-agent-state");
+      if (state) state.textContent = "Agent: " + String(event.state || "idle").replaceAll("_", " ");
+    });
     this.terminalSessions = new Map();
     this.activeTerminalId = "default";
 
@@ -199,7 +203,7 @@ class App {
       this.agentRunHistory.unshift({ runId, completedAt: Date.now(), changedFiles: data.changedFiles || 0 });
       this.agentRunHistory = this.agentRunHistory.slice(0, 10);
       localStorage.setItem("ath_agent_run_history", JSON.stringify(this.agentRunHistory));
-      const message = document.querySelector("#chat-timeline .system-message:last-child");
+      const message = document.querySelector("#ai-timeline .chat-msg.agent:last-child .chat-bubble") || document.getElementById("ai-timeline");
       if (message) {
         const actions = document.createElement("div");
         actions.className = "agent-run-rollback-actions";
