@@ -120,9 +120,15 @@ function validateEditorState(value) {
     error.code = "EDITOR_SNAPSHOT_LIMIT";
     throw error;
   }
+  const safePaths = new Set(safeTabs.map(tab => tab.path));
   return {
-    activeTab: typeof value.activeTab === "string" ? value.activeTab : null,
+    activeTab: typeof value.activeTab === "string" && safePaths.has(value.activeTab) ? value.activeTab : null,
     activeGroup: value.activeGroup === "secondary" ? "secondary" : "primary",
+    groupTabs: {
+      primary: typeof value.groupTabs?.primary === "string" && safePaths.has(value.groupTabs.primary) ? value.groupTabs.primary : null,
+      secondary: typeof value.groupTabs?.secondary === "string" && safePaths.has(value.groupTabs.secondary) ? value.groupTabs.secondary : null,
+    },
+    splitRatio: Number.isFinite(value.splitRatio) ? Math.max(0.25, Math.min(0.75, value.splitRatio)) : 0.5,
     tabs: safeTabs,
   };
 }
