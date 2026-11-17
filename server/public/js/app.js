@@ -179,6 +179,7 @@ class App {
   }
 
   async beginAgentRunSnapshot() {
+    this.agentAwaitingApproval = false;
     const editorState = window.editorManager?.getSnapshotEditorState?.() || { activeTab: null, tabs: [] };
     const response = await fetch("/api/workspace/agent-runs/snapshot", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + this.token },
@@ -226,6 +227,7 @@ class App {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || data.error || "Rollback failed.");
+      this.agentAwaitingApproval = false;
       window.editorManager?.restoreSnapshotEditorState?.(data.editorState);
       await this.loadWorkspaceFiles();
       this.renderSystemMessage("Agent run reverted. Workspace files, Git index and saved editor buffers were restored to the pre-run snapshot.");
@@ -2306,6 +2308,7 @@ class App {
    */
   async sendMessage() {
     if (this.isGenerating) return;
+    if (this.agentAwaitingApproval) { this.renderError("Finish accepting or rejecting the current Agent Apply proposal before starting another Composer run."); return; }
     try {
       const composerInput = document.getElementById("composer-input");
       if (!composerInput) return;
