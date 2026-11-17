@@ -2003,3 +2003,14 @@ textarea {
 .agent-inline-review-actions button:disabled { opacity:.4; cursor:not-allowed; }
 .agent-inline-added-line { background:rgba(34,197,94,.14); }
 .agent-inline-added-gutter { border-left:3px solid #4ade80; }
+
+.agent-inline-hunk { box-sizing:border-box; height:100%; display:grid; grid-template-columns:minmax(120px, 1fr) minmax(180px, 3fr) auto; align-items:center; gap:10px; padding:5px 9px; overflow:hidden; color:var(--text-main); background:#17251f; border:1px solid rgba(74,222,128,.24); border-left:3px solid #4ade80; font:10px var(--font-mono); }
+.agent-inline-hunk.is-selected { border-color:rgba(96,165,250,.75); background:#1b2938; }
+.agent-inline-hunk.is-accepted { border-left-color:#60a5fa; background:#172334; }
+.agent-inline-hunk-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#a7f3d0; }
+.agent-inline-hunk-preview { max-height:52px; overflow:hidden; margin:0; color:#d1d5db; font:10px/1.35 var(--font-mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+.agent-inline-hunk-controls { display:flex; align-items:center; gap:5px; }
+.agent-inline-hunk-controls button { padding:4px 7px; font-size:10px; white-space:nowrap; }
+.agent-inline-hunk-controls button:disabled { opacity:.45; cursor:not-allowed; }
+.monaco-editor .agent-inline-accepted-line { background:rgba(96,165,250,.16); }
+@media (max-width:760px) { .agent-inline-hunk { grid-template-columns:1fr auto; gap:4px; } .agent-inline-hunk-preview { grid-column:1 / -1; grid-row:2; max-height:36px; } .agent-inline-hunk-controls { grid-column:2; grid-row:1; } }
