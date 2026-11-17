@@ -43,7 +43,7 @@ function resolveAttempts(tier) {
   return providers.map(provider => ({ provider, model: PROVIDER_MODELS[provider]?.[tier] }))
     .filter(item => providerKey(item.provider) && item.model);
 }
-export async function streamChatCompletion({ messages, tools, model = "coding", onEvent, signal, userId = null }) {
+export async function streamChatCompletion({ messages, tools, model = "coding", onEvent, signal, userId = null, maxTokens = null, temperature = null }) {
   let tier = resolveTier(model);
   if (messages.some(message => Array.isArray(message.content) && message.content.some(part => part.type === "image_url"))) tier = "vision";
   const attempts = resolveAttempts(tier);
@@ -54,7 +54,9 @@ export async function streamChatCompletion({ messages, tools, model = "coding", 
     return;
   }
   const preset = Object.values(MODEL_PRESETS).find(item => item.tier === tier) || MODEL_PRESETS.devstral;
-  const base = { messages, stream: true, max_tokens: preset.maxTokens, temperature: preset.temperature };
+  const requestedMaxTokens = Number.isFinite(Number(maxTokens)) ? Math.max(16, Math.min(preset.maxTokens, Math.floor(Number(maxTokens)))) : preset.maxTokens;
+  const requestedTemperature = Number.isFinite(Number(temperature)) ? Math.max(0, Math.min(1, Number(temperature))) : preset.temperature;
+  const base = { messages, stream: true, max_tokens: requestedMaxTokens, temperature: requestedTemperature };
   if (tools?.length) { base.tools = tools; base.tool_choice = "auto"; }
   let response = null, selected = null, lastError = null;
   for (const attempt of attempts) {
