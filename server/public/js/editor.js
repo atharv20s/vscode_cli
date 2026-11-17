@@ -676,7 +676,11 @@ class EditorManager {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || data.error || "Unable to prepare the agent patch.");
       const merged = new Map(this.agentApplyFiles.map(item => [item.path, item]));
-      for (const item of data.files || []) merged.set(item.path, item);
+      for (const item of data.files || []) {
+        merged.set(item.path, item);
+        this.agentApplyHunkStates.delete(item.path);
+        this.agentApplyAcceptedPaths.delete(item.path);
+      }
       this.agentApplyFiles = Array.from(merged.values());
       this.agentApplySummary = data.summary || proposal.summary || "Agent proposed changes";
       this.agentApplySelectedPath = this.agentApplyFiles[0]?.path || null;
