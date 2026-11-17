@@ -110,6 +110,7 @@ export async function streamChatCompletion({ messages, tools, model = "coding", 
         };
       }
       if (!chunk.choices?.length) continue;
+      if (chunk.choices[0].finish_reason) finishReason = chunk.choices[0].finish_reason;
       const delta = chunk.choices[0].delta || {};
       if (delta.content) { fullContent += delta.content; onEvent({ type: "text_delta", data: { content: delta.content, text: delta.content } }); }
       for (const call of delta.tool_calls || []) {
@@ -126,7 +127,7 @@ export async function streamChatCompletion({ messages, tools, model = "coding", 
       return { id: call.id, name: call.name.trim(), arguments: args, rawArguments: call.arguments };
     });
     if (toolCalls.length) onEvent({ type: "tool_calls", data: { toolCalls } });
-    else onEvent({ type: "text_complete", data: { content: fullContent } });
+    else onEvent({ type: "text_complete", data: { content: fullContent, finishReason } });
   } catch (error) {
     if (!signal?.aborted) onEvent({ type: "error", data: { message: "AI Engine Error: " + error.message, status: error.status } });
   } finally {
