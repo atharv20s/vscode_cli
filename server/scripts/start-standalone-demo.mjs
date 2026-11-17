@@ -81,6 +81,23 @@ test("divide handles zero division gracefully", () => {
 - When fixing or adding functions, run the test suite to verify.
 `;
   await fs.writeFile(path.join(DEMO_WS, "AGENTS.md"), agentsMd, "utf8");
+
+  // Also seed into any active user workspaces in DEMO_WS/users
+  try {
+    const usersDir = path.join(DEMO_WS, "users");
+    const userDirs = await fs.readdir(usersDir);
+    for (const u of userDirs) {
+      const uPath = path.join(usersDir, u);
+      const stat = await fs.stat(uPath);
+      if (stat.isDirectory()) {
+        await fs.mkdir(path.join(uPath, "src"), { recursive: true });
+        await fs.writeFile(path.join(uPath, "package.json"), JSON.stringify(pkgJson, null, 2), "utf8");
+        await fs.writeFile(path.join(uPath, "src", "calculator.js"), calcCode, "utf8");
+        await fs.writeFile(path.join(uPath, "src", "calculator.test.js"), testCode, "utf8");
+        await fs.writeFile(path.join(uPath, "AGENTS.md"), agentsMd, "utf8");
+      }
+    }
+  } catch {}
 }
 
 async function main() {
@@ -95,7 +112,8 @@ async function main() {
   process.env.NODE_ENV = "development";
   process.env.PORT = process.env.PORT || "3001";
   process.env.WORKSPACE_ROOT = DEMO_WS;
-  process.env.EXECUTION_RUNTIME = "local";
+  process.env.EXECUTION_RUNTIME = "disabled";
+  process.env.REDIS_URL = "";
   process.env.REQUIRE_POSTGRES = "false";
   process.env.REQUIRE_DISTRIBUTED_EVENTS = "false";
 

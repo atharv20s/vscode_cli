@@ -7,7 +7,7 @@
  * - Direct hotkey helpers (Ctrl+K, Ctrl+I, Ctrl+Y, Ctrl+N)
  */
 
-export class AgentHUD {
+class AgentHUD {
   constructor(options = {}) {
     this.containerId = options.containerId || "agent-hud-container";
     this.tokenCount = 0;
@@ -86,8 +86,13 @@ export class AgentHUD {
 
 // Auto-initialize when loaded in browser
 if (typeof window !== "undefined") {
+  window.AgentHUD = AgentHUD;
   window.agentHUD = new AgentHUD();
-  window.addEventListener("DOMContentLoaded", () => {
+  if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", () => {
+      window.agentHUD.mount();
+    });
+  } else {
     window.agentHUD.mount();
-  });
+  }
 }

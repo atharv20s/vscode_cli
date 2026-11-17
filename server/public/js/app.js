@@ -3477,12 +3477,16 @@ class App {
   }
 
   createTerminalView(session, host) {
+    if (typeof Terminal === "undefined") {
+      console.warn("Terminal library not loaded; terminal session preview unavailable.");
+      return;
+    }
     const term = new Terminal({
       theme: { background: "#0d0e12", foreground: "#e2e8f0", cursor: "#6366f1", black: "#000000", red: "#ef4444", green: "#10b981", yellow: "#f59e0b", blue: "#6366f1", magenta: "#a855f7", cyan: "#06b6d4", white: "#cbd5e1" },
       fontFamily: "var(--font-mono)", fontSize: 12, cursorBlink: true, scrollback: 2000
     });
-    const fitAddon = new FitAddon.FitAddon();
-    term.loadAddon(fitAddon);
+    const fitAddon = (typeof FitAddon !== "undefined" && FitAddon.FitAddon) ? new FitAddon.FitAddon() : null;
+    if (fitAddon) term.loadAddon(fitAddon);
     term.open(host);
     session.term = term;
     session.fitAddon = fitAddon;
@@ -3500,13 +3504,13 @@ class App {
     });
     const resizeObserver = new ResizeObserver(() => {
       try {
-        fitAddon.fit();
+        if (fitAddon) fitAddon.fit();
         if (session.client?.isConnected) session.client.send("terminal.resize", { cols: term.cols, rows: term.rows });
       } catch {}
     });
     resizeObserver.observe(host);
     session.resizeObserver = resizeObserver;
-    setTimeout(() => { try { fitAddon.fit(); } catch {} }, 100);
+    setTimeout(() => { try { if (fitAddon) fitAddon.fit(); } catch {} }, 100);
   }
 
   createTerminalSession(shell = "powershell") {
