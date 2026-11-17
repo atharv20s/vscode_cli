@@ -45,7 +45,8 @@
       this.editor.primaryEditor?.setModel(null);
       this.editor.secondaryEditor?.setModel(null);
       for (const filePath of this.editor.openTabs.keys()) {
-        const uri = root.monaco?.Uri?.parse("file:///" + filePath.split("/").map(encodeURIComponent).join("/"));
+        const uriValue = this.editor.lspRootUri ? this.editor.lspRootUri + filePath.split("/").map(encodeURIComponent).join("/") : "file:///" + filePath.split("/").map(encodeURIComponent).join("/");
+        const uri = root.monaco?.Uri?.parse(uriValue);
         if (uri) root.monaco.editor.getModel(uri)?.dispose();
       }
       this.editor.groupTabs = { primary: null, secondary: null };
