@@ -42,6 +42,14 @@ const PATH_ARG_TOOLS = new Set([
   "move_file", "get_file_info", "list_directory", "directory_tree", "search_files",
 ]);
 
+const WRITE_TOOLS = new Set(["write_file", "create_directory", "move_file"]);
+const PROTECTED_WRITE_PATTERNS = [
+  /^\.git(\/|\\|$)/i,
+  /^\.env(\..*)?$/i,
+  /^\.ath-agent-run-snapshots(\/|\\|$)/i,
+  /^\.ath-locks(\/|\\|$)/i,
+];
+
 class TestBridge {
   constructor(root, callMcpTool, resolveFn) {
     this._root = root;
@@ -59,6 +67,9 @@ class TestBridge {
       for (const p of (isArray ? value : [value])) {
         if (typeof p !== "string" || !p) throw new Error("empty path");
         if (isAbsoluteOrUnsafe(p)) throw new Error(`absolute or unsafe path rejected`);
+        if (WRITE_TOOLS.has(toolName) && PROTECTED_WRITE_PATTERNS.some(re => re.test(p))) {
+          throw new Error(`MCP write tool '${toolName}': cannot modify protected system or secret file '${p}'.`);
+        }
         await this._resolve(p);
       }
     }
@@ -140,4 +151,32 @@ test("bridge forwards non-filesystem tools without path validation", async () =>
   );
   await bridge.call("github_get_repo_info", { owner: "x", repo: "y" });
   assert.equal(calls.length, 1);
+});
+
+test("bridge rejects write tools attempting to modify .git", async () => {
+  const bridge = new TestBridge(WORKSPACE, async () => ({ success: true, output: "" }), safeMock());
+  await assert.rejects(
+    () => bridge.call("write_file", { path: ".git/config", content: "evil" }),
+    /cannot modify protected system or secret file/
+  );
+});
+
+test("bridge rejects write tools attempting to modify .env secrets", async () => {
+  const bridge = new TestBridge(WORKSPACE, async () => ({ success: true, output: "" }), safeMock());
+  await assert.rejects(
+    () => bridge.call("write_file", { path: ".env", content: "SECRET=1" }),
+    /cannot modify protected system or secret file/
+  );
+  await assert.rejects(
+    () => bridge.call("write_file", { path: ".env.production", content: "SECRET=1" }),
+    /cannot modify protected system or secret file/
+  );
+});
+
+test("bridge rejects write tools attempting to touch snapshot storage", async () => {
+  const bridge = new TestBridge(WORKSPACE, async () => ({ success: true, output: "" }), safeMock());
+  await assert.rejects(
+    () => bridge.call("write_file", { path: ".ath-agent-run-snapshots/evil.json", content: "{}" }),
+    /cannot modify protected system or secret file/
+  );
 });

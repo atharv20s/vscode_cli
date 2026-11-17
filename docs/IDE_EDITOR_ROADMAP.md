@@ -16,7 +16,7 @@ Pull requests are cumulative and should be reviewed and merged in order.
 | #57 | Multiple terminal sessions | Independent xterm views, PTY session IDs, per-session WebSockets and explicit session close. | ✅ Merged |
 | #58 | Editor workflow polish | Diff viewer inline/side-by-side toggle, split editor draggable sash, symbol outline fuzzy search, semantic diagnostics (ESLint/Ruff), and terminal tab rename. | ✅ Merged |
 
-## Agentic Infrastructure PRs (#59 – #62)
+## Agentic Infrastructure PRs (#59 – #63)
 
 | PR | Feature | Scope | Status |
 |---|---|---|---|
@@ -24,21 +24,18 @@ Pull requests are cumulative and should be reviewed and merged in order.
 | #60 | GitHub Skills Importer & MCP Hardening | Dynamic skill discovery, `npm run skills:import`, MCP stdio isolation, per-server tool allowlists, no-shell subprocess spawning. | ✅ Merged |
 | #61 | Inline Monaco Agent Review + TS/Python LSP | View Zone review (Accept/Reject hunk), Ctrl+Y/N shortcuts; TypeScript + Python language-server bridge over `/ws`, Monaco completion/hover/definition providers, 8-process cap. | ✅ Merged |
 | #62 | MCP Workspace Isolation | WorkspaceMcpBridge: absolute path rejection, symlink-safe resolution, null-byte blocking, output cap; filesystem MCP server re-enabled with read-only allowlist. | ✅ Merged |
+| #63 | Ambient Agentic IDE: Multi-hunk, Inline Edit & Snapshots | Multi-hunk View Zones, Ctrl+K inline edit, ambient context & buffer snapshots, Tab-completion API, agent run snapshots & 1-click rollback, MCP write tool safeguards, curated skills. | ✅ Merged |
 
 ## Merge order
 
-Merge in ascending PR number order.  Each later PR is based on the cumulative
-branch and targets `main`.
+Merge in ascending PR number order.  Each PR builds on its predecessor and targets `main`.
 
 ## Remaining phases
 
 | Phase | Description | Prerequisite |
 |---|---|---|
-| Write tool enablement | Add `write_file`, `create_directory`, `move_file` to MCP allowlist behind workspace versioning / rollback. | Workspace snapshot strategy |
-| Multi-hunk inline review | Parse unified diff into individual `@@ ... @@` hunks; render separate Accept/Reject zones per hunk in Monaco View Zones. | PR #61 merged |
 | Distributed LSP pool | Replace per-instance 8-process limit with a shared LSP daemon registry backed by Redis or a sidecar for multi-node deployments. | PR #61 merged |
 | OS-level sandbox | Wrap MCP and LSP child processes in Docker or seccomp/namespace isolation for production multi-tenant safety. | PR #62 merged |
-| Community skill imports | `npm run skills:import -- vercel-labs/agent-skills skills/react-best-practices` and similar. | PR #60 merged |
 | Production acceptance | Live runtime checks: DATABASE_URL, Redis, multi-user workspace isolation, browser acceptance suite. | All above |
 
 ## Acceptance boundary

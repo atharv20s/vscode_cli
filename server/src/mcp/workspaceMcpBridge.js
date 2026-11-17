@@ -34,6 +34,21 @@ const PATH_ARG_TOOLS = new Set([
   "search_files",
 ]);
 
+/** Tools that modify the filesystem and require protected-path safeguards. */
+const WRITE_TOOLS = new Set([
+  "write_file",
+  "create_directory",
+  "move_file",
+]);
+
+/** Protected path patterns that agents must never overwrite via MCP. */
+const PROTECTED_WRITE_PATTERNS = [
+  /^\.git(\/|\\|$)/i,
+  /^\.env(\..*)?$/i,
+  /^\.ath-agent-run-snapshots(\/|\\|$)/i,
+  /^\.ath-locks(\/|\\|$)/i,
+];
+
 /**
  * Returns true when the value looks like an absolute POSIX or Windows path
  * or contains suspicious byte sequences.
@@ -109,6 +124,9 @@ export class WorkspaceMcpBridge {
         if (typeof p !== "string" || !p) throw new Error(`MCP tool '${toolName}': empty or non-string path argument.`);
         if (isAbsoluteOrUnsafe(p)) {
           throw new Error(`MCP tool '${toolName}': absolute or unsafe path rejected — use relative workspace paths only.`);
+        }
+        if (WRITE_TOOLS.has(toolName) && PROTECTED_WRITE_PATTERNS.some(re => re.test(p))) {
+          throw new Error(`MCP write tool '${toolName}': cannot modify protected system or secret file '${p}'.`);
         }
         // This performs symlink-safe resolution and verifies the result stays
         // under workspaceRoot.  It throws for escapes, symlinks, and null bytes.
