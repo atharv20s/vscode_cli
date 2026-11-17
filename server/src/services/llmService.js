@@ -97,6 +97,7 @@ export async function streamChatCompletion({ messages, tools, model = "coding", 
   }
   onEvent({ type: "model_selected", data: { tier, provider: selected.provider, model: selected.model, fallback: attempts[0] !== selected } });
   let fullContent = "";
+  let finishReason = null;
   let reportedUsage = null;
   const accumulated = {};
   try {
