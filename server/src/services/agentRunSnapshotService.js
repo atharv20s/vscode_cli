@@ -161,7 +161,9 @@ export async function completeAgentRunSnapshot(workspace, runId) {
   record.after = await capture(workspace, runDir, "after");
   record.completedAt = new Date().toISOString();
   record.state = "completed";
-  await fs.writeFile(path.join(runDir, "snapshot.json"), JSON.stringify(record), { mode: "w", flag: "w" });
+  const temporary = path.join(runDir, "snapshot.json.tmp");
+  await fs.writeFile(temporary, JSON.stringify(record), { mode: 0o600 });
+  await fs.rename(temporary, path.join(runDir, "snapshot.json"));
   return { runId, state: record.state, changedFiles: record.before.entries.filter(item => {
     const after = record.after.entries.find(value => value.path === item.path);
     return !after || after.digest !== item.digest || after.type !== item.type;
@@ -173,7 +175,7 @@ async function restoreTree(workspace, runDir, entries) {
   const desired = new Map(entries.map(item => [item.path, item]));
   const current = await walk(root);
   for (const item of current.entries.slice().sort((a, b) => b.path.length - a.path.length)) {
-    if (desired.has(item.path)) continue;
+    if (desired.has(item.path) && desired.get(item.path).type === item.type) continue;
     const target = path.join(root, ...item.path.split("/"));
     if (!inside(root, target)) throw new Error("Snapshot path escaped the workspace.");
     await fs.rm(target, { recursive: true, force: true });
@@ -198,12 +200,7 @@ async function restoreTree(workspace, runDir, entries) {
       await fs.rename(temporary, target);
     }
   }
-  const gitIndexPath = path.join(root, ".git", "index");
-  const gitDir = path.join(root, ".git");
-  if (recordGitIndex(entries) === null) return;
 }
-
-function recordGitIndex() { return null; }
 
 export async function rollbackAgentRunSnapshot(workspace, runId) {
   const { runDir, record } = await readRecord(workspace, runId);
@@ -213,8 +210,11 @@ export async function rollbackAgentRunSnapshot(workspace, runId) {
     throw error;
   }
   const current = await walk(path.resolve(workspace.workspaceRoot));
+  const currentIndex = await readGitIndex(path.resolve(workspace.workspaceRoot));
+  const currentIndexDigest = currentIndex ? hash(currentIndex) : null;
   const fingerprint = entries => JSON.stringify(entries.map(item => [item.path, item.type, item.digest || item.target || ""]).sort((a, b) => a[0].localeCompare(b[0])));
-  if (fingerprint(current.entries) !== fingerprint(record.after.entries)) {
+  if (fingerprint(current.entries) !== fingerprint(record.after.entries) ||
+      currentIndexDigest !== (record.after.gitIndex?.digest || null)) {
     const error = new Error("Workspace changed after this agent run. Rollback refused to avoid overwriting newer work.");
     error.code = "SNAPSHOT_ROLLBACK_CONFLICT";
     throw error;
