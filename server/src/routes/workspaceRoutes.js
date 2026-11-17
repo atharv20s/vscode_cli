@@ -519,7 +519,7 @@ router.post("/inline-completion", async (req, res) => {
   inlineCompletionRequests.set(String(req.user.id), now);
   for (const [key, time] of inlineCompletionRequests) if (now - time > 60000) inlineCompletionRequests.delete(key);
   const started = Date.now();
-  let completion = "", failure = null;
+  let completion = "", failure = null, finishReason = null;
   try {
     await streamChatCompletion({
       model: "fast", maxTokens: 192, temperature: 0.1, userId: req.user.id,
@@ -530,13 +530,14 @@ router.post("/inline-completion", async (req, res) => {
       ],
       onEvent: event => {
         if (event.type === "text_delta") completion += event.data?.content || "";
+        if (event.type === "text_complete") finishReason = event.data?.finishReason || null;
         if (event.type === "error") failure = event.data?.message || "Completion provider failed.";
       }
     });
     const latencyMs = Date.now() - started;
     inlineCompletionLatency.push(latencyMs);
     if (inlineCompletionLatency.length > 200) inlineCompletionLatency.shift();
-    if (failure || !completion.trim()) return res.status(503).json({ error: "InlineCompletionUnavailable", message: failure || "No completion was returned.", latencyMs });
+    if (failure || !completion.trim() || finishReason === "length") return res.status(503).json({ error: "InlineCompletionUnavailable", message: failure || (finishReason === "length" ? "Completion was truncated by the token limit." : "No completion was returned."), latencyMs });
     const sorted = [...inlineCompletionLatency].sort((a, b) => a - b);
     return res.json({
       completion: completion.slice(0, 2400), latencyMs, tier: "fast",
