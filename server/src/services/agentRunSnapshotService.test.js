@@ -45,7 +45,7 @@ test("refuses rollback when workspace changes after run completion", async () =>
     await completeAgentRunSnapshot(f.workspace, snapshot.runId);
     await fs.writeFile(path.join(f.root, "src", "a.js"), "user edit after agent");
     await assert.rejects(rollbackAgentRunSnapshot(f.workspace, snapshot.runId), error => error.code === "SNAPSHOT_ROLLBACK_CONFLICT");
-  } finally { await fs.rm(f.parent, { recursive: true, force: true }); }
+  } finally { await fs.rm(f.parent, { recursive: true, force: true }); await fs.rm(path.join(config.workspaceRoot, ".ath-agent-run-snapshots", f.identity), { recursive: true, force: true }); }
 });
 
 test("requires a completed snapshot before rollback", async () => {
@@ -53,5 +53,5 @@ test("requires a completed snapshot before rollback", async () => {
   try {
     const snapshot = await createAgentRunSnapshot(f.workspace);
     await assert.rejects(rollbackAgentRunSnapshot(f.workspace, snapshot.runId), error => error.code === "SNAPSHOT_NOT_COMPLETED");
-  } finally { await fs.rm(f.parent, { recursive: true, force: true }); }
+  } finally { await fs.rm(f.parent, { recursive: true, force: true }); await fs.rm(path.join(config.workspaceRoot, ".ath-agent-run-snapshots", f.identity), { recursive: true, force: true }); }
 });
