@@ -2,7 +2,7 @@
 
 ## Inline agent review
 
-Agent Apply proposals are shown in a Monaco View Zone above the active editor rather than in a modal. Proposed lines are highlighted in the editor. Select a proposed file, stage it with **Accept Hunk** (Ctrl/Cmd+Y), or discard that file with **Reject Hunk** (Ctrl/Cmd+N). Only staged files are sent to the existing version-checked Agent Apply commit endpoint. **Apply & verify** retains the existing post-apply verification flow.
+Agent Apply proposals are shown in a Monaco View Zone above the active editor rather than in a modal. Proposed lines are highlighted in the editor. Select a proposed file to inspect its independent hunk View Zones. Each hunk has its own **Accept hunk** and **Reject hunk** controls; Ctrl/Cmd+Y accepts the selected hunk and Ctrl/Cmd+N rejects it. **Apply accepted** commits only staged hunks through the existing version-checked Agent Apply endpoint. **Apply & verify** retains the existing post-apply verification flow.
 
 Each proposed file is diffed into independent line-level hunks. Every hunk receives its own Monaco View Zone with an isolated Accept/Reject action. Accepted hunks are composed against the original file and committed through the existing version-checked endpoint; rejected hunks are excluded, and undecided hunks remain available after a partial apply. The diff helper uses bounded LCS for normal files and a bounded prefix/suffix fallback for very large inputs.
 
