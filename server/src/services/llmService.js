@@ -54,8 +54,8 @@ export async function streamChatCompletion({ messages, tools, model = "coding", 
     return;
   }
   const preset = Object.values(MODEL_PRESETS).find(item => item.tier === tier) || MODEL_PRESETS.devstral;
-  const requestedMaxTokens = Number.isFinite(Number(maxTokens)) ? Math.max(16, Math.min(preset.maxTokens, Math.floor(Number(maxTokens)))) : preset.maxTokens;
-  const requestedTemperature = Number.isFinite(Number(temperature)) ? Math.max(0, Math.min(1, Number(temperature))) : preset.temperature;
+  const requestedMaxTokens = maxTokens !== null && maxTokens !== undefined && Number.isFinite(Number(maxTokens)) ? Math.max(16, Math.min(preset.maxTokens, Math.floor(Number(maxTokens)))) : preset.maxTokens;
+  const requestedTemperature = temperature !== null && temperature !== undefined && Number.isFinite(Number(temperature)) ? Math.max(0, Math.min(1, Number(temperature))) : preset.temperature;
   const base = { messages, stream: true, max_tokens: requestedMaxTokens, temperature: requestedTemperature };
   if (tools?.length) { base.tools = tools; base.tool_choice = "auto"; }
   let response = null, selected = null, lastError = null;
