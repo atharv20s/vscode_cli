@@ -25,18 +25,23 @@ Pull requests are cumulative and should be reviewed and merged in order.
 | #61 | Inline Monaco Agent Review + TS/Python LSP | View Zone review (Accept/Reject hunk), Ctrl+Y/N shortcuts; TypeScript + Python language-server bridge over `/ws`, Monaco completion/hover/definition providers, 8-process cap. | ✅ Merged |
 | #62 | MCP Workspace Isolation | WorkspaceMcpBridge: absolute path rejection, symlink-safe resolution, null-byte blocking, output cap; filesystem MCP server re-enabled with read-only allowlist. | ✅ Merged |
 | #63 | Ambient Agentic IDE: Multi-hunk, Inline Edit & Snapshots | Multi-hunk View Zones, Ctrl+K inline edit, ambient context & buffer snapshots, Tab-completion API, agent run snapshots & 1-click rollback, MCP write tool safeguards, curated skills. | ✅ Merged |
-| #64 | Secure Execution Sandbox (ATH IDE 2.0) | Kernel namespace unsharing, cgroups v2 resource quotas, network egress lockdown, secret output redaction, and policy engine gate. | 🚀 Implemented |
+| #64 | Secure Execution Sandbox (ATH IDE 2.0) | Kernel namespace unsharing, cgroups v2 resource quotas, network egress lockdown, secret output redaction, and policy engine gate. | ✅ Merged |
+| #65 | Worker Provisioning & Lifecycle | Dedicated Linux workers, dynamic capacity scheduling, stale node eviction, and task recovery. | ✅ Merged |
+| #66 | Encrypted Distributed Snapshots | AES-256-GCM envelope encryption, 96-bit random IVs, HMAC/auth tag validation, and cross-worker restore. | ✅ Merged |
+| #67 | Multi-User Coordination & Locks | Distributed locking with fencing token verification, Redis/in-memory auto-release leases, race prevention. | ✅ Merged |
+| #68 | Specialist-Agent Team Orchestrator | Autonomous team pipeline (Planner -> Coder -> Tester -> Security Reviewer), test-driven repair loop. | ✅ Merged |
+| #69 | Production Observability & Audit | OpenTelemetry-compatible span tracing, model token cost calculation, and immutable audit logs. | ✅ Merged |
 
 ## ATH IDE 2.0 Autonomous Platform Roadmap (#64 – #69)
 
 | Milestone | PR | Focus | Status |
 |---|---|---|---|
-| Secure Execution Sandbox | #64 | OS-level namespaces, cgroups, egress policy, secret redactor | 🚀 Implemented |
-| Worker Provisioning & Lifecycle | #65 | Dedicated Linux workers, auto-recovery, concurrency | Planned |
-| Encrypted Distributed Snapshots | #66 | S3 snapshot persistence, cross-worker restore | Planned |
-| Multi-User Coordination | #67 | Distributed locking via Redis, multi-tenant workspace isolation | Planned |
-| Specialist-Agent Orchestration | #68 | Planner, coder, reviewer, and tester teams with context graph | Planned |
-| Production Observability | #69 | OpenTelemetry tracing, token cost metering, execution audits | Planned |
+| Secure Execution Sandbox | #64 | OS-level namespaces, cgroups, egress policy, secret redactor | ✅ Merged |
+| Worker Provisioning & Lifecycle | #65 | Dedicated Linux workers, auto-recovery, concurrency | ✅ Merged |
+| Encrypted Distributed Snapshots | #66 | S3 snapshot persistence, cross-worker restore | ✅ Merged |
+| Multi-User Coordination | #67 | Distributed locking via Redis, multi-tenant workspace isolation | ✅ Merged |
+| Specialist-Agent Orchestration | #68 | Planner, coder, reviewer, and tester teams with context graph | ✅ Merged |
+| Production Observability | #69 | OpenTelemetry tracing, token cost metering, execution audits | ✅ Merged |
 
 ## Merge order
 
