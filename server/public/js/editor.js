@@ -33,6 +33,9 @@ class EditorManager {
     this.agentApplyHunkStates = new Map();
     this.agentApplyHunks = [];
     this.agentApplySelectedHunkId = null;
+    this.recentEdits = [];
+    this.inlineEditRequest = null;
+    this.inlineCompletionLastRequestAt = 0;
     this.lspPending = new Map();
     this.lspChangeTimers = new Map();
     this.lspRequestId = 1;
@@ -40,6 +43,7 @@ class EditorManager {
     this.lspLanguage = null;
     this.suppressModelChange = false;
     this.initEventListeners();
+    this.initInlineEditListeners();
     this.restoreStateFromCache();
     this.loadMonaco();
   }
@@ -88,6 +92,7 @@ class EditorManager {
         padding: { top: 12, bottom: 12 },
         suggest: { showWords: true, preview: true },
         quickSuggestions: true,
+        inlineSuggest: { enabled: true },
         parameterHints: { enabled: true },
         hover: { enabled: true },
         links: true,
@@ -136,6 +141,7 @@ class EditorManager {
       });
       this.monacoReady = true;
       this.initLspProviders();
+      this.initInlineCompletionProvider();
       if (this.pendingModel) this.selectTab(this.pendingModel);
       window.dispatchEvent(new CustomEvent("ath:monaco-ready"));
     }, (error) => this.showEditorError("Monaco failed to initialize: " + (error?.message || error)));
@@ -315,13 +321,205 @@ class EditorManager {
     this.lspChangeTimers.set(filePath, timer);
   }
 
+
+  recordRecentEdit(filePath, event, editor) {
+    const change = event?.changes?.[0];
+    const position = change?.range?.startLineNumber || editor.getPosition()?.lineNumber || 1;
+    this.recentEdits.unshift({ file: filePath, line: position, inserted: String(change?.text || "").slice(0, 120), removedLength: Number(change?.rangeLength || 0), at: Date.now() });
+    this.recentEdits = this.recentEdits.slice(0, 12);
+  }
+
+  getActiveEditorContext() {
+    const editor = this.monacoEditor, model = editor?.getModel();
+    const position = editor?.getPosition(), selection = editor?.getSelection();
+    const selectedText = model && selection && !selection.isEmpty() ? model.getValueInRange(selection) : "";
+    const file = this.activeTab;
+    const symbols = file ? (this.documentSymbols?.get(file) || []).slice(0, 40).map(item => ({ name: item.name, kind: item.kind, line: item.line })) : [];
+    return {
+      activeFile: file || null, language: model ? monaco.editor.getModelLanguage(model) : null,
+      cursor: position ? { line: position.lineNumber, column: position.column } : null,
+      selection: selection && !selection.isEmpty() ? { startLineNumber: selection.startLineNumber, startColumn: selection.startColumn, endLineNumber: selection.endLineNumber, endColumn: selection.endColumn } : null,
+      selectedText: selectedText.slice(0, 12000), activeContent: model ? model.getValue().slice(0, 12000) : null,
+      openFiles: Array.from(this.openTabs.keys()).slice(0, 40), recentEdits: this.recentEdits.slice(0, 8), importedSymbols: symbols
+    };
+  }
+
+  getSnapshotEditorState() {
+    return { activeTab: this.activeTab, activeGroup: this.activeGroup || "primary",
+      tabs: Array.from(this.openTabs.entries()).slice(0, 40).map(([filePath, tab]) => ({
+        path: filePath, content: tab.content || "", version: tab.version || null, isDirty: tab.isDirty === true
+      })) };
+  }
+
+  restoreSnapshotEditorState(state) {
+    if (!state || !Array.isArray(state.tabs)) return;
+    this.openTabs.clear(); this.tabsContainer?.replaceChildren();
+    state.tabs.slice(0, 40).forEach(tab => {
+      this.openTabs.set(tab.path, { content: tab.content || "", version: tab.version || null, isDirty: tab.isDirty === true, language: this.detectLanguage(tab.path) });
+      this.createTabElement(tab.path);
+    });
+    const active = state.activeTab && this.openTabs.has(state.activeTab) ? state.activeTab : this.openTabs.keys().next().value;
+    if (active) this.selectTab(active, state.activeGroup === "secondary" ? "secondary" : "primary");
+    this.saveStateToCache();
+  }
+
+  initInlineCompletionProvider() {
+    if (this.inlineCompletionProviderRegistered || !monaco.languages.registerInlineCompletionsProvider) return;
+    this.inlineCompletionProviderRegistered = true;
+    ["javascript", "typescript", "python", "javascriptreact", "typescriptreact", "go", "rust"].forEach(language => {
+      monaco.languages.registerInlineCompletionsProvider(language, {
+        provideInlineCompletions: async (model, position, _context, token) => {
+          const now = Date.now();
+          if (now - this.inlineCompletionLastRequestAt < 450 || model.getValueLength() > 120000) return { items: [] };
+          const file = this.activeTab;
+          if (!file || model !== this.monacoEditor?.getModel()) return { items: [] };
+          this.inlineCompletionLastRequestAt = now;
+          const prefix = model.getValueInRange(new monaco.Range(1, 1, position.lineNumber, position.column));
+          const suffix = model.getValueInRange(new monaco.Range(position.lineNumber, position.column, model.getLineCount(), model.getLineMaxColumn(model.getLineCount())));
+          const controller = new AbortController();
+          token.onCancellationRequested(() => controller.abort());
+          try {
+            const response = await fetch("/api/workspace/inline-completion", {
+              method: "POST", signal: controller.signal,
+              headers: { "Content-Type": "application/json", Authorization: "Bearer " + (localStorage.getItem("token") || "") },
+              body: JSON.stringify({ file, language, prefix: prefix.slice(-12000), suffix: suffix.slice(0, 6000) })
+            });
+            if (!response.ok || token.isCancellationRequested) return { items: [] };
+            const data = await response.json();
+            if (data.latencyMs) window.app?.recordCompletionLatency?.(data.latencyMs, data.p50Ms, data.p95Ms);
+            const insertText = String(data.completion || "");
+            if (!insertText.trim()) return { items: [] };
+            return { items: [{ insertText, range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column) }] };
+          } catch { return { items: [] }; }
+        },
+        freeInlineCompletions() {}
+      });
+    });
+  }
+
+  initInlineEditListeners() {
+    if (!window.wsClient || this.inlineEditListenersReady) return;
+    this.inlineEditListenersReady = true;
+    window.wsClient.on("inline.edit.started", data => {
+      if (this.inlineEditRequest?.requestId !== data?.requestId) return;
+      this.inlineEditRequest.output = "";
+      this.inlineEditRequest.status.textContent = "Generating focused edit…";
+    });
+    window.wsClient.on("inline.edit.delta", data => {
+      if (this.inlineEditRequest?.requestId !== data?.requestId) return;
+      this.inlineEditRequest.output += data.content || "";
+      this.inlineEditRequest.preview.value = this.inlineEditRequest.output;
+    });
+    window.wsClient.on("inline.edit.complete", data => {
+      if (this.inlineEditRequest?.requestId !== data?.requestId) return;
+      const replacement = String(data.replacement || "");
+      this.inlineEditRequest.output = replacement;
+      this.inlineEditRequest.preview.value = replacement;
+      this.inlineEditRequest.preview.readOnly = false;
+      this.inlineEditRequest.status.textContent = "Review the replacement. You can edit it before accepting.";
+      this.inlineEditRequest.accept.disabled = false;
+      this.inlineEditRequest.openComposer.disabled = false;
+      window.app?.agentStateMachine?.transition("awaiting_approval", { source: "inline-edit" });
+    });
+    window.wsClient.on("inline.edit.error", data => {
+      if (this.inlineEditRequest?.requestId !== data?.requestId) return;
+      this.inlineEditRequest.status.textContent = data.message || "Inline Edit failed.";
+      this.inlineEditRequest.accept.disabled = true;
+      this.inlineEditRequest.preview.readOnly = false;
+    });
+  }
+
+  openInlineEdit() {
+    const editor = this.monacoEditor, model = editor?.getModel();
+    if (!editor || !model || !this.activeTab) { window.app?.logTerminal("Open a file before using Inline Edit.", "warning"); return; }
+    this.closeInlineEdit();
+    const selection = editor.getSelection();
+    const hasSelection = Boolean(selection && !selection.isEmpty());
+    const selectedText = hasSelection ? model.getValueInRange(selection) : "";
+    const range = hasSelection ? selection : new monaco.Range(1, 1, model.getLineCount(), model.getLineMaxColumn(model.getLineCount()));
+    const panel = document.createElement("section");
+    panel.className = "ath-inline-edit"; panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "Inline Edit");
+    const header = document.createElement("div"); header.className = "ath-inline-edit-header";
+    const title = document.createElement("strong"); title.textContent = "Inline Edit · " + this.activeTab;
+    const close = document.createElement("button"); close.type = "button"; close.textContent = "×"; close.setAttribute("aria-label", "Close Inline Edit");
+    close.addEventListener("click", () => this.closeInlineEdit()); header.append(title, close);
+    const instruction = document.createElement("textarea"); instruction.rows = 2;
+    instruction.placeholder = hasSelection ? "What should change in the selection?" : "What should change in this file?";
+    instruction.setAttribute("aria-label", "Inline edit instruction");
+    const preview = document.createElement("textarea"); preview.rows = 9; preview.className = "ath-inline-edit-preview";
+    preview.placeholder = "The proposed replacement will stream here…"; preview.readOnly = true; preview.setAttribute("aria-label", "Proposed code replacement");
+    const status = document.createElement("div"); status.className = "ath-inline-edit-status";
+    status.textContent = hasSelection ? "Selected code will be replaced." : "The complete file will be replaced.";
+    const actions = document.createElement("div"); actions.className = "ath-inline-edit-actions";
+    const send = document.createElement("button"); send.type = "button"; send.className = "primary-btn"; send.textContent = "Generate";
+    const accept = document.createElement("button"); accept.type = "button"; accept.className = "primary-btn"; accept.textContent = "Accept"; accept.disabled = true;
+    const openComposer = document.createElement("button"); openComposer.type = "button"; openComposer.className = "secondary-btn"; openComposer.textContent = "Open in Composer"; openComposer.disabled = true;
+    const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "secondary-btn"; cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => { if (this.inlineEditRequest) window.wsClient?.send("inline.edit.cancel", { requestId: this.inlineEditRequest.requestId }); this.closeInlineEdit(); });
+    send.addEventListener("click", () => {
+      const request = instruction.value.trim();
+      if (!request) { status.textContent = "Describe the change first."; instruction.focus(); return; }
+      const requestId = "ie_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+      const cursor = editor.getPosition(), tab = this.openTabs.get(this.activeTab);
+      this.inlineEditRequest = { requestId, filePath: this.activeTab, model, modelVersion: model.getVersionId(), range,
+        hasSelection, selectedText, instruction: request, output: "", preview, status, accept, openComposer };
+      preview.value = ""; preview.readOnly = true; accept.disabled = true; openComposer.disabled = true;
+      status.textContent = "Connecting to the focused edit model…";
+      window.app?.agentStateMachine?.transition("planning", { source: "inline-edit" });
+      if (!window.wsClient?.isConnected) window.wsClient?.connect(localStorage.getItem("token") || "");
+      window.wsClient?.send("inline.edit", {
+        requestId, filePath: this.activeTab, instruction: request, content: model.getValue(), selectedText,
+        expectedVersion: tab?.version || null, language: monaco.editor.getModelLanguage(model),
+        selection: hasSelection ? { startLineNumber: range.startLineNumber, startColumn: range.startColumn, endLineNumber: range.endLineNumber, endColumn: range.endColumn } : null,
+        cursor: cursor ? { line: cursor.lineNumber, column: cursor.column } : null
+      });
+    });
+    accept.addEventListener("click", () => this.acceptInlineEdit());
+    openComposer.addEventListener("click", () => {
+      const composer = document.getElementById("composer-input");
+      if (composer && this.inlineEditRequest) {
+        composer.value = "Continue this focused edit as a broader Composer task.\nFile: " + this.inlineEditRequest.filePath +
+          "\nInstruction: " + this.inlineEditRequest.instruction + "\nCurrent editor context:\n" + JSON.stringify(this.getActiveEditorContext(), null, 2);
+        composer.focus();
+      }
+      this.closeInlineEdit();
+    });
+    actions.append(send, accept, openComposer, cancel); panel.append(header, instruction, preview, status, actions);
+    this.editorView?.appendChild(panel); instruction.focus(); this.inlineEditPanel = panel;
+  }
+
+  acceptInlineEdit() {
+    const request = this.inlineEditRequest;
+    if (!request || request.model.isDisposed() || request.model.getVersionId() !== request.modelVersion) {
+      if (request) request.status.textContent = "The editor changed while the edit was generating. Regenerate against the latest buffer.";
+      return;
+    }
+    request.model.pushEditOperations([], [{ range: request.range, text: request.preview.value, forceMoveMarkers: true }], () => null);
+    const tab = this.openTabs.get(request.filePath);
+    if (tab) { tab.content = request.model.getValue(); tab.isDirty = true; this.updateTabUI(request.filePath); }
+    this.saveStateToCache(); this.closeInlineEdit();
+    window.app?.agentStateMachine?.transition("idle", { source: "inline-edit-accepted" });
+    window.app?.logTerminal("Inline edit accepted into the editor buffer. Save the file to persist it.", "success");
+  }
+
+  closeInlineEdit() {
+    if (this.inlineEditRequest) {
+      const pending = this.inlineEditRequest;
+      if (pending.status?.textContent?.includes("Generating") || pending.status?.textContent?.includes("Connecting")) {
+        window.wsClient?.send("inline.edit.cancel", { requestId: pending.requestId });
+      }
+    }
+    this.inlineEditPanel?.remove(); this.inlineEditPanel = null; this.inlineEditRequest = null;
+  }
+
   attachEditorGroup(editor, group) {
-    editor.onDidChangeModelContent(() => {
+    editor.onDidChangeModelContent(event => {
       const filePath = this.groupTabs[group];
       if (this.suppressModelChange || !filePath || !this.openTabs.has(filePath)) return;
       const tab = this.openTabs.get(filePath);
       tab.content = editor.getValue();
       tab.isDirty = true;
+      this.recordRecentEdit(filePath, event, editor);
       this.updateTabUI(filePath);
       this.saveStateToCache();
       this.scheduleDiagnostics(filePath, editor);
@@ -331,6 +529,7 @@ class EditorManager {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => editor.getAction("actions.find").run());
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => this.openWorkspaceSearch());
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => this.openQuickOpen());
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => { this.activateGroup(group); this.openInlineEdit(); });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => this.openCommandPalette());
     editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyUp, () => editor.getAction("editor.action.moveLinesUpAction").run());
     editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyDown, () => editor.getAction("editor.action.moveLinesDownAction").run());
