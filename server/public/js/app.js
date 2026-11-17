@@ -226,10 +226,15 @@ class App {
         method: "POST", headers: { Authorization: "Bearer " + this.token }
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.message || data.error || "Rollback failed.");
+      if (!response.ok && !data.localRestored) throw new Error(data.message || data.error || "Rollback failed.");
       this.agentAwaitingApproval = false;
       window.editorManager?.restoreSnapshotEditorState?.(data.editorState);
       await this.loadWorkspaceFiles();
+      if (!response.ok && data.localRestored) {
+        if (button) button.textContent = "Local copy restored";
+        this.renderError("Local workspace restored, but remote synchronization failed. Do not continue editing until the worker is reconciled: " + (data.message || "remote restore pending"));
+        return;
+      }
       this.renderSystemMessage("Agent run reverted. Workspace files, Git index and saved editor buffers were restored to the pre-run snapshot.");
       if (button) button.textContent = "Run reverted";
       this.transitionAgentState("idle", { source: "rollback" });
