@@ -27,7 +27,7 @@ async function walk(root) {
     const current = stack.pop();
     const children = await fs.readdir(current.absolute, { withFileTypes: true });
     for (const child of children) {
-      if (!current.relative && IGNORED.has(child.name)) continue;
+      if (IGNORED.has(child.name)) continue;
       if (child.name === ".git") continue;
       const relative = current.relative ? current.relative + "/" + child.name : child.name;
       const absolute = path.join(current.absolute, child.name);
@@ -239,6 +239,11 @@ async function restoreTree(workspace, runDir, entries) {
       await fs.chmod(target, item.mode ?? 0o600);
       if (Number.isFinite(item.mtimeMs)) await fs.utimes(target, new Date(item.mtimeMs), new Date(item.mtimeMs));
     }
+  }
+  for (const item of entries.filter(value => value.type === "directory").sort((a, b) => b.path.length - a.path.length)) {
+    const target = path.join(root, ...item.path.split("/"));
+    if (Number.isFinite(item.mtimeMs)) await fs.utimes(target, new Date(item.mtimeMs), new Date(item.mtimeMs));
+    await fs.chmod(target, item.mode ?? 0o700).catch(() => {});
   }
 }
 
