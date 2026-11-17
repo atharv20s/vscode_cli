@@ -29,7 +29,7 @@ test("handles insertions, deletions and replacements", () => {
 });
 
 test("preserves trailing newlines and returns no hunks for identical text", () => {
-  assert.deepEqual(diffLines("same\n", "same\n"), []);
+  assert.equal(diffLines("same\n", "same\n").length, 0);
   const hunks = diffLines("same\n", "changed\n");
   assert.equal(applyHunks("same\n", hunks, hunks.map(hunk => hunk.id)), "changed\n");
 });
