@@ -34,7 +34,7 @@ class EditorManager {
     this.agentApplyHunkOverrides = new Map();
     this.agentApplyHunks = [];
     this.agentApplySelectedHunkId = null;
-    this.recentEdits = [];
+    this.contextService = window.AgentContextService ? new window.AgentContextService(this) : null;
     this.inlineEditRequest = null;
     this.inlineCompletionLastRequestAt = 0;
     this.lspPending = new Map();
@@ -324,44 +324,19 @@ class EditorManager {
 
 
   recordRecentEdit(filePath, event, editor) {
-    const change = event?.changes?.[0];
-    const position = change?.range?.startLineNumber || editor.getPosition()?.lineNumber || 1;
-    this.recentEdits.unshift({ file: filePath, line: position, inserted: String(change?.text || "").slice(0, 120), removedLength: Number(change?.rangeLength || 0), at: Date.now() });
-    this.recentEdits = this.recentEdits.slice(0, 12);
+    this.contextService?.recordRecentEdit(filePath, event, editor);
   }
 
   getActiveEditorContext() {
-    const editor = this.monacoEditor, model = editor?.getModel();
-    const position = editor?.getPosition(), selection = editor?.getSelection();
-    const selectedText = model && selection && !selection.isEmpty() ? model.getValueInRange(selection) : "";
-    const file = this.activeTab;
-    const symbols = file ? (this.documentSymbols?.get(file) || []).slice(0, 40).map(item => ({ name: item.name, kind: item.kind, line: item.line })) : [];
-    return {
-      activeFile: file || null, language: model ? monaco.editor.getModelLanguage(model) : null,
-      cursor: position ? { line: position.lineNumber, column: position.column } : null,
-      selection: selection && !selection.isEmpty() ? { startLineNumber: selection.startLineNumber, startColumn: selection.startColumn, endLineNumber: selection.endLineNumber, endColumn: selection.endColumn } : null,
-      selectedText: selectedText.slice(0, 12000), activeContent: model ? model.getValue().slice(0, 12000) : null,
-      openFiles: Array.from(this.openTabs.keys()).slice(0, 40), recentEdits: this.recentEdits.slice(0, 8), importedSymbols: symbols
-    };
+    return this.contextService?.getActiveEditorContext() || {};
   }
 
   getSnapshotEditorState() {
-    return { activeTab: this.activeTab, activeGroup: this.activeGroup || "primary",
-      tabs: Array.from(this.openTabs.entries()).slice(0, 40).map(([filePath, tab]) => ({
-        path: filePath, content: tab.content || "", version: tab.version || null, isDirty: tab.isDirty === true
-      })) };
+    return this.contextService?.getSnapshotEditorState() || { activeTab: null, tabs: [] };
   }
 
   restoreSnapshotEditorState(state) {
-    if (!state || !Array.isArray(state.tabs)) return;
-    this.openTabs.clear(); this.tabsContainer?.replaceChildren();
-    state.tabs.slice(0, 40).forEach(tab => {
-      this.openTabs.set(tab.path, { content: tab.content || "", version: tab.version || null, isDirty: tab.isDirty === true, language: this.detectLanguage(tab.path) });
-      this.createTabElement(tab.path);
-    });
-    const active = state.activeTab && this.openTabs.has(state.activeTab) ? state.activeTab : this.openTabs.keys().next().value;
-    if (active) this.selectTab(active, state.activeGroup === "secondary" ? "secondary" : "primary");
-    this.saveStateToCache();
+    this.contextService?.restoreSnapshotEditorState(state);
   }
 
   initInlineCompletionProvider() {
