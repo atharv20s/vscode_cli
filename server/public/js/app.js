@@ -13,6 +13,15 @@ class App {
     this.currentThinkingContent = "";
     this.sessionTokens = 0;
     this.chatHistory = [];
+    this.agentStateMachine = window.AgentStateMachine ? new window.AgentStateMachine() : null;
+    this.activeAgentRunId = null;
+    this.agentAwaitingApproval = false;
+    this.agentRunHistory = [];
+    this.completionLatencySamples = [];
+    this.agentStateMachine?.subscribe(event => {
+      const state = document.getElementById("status-agent-state");
+      if (state) state.textContent = "Agent: " + String(event.state || "idle").replaceAll("_", " ");
+    });
     this.terminalSessions = new Map();
     this.activeTerminalId = "default";
 
@@ -157,6 +166,99 @@ class App {
   /**
    * Initialize WebSocket connection and event handlers.
    */
+  transitionAgentState(next, detail = {}) {
+    if (!this.agentStateMachine || this.agentStateMachine.state === next) return;
+    try { this.agentStateMachine.transition(next, detail); }
+    catch {
+      if (next === "planning" && this.agentStateMachine.state !== "idle") {
+        try { this.agentStateMachine.transition("idle"); this.agentStateMachine.transition("planning", detail); } catch {}
+      } else if (next === "idle") {
+        try { this.agentStateMachine.transition("idle", detail); } catch {}
+      }
+    }
+  }
+
+  async beginAgentRunSnapshot() {
+    this.agentAwaitingApproval = false;
+    const editorState = window.editorManager?.getSnapshotEditorState?.() || { activeTab: null, tabs: [] };
+    const response = await fetch("/api/workspace/agent-runs/snapshot", {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + this.token },
+      body: JSON.stringify({ editorState })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.runId) throw new Error(data.message || data.error || "Unable to create a pre-run recovery snapshot. Agent execution was not started.");
+    this.activeAgentRunId = data.runId;
+    this.transitionAgentState("planning", { runId: data.runId });
+    return data.runId;
+  }
+
+  async completeAgentRunSnapshot() {
+    const runId = this.activeAgentRunId;
+    if (!runId) return;
+    try {
+      const response = await fetch("/api/workspace/agent-runs/" + encodeURIComponent(runId) + "/complete", {
+        method: "POST", headers: { Authorization: "Bearer " + this.token }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || data.error || "Post-run snapshot failed.");
+      this.activeAgentRunId = null;
+      this.agentRunHistory.unshift({ runId, completedAt: Date.now(), changedFiles: data.changedFiles || 0 });
+      this.agentRunHistory = this.agentRunHistory.slice(0, 10);
+      localStorage.setItem("ath_agent_run_history", JSON.stringify(this.agentRunHistory));
+      const message = document.querySelector("#ai-timeline .chat-msg.agent:last-child .chat-bubble") || document.getElementById("ai-timeline");
+      if (message) {
+        const actions = document.createElement("div");
+        actions.className = "agent-run-rollback-actions";
+        const button = document.createElement("button");
+        button.type = "button"; button.className = "secondary-btn"; button.textContent = "↶ Revert entire agent run";
+        button.addEventListener("click", () => this.rollbackAgentRun(runId, button));
+        actions.appendChild(button); message.appendChild(actions);
+      }
+    } catch (error) {
+      this.logTerminal("Agent recovery snapshot could not be finalized: " + error.message, "error");
+      const message = document.querySelector("#ai-timeline .chat-msg.agent:last-child .chat-bubble");
+      if (message && !message.querySelector(".agent-run-snapshot-retry")) {
+        const retry = document.createElement("button");
+        retry.type = "button"; retry.className = "secondary-btn agent-run-snapshot-retry";
+        retry.textContent = "Retry recovery snapshot";
+        retry.addEventListener("click", async () => { retry.disabled = true; retry.textContent = "Retrying…"; await this.completeAgentRunSnapshot(); if (this.activeAgentRunId) { retry.disabled = false; retry.textContent = "Retry recovery snapshot"; } else retry.remove(); });
+        message.appendChild(retry);
+      }
+    }
+  }
+
+  async rollbackAgentRun(runId, button) {
+    if (button) { button.disabled = true; button.textContent = "Restoring…"; }
+    try {
+      const response = await fetch("/api/workspace/agent-runs/" + encodeURIComponent(runId) + "/rollback", {
+        method: "POST", headers: { Authorization: "Bearer " + this.token }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok && !data.localRestored) throw new Error(data.message || data.error || "Rollback failed.");
+      this.agentAwaitingApproval = false;
+      window.editorManager?.restoreSnapshotEditorState?.(data.editorState);
+      await this.loadWorkspaceFiles();
+      if (!response.ok && data.localRestored) {
+        if (button) button.textContent = "Local copy restored";
+        this.renderError("Local workspace restored, but remote synchronization failed. Do not continue editing until the worker is reconciled: " + (data.message || "remote restore pending"));
+        return;
+      }
+      this.renderSystemMessage("Agent run reverted. Workspace files, Git index and saved editor buffers were restored to the pre-run snapshot.");
+      if (button) button.textContent = "Run reverted";
+      this.transitionAgentState("idle", { source: "rollback" });
+    } catch (error) {
+      if (button) { button.disabled = false; button.textContent = "↶ Revert entire agent run"; }
+      this.renderError("Agent rollback refused or failed: " + error.message);
+    }
+  }
+
+  recordCompletionLatency(latencyMs, p50Ms, p95Ms) {
+    this.completionLatencySamples.push(Number(latencyMs) || 0);
+    if (this.completionLatencySamples.length > 100) this.completionLatencySamples.shift();
+    const state = document.getElementById("status-agent-state");
+    if (state && this.completionLatencySamples.length % 5 === 0) state.textContent = "Tab completion · p50 " + (p50Ms || latencyMs) + "ms / p95 " + (p95Ms || latencyMs) + "ms";
+  }
+
   initWebSocket() {
     window.wsClient.connect(this.token);
 
@@ -169,6 +271,7 @@ class App {
         if (state) state.textContent = "Agent: Policy blocked";
         return;
       }
+      if (data?.stage === "before_tool") this.transitionAgentState("editing", { toolName: data.toolName });
       if (["before_tool", "after_tool", "on_error"].includes(data?.stage)) {
         this.logTerminal("[Agent lifecycle] " + stage + detail, "info");
       }
@@ -205,8 +308,14 @@ class App {
     });
 
     window.wsClient.on("agent.apply.proposal", data => {
+      this.agentAwaitingApproval = true;
+      this.transitionAgentState("awaiting_approval", { source: "composer-proposal" });
       window.editorManager?.reviewAgentChanges(data || {});
       this.logTerminal("[Agent] A multi-file patch is ready for review.", "info");
+    });
+
+    window.wsClient.on("verification_result", data => {
+      this.transitionAgentState("verifying", { success: data?.success === true });
     });
 
     window.wsClient.on("tool_start", (data) => {
@@ -226,11 +335,13 @@ class App {
       }
     });
 
-    window.wsClient.on("done", (data) => {
+    window.wsClient.on("done", async (data) => {
       window.editorManager?.enableAgentProposalActions();
       this.finalizeMessage();
       this.setGeneratingState(false);
       this.loadWorkspaceFiles();
+      if (!this.agentAwaitingApproval) await this.completeAgentRunSnapshot();
+      if (this.agentStateMachine?.state !== "awaiting_approval") this.transitionAgentState("idle", { source: "composer-done" });
       if (data.totalTokens) {
         this.sessionTokens += data.totalTokens;
         document.getElementById("session-token-count").textContent = `${this.sessionTokens} tokens`;
@@ -241,23 +352,31 @@ class App {
         this.logTerminal(`[Agent] Task completed successfully.`, "success");
       }
       const agentStateEl = document.getElementById("status-agent-state");
-      if (agentStateEl) agentStateEl.textContent = "Agent: Idle";
+      if (agentStateEl) agentStateEl.textContent = this.agentAwaitingApproval ? "Agent: Awaiting review" : "Agent: Idle";
     });
 
-    window.wsClient.on("aborted", (data) => {
+    window.wsClient.on("aborted", async (data) => {
       window.editorManager?.enableAgentProposalActions();
       this.finalizeMessage();
       this.setGeneratingState(false);
+      if (!this.agentAwaitingApproval) {
+        await this.completeAgentRunSnapshot();
+        this.transitionAgentState("idle", { source: "composer-aborted" });
+      }
       this.logTerminal(`[Agent] Generation stopped.`, "info");
       const agentStateEl = document.getElementById("status-agent-state");
       if (agentStateEl) agentStateEl.textContent = "Agent: Idle";
     });
 
-    window.wsClient.on("error", (data) => {
+    window.wsClient.on("error", async (data) => {
       window.editorManager?.enableAgentProposalActions();
       this.renderError(data.message || "An unexpected error occurred.");
       this.finalizeMessage();
       this.setGeneratingState(false);
+      if (!this.agentAwaitingApproval) {
+        await this.completeAgentRunSnapshot();
+        this.transitionAgentState("idle", { source: "composer-error" });
+      }
       this.logTerminal(`[Agent Error] ${data.message}`, "error");
       const agentStateEl = document.getElementById("status-agent-state");
       if (agentStateEl) agentStateEl.textContent = "Agent: Stopped/Error";
@@ -2200,7 +2319,9 @@ class App {
   /**
    * Send User Message to AI Agent
    */
-  sendMessage() {
+  async sendMessage() {
+    if (this.isGenerating) return;
+    if (this.agentAwaitingApproval) { this.renderError("Finish accepting or rejecting the current Agent Apply proposal before starting another Composer run."); return; }
     try {
       const composerInput = document.getElementById("composer-input");
       if (!composerInput) return;
@@ -2254,6 +2375,15 @@ class App {
       }
       // ── End Slash Command Interceptor ────────────────────────────────
 
+      if (!window.ATH_IS_WORKSPACE_COLLABORATOR) {
+        try { await this.beginAgentRunSnapshot(); }
+        catch (snapshotError) {
+          this.renderError(snapshotError.message);
+          this.logTerminal("Agent run blocked because a recovery snapshot could not be created.", "error");
+          return;
+        }
+      }
+
       if (!this.currentConversationId) {
         this.currentConversationId = `conv_${Date.now()}`;
         localStorage.setItem("ath_current_conv_id", this.currentConversationId);
@@ -2283,7 +2413,9 @@ class App {
         .join("\n");
       const activeFile = window.editorManager?.activeTab || null;
       const openFiles = Array.from(window.editorManager?.openTabs?.keys() || []);
-      const activeContent = activeFile ? window.editorManager?.openTabs?.get(activeFile)?.content?.slice(0, 3000) : null;
+      const sensitiveActiveFile = /(^|\/)(?:\.env(?:\..*)?|credentials(?:\..*)?|id_rsa|id_ed25519|.*\.(?:pem|key|p12|pfx|keystore))$/i.test(activeFile || "");
+      const activeContent = activeFile && !sensitiveActiveFile ? window.editorManager?.openTabs?.get(activeFile)?.content?.slice(0, 3000) : null;
+      const liveEditorContext = window.editorManager?.getActiveEditorContext?.() || {};
       const userId = this.currentUser?.id || this.currentUser?.username || localStorage.getItem("ath_guest_id") || "guest";
 
       window.wsClient.send("chat", {
@@ -2304,10 +2436,17 @@ class App {
             activeFile,
             openFiles,
             activeContent,
+            cursor: liveEditorContext.cursor || null,
+            selection: liveEditorContext.selection || null,
+            selectedText: liveEditorContext.selectedText || "",
+            language: liveEditorContext.language || null,
+            recentEdits: liveEditorContext.recentEdits || [],
+            importedSymbols: liveEditorContext.importedSymbols || [],
           },
         },
       });
     } catch (err) {
+      await this.completeAgentRunSnapshot();
       console.error("Failed to send message:", err);
       this.setGeneratingState(false);
       this.renderError(err.message);
@@ -2378,6 +2517,7 @@ class App {
    * Toggle Generating State in UI (Send vs Stop button)
    */
   setGeneratingState(isGenerating) {
+    this.isGenerating = Boolean(isGenerating);
     const sendBtn = document.getElementById("btn-send-agent");
     const stopBtn = document.getElementById("btn-stop-agent");
     if (sendBtn && stopBtn) {

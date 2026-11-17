@@ -29,6 +29,14 @@ class EditorManager {
     this.agentApplyViewZoneId = null;
     this.agentApplyZoneEditor = null;
     this.agentApplyDecorations = null;
+    this.agentApplyHunkZoneIds = [];
+    this.agentApplyHunkStates = new Map();
+    this.agentApplyHunkOverrides = new Map();
+    this.agentApplyHunks = [];
+    this.agentApplySelectedHunkId = null;
+    this.contextService = window.AgentContextService ? new window.AgentContextService(this) : null;
+    this.inlineEditRequest = null;
+    this.inlineCompletionLastRequestAt = 0;
     this.lspPending = new Map();
     this.lspChangeTimers = new Map();
     this.lspRequestId = 1;
@@ -36,6 +44,7 @@ class EditorManager {
     this.lspLanguage = null;
     this.suppressModelChange = false;
     this.initEventListeners();
+    this.initInlineEditListeners();
     this.restoreStateFromCache();
     this.loadMonaco();
   }
@@ -84,6 +93,7 @@ class EditorManager {
         padding: { top: 12, bottom: 12 },
         suggest: { showWords: true, preview: true },
         quickSuggestions: true,
+        inlineSuggest: { enabled: true },
         parameterHints: { enabled: true },
         hover: { enabled: true },
         links: true,
@@ -132,6 +142,7 @@ class EditorManager {
       });
       this.monacoReady = true;
       this.initLspProviders();
+      this.initInlineCompletionProvider();
       if (this.pendingModel) this.selectTab(this.pendingModel);
       window.dispatchEvent(new CustomEvent("ath:monaco-ready"));
     }, (error) => this.showEditorError("Monaco failed to initialize: " + (error?.message || error)));
@@ -311,13 +322,190 @@ class EditorManager {
     this.lspChangeTimers.set(filePath, timer);
   }
 
+
+  recordRecentEdit(filePath, event, editor) {
+    this.contextService?.recordRecentEdit(filePath, event, editor);
+  }
+
+  getActiveEditorContext() {
+    return this.contextService?.getActiveEditorContext() || {};
+  }
+
+  getSnapshotEditorState() {
+    return this.contextService?.getSnapshotEditorState() || { activeTab: null, tabs: [] };
+  }
+
+  restoreSnapshotEditorState(state) {
+    this.contextService?.restoreSnapshotEditorState(state);
+  }
+
+  initInlineCompletionProvider() {
+    if (this.inlineCompletionProviderRegistered || !monaco.languages.registerInlineCompletionsProvider) return;
+    this.inlineCompletionProviderRegistered = true;
+    ["javascript", "typescript", "python", "javascriptreact", "typescriptreact", "go", "rust"].forEach(language => {
+      monaco.languages.registerInlineCompletionsProvider(language, {
+        provideInlineCompletions: async (model, position, _context, token) => {
+          const now = Date.now();
+          if (now - this.inlineCompletionLastRequestAt < 450 || model.getValueLength() > 120000) return { items: [] };
+          const file = this.activeTab;
+          if (!file || model !== this.monacoEditor?.getModel()) return { items: [] };
+          this.inlineCompletionLastRequestAt = now;
+          const prefix = model.getValueInRange(new monaco.Range(1, 1, position.lineNumber, position.column));
+          const suffix = model.getValueInRange(new monaco.Range(position.lineNumber, position.column, model.getLineCount(), model.getLineMaxColumn(model.getLineCount())));
+          const controller = new AbortController();
+          token.onCancellationRequested(() => controller.abort());
+          try {
+            const response = await fetch("/api/workspace/inline-completion", {
+              method: "POST", signal: controller.signal,
+              headers: { "Content-Type": "application/json", Authorization: "Bearer " + (localStorage.getItem("token") || "") },
+              body: JSON.stringify({ file, language, prefix: prefix.slice(-12000), suffix: suffix.slice(0, 6000) })
+            });
+            if (!response.ok || token.isCancellationRequested) return { items: [] };
+            const data = await response.json();
+            if (data.latencyMs) window.app?.recordCompletionLatency?.(data.latencyMs, data.p50Ms, data.p95Ms);
+            const insertText = String(data.completion || "");
+            if (!insertText.trim()) return { items: [] };
+            return { items: [{ insertText, range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column) }] };
+          } catch { return { items: [] }; }
+        },
+        freeInlineCompletions() {}
+      });
+    });
+  }
+
+  initInlineEditListeners() {
+    if (!window.wsClient || this.inlineEditListenersReady) return;
+    this.inlineEditListenersReady = true;
+    window.wsClient.on("inline.edit.started", data => {
+      if (this.inlineEditRequest?.requestId !== data?.requestId) return;
+      this.inlineEditRequest.output = "";
+      this.inlineEditRequest.status.textContent = "Generating focused edit…";
+      window.app?.transitionAgentState?.("editing", { source: "inline-edit" });
+    });
+    window.wsClient.on("inline.edit.delta", data => {
+      if (this.inlineEditRequest?.requestId !== data?.requestId) return;
+      this.inlineEditRequest.output += data.content || "";
+      this.inlineEditRequest.preview.value = this.inlineEditRequest.output;
+    });
+    window.wsClient.on("inline.edit.complete", data => {
+      if (this.inlineEditRequest?.requestId !== data?.requestId) return;
+      let replacement = String(data.replacement || "");
+      const fence = String.fromCharCode(96).repeat(3);
+      if (replacement.trimStart().startsWith(fence) && replacement.trimEnd().endsWith(fence)) {
+        const trimmed = replacement.trim();
+        const firstNewline = trimmed.indexOf("\n");
+        replacement = firstNewline >= 0 ? trimmed.slice(firstNewline + 1, -3).replace(/\n$/, "") : trimmed.slice(3, -3);
+      }
+      this.inlineEditRequest.output = replacement;
+      this.inlineEditRequest.preview.value = replacement;
+      this.inlineEditRequest.preview.readOnly = false;
+      this.inlineEditRequest.status.textContent = "Review the replacement. You can edit it before accepting.";
+      this.inlineEditRequest.accept.disabled = false;
+      this.inlineEditRequest.openComposer.disabled = false;
+      window.app?.transitionAgentState?.("awaiting_approval", { source: "inline-edit" });
+    });
+    window.wsClient.on("inline.edit.error", data => {
+      if (this.inlineEditRequest?.requestId !== data?.requestId) return;
+      this.inlineEditRequest.status.textContent = data.message || "Inline Edit failed.";
+      this.inlineEditRequest.accept.disabled = true;
+      this.inlineEditRequest.preview.readOnly = false;
+      window.app?.transitionAgentState?.("idle", { source: "inline-edit-error" });
+    });
+  }
+
+  openInlineEdit() {
+    const editor = this.monacoEditor, model = editor?.getModel();
+    if (!editor || !model || !this.activeTab) { window.app?.logTerminal("Open a file before using Inline Edit.", "warning"); return; }
+    if (window.app?.isGenerating) { window.app?.logTerminal("Wait for the current Composer run to finish before starting Inline Edit.", "warning"); return; }
+    this.closeInlineEdit();
+    const selection = editor.getSelection();
+    const hasSelection = Boolean(selection && !selection.isEmpty());
+    const selectedText = hasSelection ? model.getValueInRange(selection) : "";
+    const range = hasSelection ? selection : new monaco.Range(1, 1, model.getLineCount(), model.getLineMaxColumn(model.getLineCount()));
+    const panel = document.createElement("section");
+    panel.className = "ath-inline-edit"; panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "Inline Edit");
+    const header = document.createElement("div"); header.className = "ath-inline-edit-header";
+    const title = document.createElement("strong"); title.textContent = "Inline Edit · " + this.activeTab;
+    const close = document.createElement("button"); close.type = "button"; close.textContent = "×"; close.setAttribute("aria-label", "Close Inline Edit");
+    close.addEventListener("click", () => this.closeInlineEdit()); header.append(title, close);
+    const instruction = document.createElement("textarea"); instruction.rows = 2;
+    instruction.placeholder = hasSelection ? "What should change in the selection?" : "What should change in this file?";
+    instruction.setAttribute("aria-label", "Inline edit instruction");
+    const preview = document.createElement("textarea"); preview.rows = 9; preview.className = "ath-inline-edit-preview";
+    preview.placeholder = "The proposed replacement will stream here…"; preview.readOnly = true; preview.setAttribute("aria-label", "Proposed code replacement");
+    const status = document.createElement("div"); status.className = "ath-inline-edit-status";
+    status.textContent = hasSelection ? "Selected code will be replaced." : "The complete file will be replaced.";
+    const actions = document.createElement("div"); actions.className = "ath-inline-edit-actions";
+    const send = document.createElement("button"); send.type = "button"; send.className = "primary-btn"; send.textContent = "Generate";
+    const accept = document.createElement("button"); accept.type = "button"; accept.className = "primary-btn"; accept.textContent = "Accept"; accept.disabled = true;
+    const openComposer = document.createElement("button"); openComposer.type = "button"; openComposer.className = "secondary-btn"; openComposer.textContent = "Open in Composer"; openComposer.disabled = true;
+    const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "secondary-btn"; cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => { if (this.inlineEditRequest) window.wsClient?.send("inline.edit.cancel", { requestId: this.inlineEditRequest.requestId }); this.closeInlineEdit(); });
+    send.addEventListener("click", () => {
+      const request = instruction.value.trim();
+      if (!request) { status.textContent = "Describe the change first."; instruction.focus(); return; }
+      const requestId = "ie_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+      const cursor = editor.getPosition(), tab = this.openTabs.get(this.activeTab);
+      this.inlineEditRequest = { requestId, filePath: this.activeTab, model, modelVersion: model.getVersionId(), range,
+        hasSelection, selectedText, instruction: request, output: "", preview, status, accept, openComposer };
+      preview.value = ""; preview.readOnly = true; accept.disabled = true; openComposer.disabled = true;
+      status.textContent = "Connecting to the focused edit model…";
+      window.app?.transitionAgentState?.("planning", { source: "inline-edit" });
+      if (!window.wsClient?.isConnected) window.wsClient?.connect(localStorage.getItem("token") || "");
+      window.wsClient?.send("inline.edit", {
+        requestId, filePath: this.activeTab, instruction: request, content: model.getValue(), selectedText,
+        expectedVersion: tab?.version || null, language: monaco.editor.getModelLanguage(model),
+        selection: hasSelection ? { startLineNumber: range.startLineNumber, startColumn: range.startColumn, endLineNumber: range.endLineNumber, endColumn: range.endColumn } : null,
+        cursor: cursor ? { line: cursor.lineNumber, column: cursor.column } : null
+      });
+    });
+    accept.addEventListener("click", () => this.acceptInlineEdit());
+    openComposer.addEventListener("click", () => {
+      const composer = document.getElementById("composer-input");
+      if (composer && this.inlineEditRequest) {
+        composer.value = "Continue this focused edit as a broader Composer task.\nFile: " + this.inlineEditRequest.filePath +
+          "\nInstruction: " + this.inlineEditRequest.instruction + "\nCurrent editor context:\n" + JSON.stringify(this.getActiveEditorContext(), null, 2);
+        composer.focus();
+      }
+      this.closeInlineEdit();
+    });
+    actions.append(send, accept, openComposer, cancel); panel.append(header, instruction, preview, status, actions);
+    this.editorView?.appendChild(panel); instruction.focus(); this.inlineEditPanel = panel;
+  }
+
+  acceptInlineEdit() {
+    const request = this.inlineEditRequest;
+    if (!request || request.model.isDisposed() || request.model.getVersionId() !== request.modelVersion) {
+      if (request) request.status.textContent = "The editor changed while the edit was generating. Regenerate against the latest buffer.";
+      return;
+    }
+    request.model.pushEditOperations([], [{ range: request.range, text: request.preview.value, forceMoveMarkers: true }], () => null);
+    const tab = this.openTabs.get(request.filePath);
+    if (tab) { tab.content = request.model.getValue(); tab.isDirty = true; this.updateTabUI(request.filePath); }
+    this.saveStateToCache(); this.closeInlineEdit();
+    window.app?.transitionAgentState?.("idle", { source: "inline-edit-accepted" });
+    window.app?.logTerminal("Inline edit accepted into the editor buffer. Save the file to persist it.", "success");
+  }
+
+  closeInlineEdit() {
+    if (this.inlineEditRequest) {
+      const pending = this.inlineEditRequest;
+      if (pending.status?.textContent?.includes("Generating") || pending.status?.textContent?.includes("Connecting")) {
+        window.wsClient?.send("inline.edit.cancel", { requestId: pending.requestId });
+      }
+    }
+    this.inlineEditPanel?.remove(); this.inlineEditPanel = null; this.inlineEditRequest = null;
+    window.app?.transitionAgentState?.("idle", { source: "inline-edit-closed" });
+  }
+
   attachEditorGroup(editor, group) {
-    editor.onDidChangeModelContent(() => {
+    editor.onDidChangeModelContent(event => {
       const filePath = this.groupTabs[group];
       if (this.suppressModelChange || !filePath || !this.openTabs.has(filePath)) return;
       const tab = this.openTabs.get(filePath);
       tab.content = editor.getValue();
       tab.isDirty = true;
+      this.recordRecentEdit(filePath, event, editor);
       this.updateTabUI(filePath);
       this.saveStateToCache();
       this.scheduleDiagnostics(filePath, editor);
@@ -327,6 +515,7 @@ class EditorManager {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => editor.getAction("actions.find").run());
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => this.openWorkspaceSearch());
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => this.openQuickOpen());
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => { this.activateGroup(group); this.openInlineEdit(); });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => this.openCommandPalette());
     editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyUp, () => editor.getAction("editor.action.moveLinesUpAction").run());
     editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyDown, () => editor.getAction("editor.action.moveLinesDownAction").run());
@@ -672,7 +861,12 @@ class EditorManager {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || data.error || "Unable to prepare the agent patch.");
       const merged = new Map(this.agentApplyFiles.map(item => [item.path, item]));
-      for (const item of data.files || []) merged.set(item.path, item);
+      for (const item of data.files || []) {
+        merged.set(item.path, item);
+        this.agentApplyHunkStates.delete(item.path);
+        this.agentApplyHunkOverrides.delete(item.path);
+        this.agentApplyAcceptedPaths.delete(item.path);
+      }
       this.agentApplyFiles = Array.from(merged.values());
       this.agentApplySummary = data.summary || proposal.summary || "Agent proposed changes";
       this.agentApplySelectedPath = this.agentApplyFiles[0]?.path || null;
@@ -699,23 +893,16 @@ class EditorManager {
     this.agentApplyFiles.forEach(item => {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "agent-inline-review-file";
+      button.className = "agent-inline-review-file" + (item.path === this.agentApplySelectedPath ? " active" : "");
       button.textContent = item.path + (this.agentApplyAcceptedPaths.has(item.path) ? " ✓" : "");
       button.addEventListener("click", () => {
         this.agentApplySelectedPath = item.path;
-        this.renderAgentApplySelectedDiff();
-        files.querySelectorAll("button").forEach(node => node.classList.toggle("active", node === button));
+        this.renderAgentApplyReview();
       });
       files.appendChild(button);
     });
     const actions = document.createElement("div");
     actions.className = "agent-inline-review-actions";
-    const accept = document.createElement("button");
-    accept.type = "button"; accept.className = "primary-btn"; accept.textContent = "Accept Hunk";
-    accept.disabled = !this.agentApplyReady; accept.addEventListener("click", () => this.acceptAgentHunk());
-    const reject = document.createElement("button");
-    reject.type = "button"; reject.className = "secondary-btn"; reject.textContent = "Reject Hunk";
-    reject.addEventListener("click", () => this.rejectAgentHunk());
     const apply = document.createElement("button");
     apply.type = "button"; apply.className = "primary-btn"; apply.textContent = "Apply accepted";
     apply.disabled = !this.agentApplyReady || this.agentApplyAcceptedPaths.size === 0;
@@ -727,7 +914,7 @@ class EditorManager {
     const rejectAll = document.createElement("button");
     rejectAll.type = "button"; rejectAll.className = "secondary-btn"; rejectAll.textContent = "Reject all";
     rejectAll.addEventListener("click", () => this.rejectAgentChanges());
-    actions.append(accept, reject, apply, verify, rejectAll);
+    actions.append(apply, verify, rejectAll);
     zone.append(heading, files, actions);
     this.agentApplyZoneEditor = this.monacoEditor;
     this.agentApplyZoneEditor.changeViewZones(accessor => {
@@ -735,8 +922,8 @@ class EditorManager {
       this.agentApplyViewZoneId = accessor.addZone({ afterLineNumber: 0, heightInLines: 4, domNode: zone, suppressMouseDown: false });
     });
     this.agentApplyStatus = status;
-    this.agentApplyAcceptButton = accept;
-    this.agentApplyVerifyButton = apply;
+    this.agentApplyAcceptButton = apply;
+    this.agentApplyVerifyButton = verify;
     this.agentApplyFileBar = files;
     this.agentApplyOverlay = zone;
     this.renderAgentApplySelectedDiff();
@@ -746,7 +933,7 @@ class EditorManager {
 
   renderAgentApplySelectedDiff() {
     const item = this.agentApplyFiles.find(file => file.path === this.agentApplySelectedPath);
-    if (!item || !this.monacoEditor) return;
+    if (!item || !this.monacoEditor || !window.AgentPatchDiff) return;
     if (!this.openTabs.has(item.path)) {
       this.openTabs.set(item.path, { content: item.original || "", version: item.expectedVersion || null, isDirty: false, language: this.detectLanguage(item.path) });
       this.createTabElement(item.path);
@@ -754,40 +941,100 @@ class EditorManager {
     if (this.activeTab !== item.path) this.selectTab(item.path);
     const model = this.monacoEditor.getModel();
     if (!model) return;
-    const originalLines = String(item.original || "").split("\n");
-    const proposedLines = String(item.content || "").split("\n");
+    const hunks = window.AgentPatchDiff.diffLines(item.original || "", item.content || "");
+    this.agentApplyHunks = hunks;
+    const states = this.agentApplyHunkStates.get(item.path) || new Map();
+    this.agentApplyHunkStates.set(item.path, states);
+    if (!hunks.some(hunk => hunk.id === this.agentApplySelectedHunkId)) this.agentApplySelectedHunkId = hunks.find(hunk => states.get(hunk.id) !== "rejected")?.id || null;
+
     const decorations = [];
-    const limit = Math.min(proposedLines.length, 1500);
-    for (let index = 0; index < limit; index++) {
-      if (originalLines[index] !== proposedLines[index]) {
-        const line = Math.min(index + 1, model.getLineCount());
+    const zoneSpecs = [];
+    hunks.forEach((hunk, index) => {
+      const state = states.get(hunk.id) || "pending";
+      if (state === "rejected") return;
+      const startLine = Math.min(hunk.originalStart + 1, model.getLineCount());
+      const endLine = Math.min(Math.max(hunk.originalEnd, hunk.originalStart + 1), model.getLineCount());
+      for (let line = startLine; line <= endLine; line++) {
         decorations.push({ range: new monaco.Range(line, 1, line, model.getLineMaxColumn(line)),
-          options: { isWholeLine: true, className: "agent-inline-added-line", linesDecorationsClassName: "agent-inline-added-gutter" } });
+          options: { isWholeLine: true, className: state === "accepted" ? "agent-inline-accepted-line" : "agent-inline-added-line",
+            linesDecorationsClassName: "agent-inline-added-gutter" } });
       }
-    }
+      const hunkZone = document.createElement("div");
+      hunkZone.className = "agent-inline-hunk" + (state === "accepted" ? " is-accepted" : "") +
+        (this.agentApplySelectedHunkId === hunk.id ? " is-selected" : "");
+      hunkZone.addEventListener("click", () => {
+        this.agentApplySelectedHunkId = hunk.id;
+        this.renderAgentApplySelectedDiff();
+      });
+      const title = document.createElement("div");
+      title.className = "agent-inline-hunk-title";
+      title.textContent = "Hunk " + (index + 1) + " · +" + hunk.additions + " −" + hunk.deletions +
+        (state === "accepted" ? " · accepted" : " · pending");
+      const overrides = this.agentApplyHunkOverrides.get(item.path) || new Map();
+      this.agentApplyHunkOverrides.set(item.path, overrides);
+      const preview = document.createElement("div");
+      preview.className = "agent-inline-hunk-preview-wrap";
+      const removed = document.createElement("pre");
+      removed.className = "agent-inline-hunk-removed";
+      removed.textContent = hunk.originalLines.slice(0, 3).map(line => "- " + line).join("\n") || "(no removed lines)";
+      const replacementEditor = document.createElement("textarea");
+      replacementEditor.className = "agent-inline-hunk-editor";
+      replacementEditor.rows = 2;
+      replacementEditor.value = overrides.has(hunk.id) ? overrides.get(hunk.id) : hunk.replacement.join("\n");
+      replacementEditor.setAttribute("aria-label", "Edit replacement for hunk " + (index + 1));
+      replacementEditor.title = "Edit this proposed replacement before accepting the hunk";
+      replacementEditor.addEventListener("click", event => event.stopPropagation());
+      replacementEditor.addEventListener("input", () => overrides.set(hunk.id, replacementEditor.value));
+      preview.append(removed, replacementEditor);
+      const controls = document.createElement("div");
+      controls.className = "agent-inline-hunk-controls";
+      const accept = document.createElement("button");
+      accept.type = "button"; accept.className = "primary-btn"; accept.textContent = state === "accepted" ? "Accepted" : "Accept hunk";
+      accept.disabled = !this.agentApplyReady || state === "accepted";
+      accept.addEventListener("click", event => { event.stopPropagation(); this.setAgentHunkState(item.path, hunk.id, "accepted"); });
+      const reject = document.createElement("button");
+      reject.type = "button"; reject.className = "secondary-btn"; reject.textContent = "Reject hunk";
+      reject.disabled = state === "accepted";
+      reject.addEventListener("click", event => { event.stopPropagation(); this.setAgentHunkState(item.path, hunk.id, "rejected"); });
+      controls.append(accept, reject);
+      hunkZone.append(title, preview, controls);
+      zoneSpecs.push({ afterLineNumber: hunk.originalStart, domNode: hunkZone });
+    });
+
     this.agentApplyDecorations?.clear();
     this.agentApplyDecorations = this.monacoEditor.createDecorationsCollection(decorations);
+    this.agentApplyZoneEditor = this.monacoEditor;
+    this.agentApplyZoneEditor.changeViewZones(accessor => {
+      this.agentApplyHunkZoneIds.forEach(id => accessor.removeZone(id));
+      this.agentApplyHunkZoneIds = zoneSpecs.map(spec => accessor.addZone({
+        afterLineNumber: spec.afterLineNumber, heightInLines: 3, domNode: spec.domNode, suppressMouseDown: false
+      }));
+    });
+    const accepted = states.size ? Array.from(states.values()).filter(value => value === "accepted").length : 0;
+    if (accepted) this.agentApplyAcceptedPaths.add(item.path);
+    else this.agentApplyAcceptedPaths.delete(item.path);
     if (this.agentApplyStatus) this.agentApplyStatus.textContent =
-      this.agentApplyAcceptedPaths.has(item.path) ? "Hunk staged · Ctrl+Y to stage, Ctrl+N to reject" : "Review highlighted changes · Ctrl+Y to stage, Ctrl+N to reject";
+      accepted + " hunk(s) staged · " + hunks.length + " total · Ctrl+Y accept selected, Ctrl+N reject selected";
+    if (this.agentApplyAcceptButton) this.agentApplyAcceptButton.disabled = !this.agentApplyReady || this.agentApplyAcceptedPaths.size === 0;
+    if (this.agentApplyVerifyButton) this.agentApplyVerifyButton.disabled = !this.agentApplyReady || this.agentApplyAcceptedPaths.size === 0;
+  }
+
+  setAgentHunkState(filePath, hunkId, state) {
+    const states = this.agentApplyHunkStates.get(filePath) || new Map();
+    states.set(hunkId, state);
+    this.agentApplyHunkStates.set(filePath, states);
+    this.agentApplySelectedHunkId = hunkId;
+    this.renderAgentApplyReview();
   }
 
   acceptAgentHunk() {
-    if (!this.agentApplyReady || !this.agentApplySelectedPath) return;
-    this.agentApplyAcceptedPaths.add(this.agentApplySelectedPath);
-    this.agentApplyFileBar?.querySelectorAll("button").forEach(button => {
-      if (button.textContent.startsWith(this.agentApplySelectedPath)) button.textContent = this.agentApplySelectedPath + " ✓";
-    });
-    this.agentApplyStatus && (this.agentApplyStatus.textContent = "Hunk staged. Use Apply accepted to write it.");
-    if (this.agentApplyVerifyButton) this.agentApplyVerifyButton.disabled = false;
+    if (!this.agentApplyReady || !this.agentApplySelectedPath || !this.agentApplySelectedHunkId) return;
+    this.setAgentHunkState(this.agentApplySelectedPath, this.agentApplySelectedHunkId, "accepted");
   }
 
   rejectAgentHunk() {
-    if (!this.agentApplySelectedPath) return;
-    this.agentApplyAcceptedPaths.delete(this.agentApplySelectedPath);
-    this.agentApplyFiles = this.agentApplyFiles.filter(item => item.path !== this.agentApplySelectedPath);
-    this.agentApplySelectedPath = this.agentApplyFiles[0]?.path || null;
-    if (!this.agentApplyFiles.length) return this.rejectAgentChanges();
-    this.renderAgentApplyReview();
+    if (!this.agentApplySelectedPath || !this.agentApplySelectedHunkId) return;
+    this.setAgentHunkState(this.agentApplySelectedPath, this.agentApplySelectedHunkId, "rejected");
   }
 
   enableAgentProposalActions() {
@@ -797,54 +1044,100 @@ class EditorManager {
   }
 
   async acceptAgentChanges(verify) {
-    if(!this.agentApplyReady||!this.agentApplyFiles.length)return;
-    const selected=this.agentApplyFiles.filter(item=>this.agentApplyAcceptedPaths.has(item.path));
-    if(!selected.length)return;
-    const files=selected.map(item=>({path:item.path,content:item.content,expectedVersion:item.expectedVersion}));
-    if(this.agentApplyStatus)this.agentApplyStatus.textContent="Applying version-checked patch…";
-    if(this.agentApplyAcceptButton)this.agentApplyAcceptButton.disabled=true;
-    if(this.agentApplyVerifyButton)this.agentApplyVerifyButton.disabled=true;
-    try{
-      const response=await fetch("/api/workspace/agent/apply/commit",{
-        method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+(localStorage.getItem("token")||"")},
-        body:JSON.stringify({files})
+    if (!this.agentApplyReady || !this.agentApplyFiles.length || !window.AgentPatchDiff) return;
+    const selected = this.agentApplyFiles.filter(item => this.agentApplyAcceptedPaths.has(item.path));
+    if (!selected.length) return;
+    const prepared = selected.map(item => {
+      const rawHunks = window.AgentPatchDiff.diffLines(item.original || "", item.content || "");
+      const overrides = this.agentApplyHunkOverrides.get(item.path) || new Map();
+      const hunks = rawHunks.map(hunk => overrides.has(hunk.id)
+        ? { ...hunk, replacement: String(overrides.get(hunk.id)).split("\n") } : hunk);
+      const states = this.agentApplyHunkStates.get(item.path) || new Map();
+      const acceptedIds = hunks.filter(hunk => states.get(hunk.id) === "accepted").map(hunk => hunk.id);
+      const retainedIds = hunks.filter(hunk => states.get(hunk.id) !== "rejected").map(hunk => hunk.id);
+      return {
+        ...item,
+        content: window.AgentPatchDiff.applyHunks(item.original || "", hunks, acceptedIds),
+        remainingContent: window.AgentPatchDiff.applyHunks(item.original || "", hunks, retainedIds)
+      };
+    }).filter(item => item.content !== item.original);
+    if (!prepared.length) return;
+    const files = prepared.map(item => ({ path: item.path, content: item.content, expectedVersion: item.expectedVersion }));
+    if (this.agentApplyStatus) this.agentApplyStatus.textContent = "Applying accepted hunks with version checks…";
+    if (this.agentApplyAcceptButton) this.agentApplyAcceptButton.disabled = true;
+    if (this.agentApplyVerifyButton) this.agentApplyVerifyButton.disabled = true;
+    try {
+      const response = await fetch("/api/workspace/agent/apply/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + (localStorage.getItem("token") || "") },
+        body: JSON.stringify({ files })
       });
-      const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error((data.message||data.error||"Patch commit failed")+(data.rollbackComplete===false?" · rollback incomplete; inspect workspace immediately.":""));
-      const applied=selected.map(item=>({path:item.path,content:item.content}));
-      for(const item of selected){
-        const saved=(data.files||[]).find(file=>file.path===item.path),tab=this.openTabs.get(item.path);
-        if(tab){tab.content=item.content;tab.version=saved?.version||null;tab.isDirty=false;
-          const uri=monaco.Uri.parse("file:///"+item.path.split("/").map(encodeURIComponent).join("/"));
-          const model=monaco.editor.getModel(uri);if(model)model.setValue(item.content);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((data.message || data.error || "Patch commit failed") +
+        (data.rollbackComplete === false ? " · rollback incomplete; inspect workspace immediately." : ""));
+      const applied = prepared.map(item => ({ path: item.path, content: item.content }));
+      const remainingFiles = [];
+      for (const item of prepared) {
+        const saved = (data.files || []).find(file => file.path === item.path);
+        const tab = this.openTabs.get(item.path);
+        if (tab) {
+          tab.content = item.content;
+          tab.version = saved?.version || tab.version || null;
+          tab.isDirty = false;
+          const uri = monaco.Uri.parse("file:///" + item.path.split("/").map(encodeURIComponent).join("/"));
+          const model = monaco.editor.getModel(uri);
+          if (model) model.setValue(item.content);
+        }
+        if (item.remainingContent !== item.content) {
+          const pending = this.agentApplyFiles.find(file => file.path === item.path);
+          if (pending) {
+            pending.original = item.content;
+            pending.content = item.remainingContent;
+            pending.expectedVersion = saved?.version || tab?.version || pending.expectedVersion;
+            remainingFiles.push(pending);
+          }
         }
       }
-      this.agentApplyFiles=this.agentApplyFiles.filter(item=>!this.agentApplyAcceptedPaths.has(item.path));
+      this.agentApplyFiles = this.agentApplyFiles.filter(item => !prepared.some(done => done.path === item.path) || remainingFiles.some(left => left.path === item.path));
+      this.agentApplyHunkStates.clear();
+      this.agentApplyHunkOverrides.clear();
       this.agentApplyAcceptedPaths.clear();
       this.closeAgentApplyReview();
-      if(this.agentApplyFiles.length){this.agentApplySelectedPath=this.agentApplyFiles[0].path;this.renderAgentApplyReview();}
+      if (this.agentApplyFiles.length) {
+        this.agentApplySelectedPath = this.agentApplyFiles[0].path;
+        this.renderAgentApplyReview();
+      } else {
+        this.agentApplyReady = false;
+        if (window.app) { window.app.agentAwaitingApproval = false; await window.app.completeAgentRunSnapshot?.(); }
+      }
       await window.app?.loadWorkspaceFiles?.();
-      window.app?.renderSystemMessage("**Agent patch accepted.** "+applied.length+" file(s) saved with version checks.");
-      if(verify)await window.app?.runAgentVerification?.(applied);
-    }catch(error){
-      if(this.agentApplyStatus)this.agentApplyStatus.textContent="Apply failed: "+error.message;
-      if(this.agentApplyAcceptButton)this.agentApplyAcceptButton.disabled=false;
-      if(this.agentApplyVerifyButton)this.agentApplyVerifyButton.disabled=false;
-      window.app?.renderError("Agent Apply failed: "+error.message);
+      window.app?.renderSystemMessage("**Agent patch accepted.** " + applied.length + " file(s) updated with version checks; unaccepted hunks remain available for review.");
+      if (!this.agentApplyFiles.length) window.app?.transitionAgentState?.("idle", { source: "agent-apply-accepted" });
+      if (verify) await window.app?.runAgentVerification?.(applied);
+    } catch (error) {
+      if (this.agentApplyStatus) this.agentApplyStatus.textContent = "Apply failed: " + error.message;
+      if (this.agentApplyAcceptButton) this.agentApplyAcceptButton.disabled = false;
+      if (this.agentApplyVerifyButton) this.agentApplyVerifyButton.disabled = false;
+      window.app?.renderError("Agent Apply failed: " + error.message);
     }
   }
 
-  rejectAgentChanges() {
-    this.closeAgentApplyReview();this.agentApplyFiles=[];this.agentApplyAcceptedPaths.clear();this.agentApplyReady=false;
+  async rejectAgentChanges() {
+    this.closeAgentApplyReview();this.agentApplyFiles=[];this.agentApplyAcceptedPaths.clear();this.agentApplyHunkStates.clear();this.agentApplyHunkOverrides.clear();this.agentApplyReady=false;
+    if (window.app) { window.app.agentAwaitingApproval = false; await window.app.completeAgentRunSnapshot?.(); window.app.transitionAgentState?.("idle", { source: "agent-patch-rejected" }); }
     window.app?.renderSystemMessage("Agent patch rejected. No proposed files were written.");
   }
 
   closeAgentApplyReview() {
-    if (this.agentApplyViewZoneId && this.agentApplyZoneEditor) {
-      this.agentApplyZoneEditor.changeViewZones(accessor => accessor.removeZone(this.agentApplyViewZoneId));
-      this.agentApplyViewZoneId = null;
-      this.agentApplyZoneEditor = null;
+    if (this.agentApplyZoneEditor && (this.agentApplyViewZoneId || this.agentApplyHunkZoneIds.length)) {
+      this.agentApplyZoneEditor.changeViewZones(accessor => {
+        if (this.agentApplyViewZoneId) accessor.removeZone(this.agentApplyViewZoneId);
+        this.agentApplyHunkZoneIds.forEach(id => accessor.removeZone(id));
+      });
     }
+    this.agentApplyViewZoneId = null;
+    this.agentApplyHunkZoneIds = [];
+    this.agentApplyZoneEditor = null;
     this.agentApplyDecorations?.clear();
     this.agentApplyDecorations = null;
     this.agentApplyOverlay?.remove();
