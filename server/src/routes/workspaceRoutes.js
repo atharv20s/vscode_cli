@@ -481,7 +481,18 @@ router.post("/agent-runs/:runId/rollback", async (req, res) => {
   try {
     if (config.executionRuntime === "remote") await pullWorkspaceFromRemote({ workspaceId: workspace.workspaceId, workspaceDir: workspace.workspaceRoot });
     const result = await rollbackAgentRunSnapshot(workspace, req.params.runId);
-    if (config.executionRuntime === "remote") await syncWorkspaceOnRemote({ workspaceId: workspace.workspaceId, workspaceDir: workspace.workspaceRoot });
+    if (config.executionRuntime === "remote") {
+      try {
+        await syncWorkspaceOnRemote({ workspaceId: workspace.workspaceId, workspaceDir: workspace.workspaceRoot });
+      } catch (syncError) {
+        return res.status(502).json({
+          error: "RemoteRollbackSyncFailed",
+          message: "The API workspace was restored, but the remote worker did not confirm the restored snapshot: " + syncError.message,
+          localRestored: true,
+          editorState: result.editorState,
+        });
+      }
+    }
     return res.json(result);
   } catch (error) {
     return res.status(error.code === "SNAPSHOT_ROLLBACK_CONFLICT" ? 409 : 400)
