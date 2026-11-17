@@ -2405,7 +2405,8 @@ class App {
         .join("\n");
       const activeFile = window.editorManager?.activeTab || null;
       const openFiles = Array.from(window.editorManager?.openTabs?.keys() || []);
-      const activeContent = activeFile ? window.editorManager?.openTabs?.get(activeFile)?.content?.slice(0, 3000) : null;
+      const sensitiveActiveFile = /(^|\/)(?:\.env(?:\..*)?|credentials(?:\..*)?|id_rsa|id_ed25519|.*\.(?:pem|key|p12|pfx|keystore))$/i.test(activeFile || "");
+      const activeContent = activeFile && !sensitiveActiveFile ? window.editorManager?.openTabs?.get(activeFile)?.content?.slice(0, 3000) : null;
       const liveEditorContext = window.editorManager?.getActiveEditorContext?.() || {};
       const userId = this.currentUser?.id || this.currentUser?.username || localStorage.getItem("ath_guest_id") || "guest";
 
