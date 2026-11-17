@@ -29,6 +29,10 @@ class EditorManager {
     this.agentApplyViewZoneId = null;
     this.agentApplyZoneEditor = null;
     this.agentApplyDecorations = null;
+    this.agentApplyHunkZoneIds = [];
+    this.agentApplyHunkStates = new Map();
+    this.agentApplyHunks = [];
+    this.agentApplySelectedHunkId = null;
     this.lspPending = new Map();
     this.lspChangeTimers = new Map();
     this.lspRequestId = 1;
@@ -699,23 +703,16 @@ class EditorManager {
     this.agentApplyFiles.forEach(item => {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "agent-inline-review-file";
+      button.className = "agent-inline-review-file" + (item.path === this.agentApplySelectedPath ? " active" : "");
       button.textContent = item.path + (this.agentApplyAcceptedPaths.has(item.path) ? " ✓" : "");
       button.addEventListener("click", () => {
         this.agentApplySelectedPath = item.path;
-        this.renderAgentApplySelectedDiff();
-        files.querySelectorAll("button").forEach(node => node.classList.toggle("active", node === button));
+        this.renderAgentApplyReview();
       });
       files.appendChild(button);
     });
     const actions = document.createElement("div");
     actions.className = "agent-inline-review-actions";
-    const accept = document.createElement("button");
-    accept.type = "button"; accept.className = "primary-btn"; accept.textContent = "Accept Hunk";
-    accept.disabled = !this.agentApplyReady; accept.addEventListener("click", () => this.acceptAgentHunk());
-    const reject = document.createElement("button");
-    reject.type = "button"; reject.className = "secondary-btn"; reject.textContent = "Reject Hunk";
-    reject.addEventListener("click", () => this.rejectAgentHunk());
     const apply = document.createElement("button");
     apply.type = "button"; apply.className = "primary-btn"; apply.textContent = "Apply accepted";
     apply.disabled = !this.agentApplyReady || this.agentApplyAcceptedPaths.size === 0;
@@ -727,7 +724,7 @@ class EditorManager {
     const rejectAll = document.createElement("button");
     rejectAll.type = "button"; rejectAll.className = "secondary-btn"; rejectAll.textContent = "Reject all";
     rejectAll.addEventListener("click", () => this.rejectAgentChanges());
-    actions.append(accept, reject, apply, verify, rejectAll);
+    actions.append(apply, verify, rejectAll);
     zone.append(heading, files, actions);
     this.agentApplyZoneEditor = this.monacoEditor;
     this.agentApplyZoneEditor.changeViewZones(accessor => {
@@ -735,8 +732,8 @@ class EditorManager {
       this.agentApplyViewZoneId = accessor.addZone({ afterLineNumber: 0, heightInLines: 4, domNode: zone, suppressMouseDown: false });
     });
     this.agentApplyStatus = status;
-    this.agentApplyAcceptButton = accept;
-    this.agentApplyVerifyButton = apply;
+    this.agentApplyAcceptButton = apply;
+    this.agentApplyVerifyButton = verify;
     this.agentApplyFileBar = files;
     this.agentApplyOverlay = zone;
     this.renderAgentApplySelectedDiff();
@@ -746,7 +743,7 @@ class EditorManager {
 
   renderAgentApplySelectedDiff() {
     const item = this.agentApplyFiles.find(file => file.path === this.agentApplySelectedPath);
-    if (!item || !this.monacoEditor) return;
+    if (!item || !this.monacoEditor || !window.AgentPatchDiff) return;
     if (!this.openTabs.has(item.path)) {
       this.openTabs.set(item.path, { content: item.original || "", version: item.expectedVersion || null, isDirty: false, language: this.detectLanguage(item.path) });
       this.createTabElement(item.path);
@@ -754,40 +751,90 @@ class EditorManager {
     if (this.activeTab !== item.path) this.selectTab(item.path);
     const model = this.monacoEditor.getModel();
     if (!model) return;
-    const originalLines = String(item.original || "").split("\n");
-    const proposedLines = String(item.content || "").split("\n");
+    const hunks = window.AgentPatchDiff.diffLines(item.original || "", item.content || "");
+    this.agentApplyHunks = hunks;
+    const states = this.agentApplyHunkStates.get(item.path) || new Map();
+    this.agentApplyHunkStates.set(item.path, states);
+    if (!hunks.some(hunk => hunk.id === this.agentApplySelectedHunkId)) this.agentApplySelectedHunkId = hunks.find(hunk => states.get(hunk.id) !== "rejected")?.id || null;
+
     const decorations = [];
-    const limit = Math.min(proposedLines.length, 1500);
-    for (let index = 0; index < limit; index++) {
-      if (originalLines[index] !== proposedLines[index]) {
-        const line = Math.min(index + 1, model.getLineCount());
+    const zoneSpecs = [];
+    hunks.forEach((hunk, index) => {
+      const state = states.get(hunk.id) || "pending";
+      if (state === "rejected") return;
+      const startLine = Math.min(hunk.originalStart + 1, model.getLineCount());
+      const endLine = Math.min(Math.max(hunk.originalEnd, hunk.originalStart + 1), model.getLineCount());
+      for (let line = startLine; line <= endLine; line++) {
         decorations.push({ range: new monaco.Range(line, 1, line, model.getLineMaxColumn(line)),
-          options: { isWholeLine: true, className: "agent-inline-added-line", linesDecorationsClassName: "agent-inline-added-gutter" } });
+          options: { isWholeLine: true, className: state === "accepted" ? "agent-inline-accepted-line" : "agent-inline-added-line",
+            linesDecorationsClassName: "agent-inline-added-gutter" } });
       }
-    }
+      const hunkZone = document.createElement("div");
+      hunkZone.className = "agent-inline-hunk" + (state === "accepted" ? " is-accepted" : "") +
+        (this.agentApplySelectedHunkId === hunk.id ? " is-selected" : "");
+      hunkZone.addEventListener("click", () => {
+        this.agentApplySelectedHunkId = hunk.id;
+        this.renderAgentApplySelectedDiff();
+      });
+      const title = document.createElement("div");
+      title.className = "agent-inline-hunk-title";
+      title.textContent = "Hunk " + (index + 1) + " · +" + hunk.additions + " −" + hunk.deletions +
+        (state === "accepted" ? " · accepted" : " · pending");
+      const preview = document.createElement("pre");
+      preview.className = "agent-inline-hunk-preview";
+      const oldPreview = hunk.originalLines.slice(0, 4).map(line => "- " + line);
+      const newPreview = hunk.replacement.slice(0, 4).map(line => "+ " + line);
+      preview.textContent = [...oldPreview, ...newPreview].join("\n") || "(empty change)";
+      if (hunk.originalLines.length > 4 || hunk.replacement.length > 4) preview.textContent += "\n…";
+      const controls = document.createElement("div");
+      controls.className = "agent-inline-hunk-controls";
+      const accept = document.createElement("button");
+      accept.type = "button"; accept.className = "primary-btn"; accept.textContent = state === "accepted" ? "Accepted" : "Accept hunk";
+      accept.disabled = !this.agentApplyReady || state === "accepted";
+      accept.addEventListener("click", event => { event.stopPropagation(); this.setAgentHunkState(item.path, hunk.id, "accepted"); });
+      const reject = document.createElement("button");
+      reject.type = "button"; reject.className = "secondary-btn"; reject.textContent = "Reject hunk";
+      reject.disabled = state === "accepted";
+      reject.addEventListener("click", event => { event.stopPropagation(); this.setAgentHunkState(item.path, hunk.id, "rejected"); });
+      controls.append(accept, reject);
+      hunkZone.append(title, preview, controls);
+      zoneSpecs.push({ afterLineNumber: hunk.originalStart, domNode: hunkZone });
+    });
+
     this.agentApplyDecorations?.clear();
     this.agentApplyDecorations = this.monacoEditor.createDecorationsCollection(decorations);
+    this.agentApplyZoneEditor = this.monacoEditor;
+    this.agentApplyZoneEditor.changeViewZones(accessor => {
+      this.agentApplyHunkZoneIds.forEach(id => accessor.removeZone(id));
+      this.agentApplyHunkZoneIds = zoneSpecs.map(spec => accessor.addZone({
+        afterLineNumber: spec.afterLineNumber, heightInLines: 3, domNode: spec.domNode, suppressMouseDown: false
+      }));
+    });
+    const accepted = states.size ? Array.from(states.values()).filter(value => value === "accepted").length : 0;
+    if (accepted) this.agentApplyAcceptedPaths.add(item.path);
+    else this.agentApplyAcceptedPaths.delete(item.path);
     if (this.agentApplyStatus) this.agentApplyStatus.textContent =
-      this.agentApplyAcceptedPaths.has(item.path) ? "Hunk staged · Ctrl+Y to stage, Ctrl+N to reject" : "Review highlighted changes · Ctrl+Y to stage, Ctrl+N to reject";
+      accepted + " hunk(s) staged · " + hunks.length + " total · Ctrl+Y accept selected, Ctrl+N reject selected";
+    if (this.agentApplyAcceptButton) this.agentApplyAcceptButton.disabled = !this.agentApplyReady || this.agentApplyAcceptedPaths.size === 0;
+    if (this.agentApplyVerifyButton) this.agentApplyVerifyButton.disabled = !this.agentApplyReady || this.agentApplyAcceptedPaths.size === 0;
+  }
+
+  setAgentHunkState(filePath, hunkId, state) {
+    const states = this.agentApplyHunkStates.get(filePath) || new Map();
+    states.set(hunkId, state);
+    this.agentApplyHunkStates.set(filePath, states);
+    this.agentApplySelectedHunkId = hunkId;
+    this.renderAgentApplyReview();
   }
 
   acceptAgentHunk() {
-    if (!this.agentApplyReady || !this.agentApplySelectedPath) return;
-    this.agentApplyAcceptedPaths.add(this.agentApplySelectedPath);
-    this.agentApplyFileBar?.querySelectorAll("button").forEach(button => {
-      if (button.textContent.startsWith(this.agentApplySelectedPath)) button.textContent = this.agentApplySelectedPath + " ✓";
-    });
-    this.agentApplyStatus && (this.agentApplyStatus.textContent = "Hunk staged. Use Apply accepted to write it.");
-    if (this.agentApplyVerifyButton) this.agentApplyVerifyButton.disabled = false;
+    if (!this.agentApplyReady || !this.agentApplySelectedPath || !this.agentApplySelectedHunkId) return;
+    this.setAgentHunkState(this.agentApplySelectedPath, this.agentApplySelectedHunkId, "accepted");
   }
 
   rejectAgentHunk() {
-    if (!this.agentApplySelectedPath) return;
-    this.agentApplyAcceptedPaths.delete(this.agentApplySelectedPath);
-    this.agentApplyFiles = this.agentApplyFiles.filter(item => item.path !== this.agentApplySelectedPath);
-    this.agentApplySelectedPath = this.agentApplyFiles[0]?.path || null;
-    if (!this.agentApplyFiles.length) return this.rejectAgentChanges();
-    this.renderAgentApplyReview();
+    if (!this.agentApplySelectedPath || !this.agentApplySelectedHunkId) return;
+    this.setAgentHunkState(this.agentApplySelectedPath, this.agentApplySelectedHunkId, "rejected");
   }
 
   enableAgentProposalActions() {
@@ -797,54 +844,93 @@ class EditorManager {
   }
 
   async acceptAgentChanges(verify) {
-    if(!this.agentApplyReady||!this.agentApplyFiles.length)return;
-    const selected=this.agentApplyFiles.filter(item=>this.agentApplyAcceptedPaths.has(item.path));
-    if(!selected.length)return;
-    const files=selected.map(item=>({path:item.path,content:item.content,expectedVersion:item.expectedVersion}));
-    if(this.agentApplyStatus)this.agentApplyStatus.textContent="Applying version-checked patch…";
-    if(this.agentApplyAcceptButton)this.agentApplyAcceptButton.disabled=true;
-    if(this.agentApplyVerifyButton)this.agentApplyVerifyButton.disabled=true;
-    try{
-      const response=await fetch("/api/workspace/agent/apply/commit",{
-        method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+(localStorage.getItem("token")||"")},
-        body:JSON.stringify({files})
+    if (!this.agentApplyReady || !this.agentApplyFiles.length || !window.AgentPatchDiff) return;
+    const selected = this.agentApplyFiles.filter(item => this.agentApplyAcceptedPaths.has(item.path));
+    if (!selected.length) return;
+    const prepared = selected.map(item => {
+      const hunks = window.AgentPatchDiff.diffLines(item.original || "", item.content || "");
+      const states = this.agentApplyHunkStates.get(item.path) || new Map();
+      const acceptedIds = hunks.filter(hunk => states.get(hunk.id) === "accepted").map(hunk => hunk.id);
+      const retainedIds = hunks.filter(hunk => states.get(hunk.id) !== "rejected").map(hunk => hunk.id);
+      return {
+        ...item,
+        content: window.AgentPatchDiff.applyHunks(item.original || "", hunks, acceptedIds),
+        remainingContent: window.AgentPatchDiff.applyHunks(item.original || "", hunks, retainedIds)
+      };
+    }).filter(item => item.content !== item.original);
+    if (!prepared.length) return;
+    const files = prepared.map(item => ({ path: item.path, content: item.content, expectedVersion: item.expectedVersion }));
+    if (this.agentApplyStatus) this.agentApplyStatus.textContent = "Applying accepted hunks with version checks…";
+    if (this.agentApplyAcceptButton) this.agentApplyAcceptButton.disabled = true;
+    if (this.agentApplyVerifyButton) this.agentApplyVerifyButton.disabled = true;
+    try {
+      const response = await fetch("/api/workspace/agent/apply/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + (localStorage.getItem("token") || "") },
+        body: JSON.stringify({ files })
       });
-      const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error((data.message||data.error||"Patch commit failed")+(data.rollbackComplete===false?" · rollback incomplete; inspect workspace immediately.":""));
-      const applied=selected.map(item=>({path:item.path,content:item.content}));
-      for(const item of selected){
-        const saved=(data.files||[]).find(file=>file.path===item.path),tab=this.openTabs.get(item.path);
-        if(tab){tab.content=item.content;tab.version=saved?.version||null;tab.isDirty=false;
-          const uri=monaco.Uri.parse("file:///"+item.path.split("/").map(encodeURIComponent).join("/"));
-          const model=monaco.editor.getModel(uri);if(model)model.setValue(item.content);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((data.message || data.error || "Patch commit failed") +
+        (data.rollbackComplete === false ? " · rollback incomplete; inspect workspace immediately." : ""));
+      const applied = prepared.map(item => ({ path: item.path, content: item.content }));
+      const remainingFiles = [];
+      for (const item of prepared) {
+        const saved = (data.files || []).find(file => file.path === item.path);
+        const tab = this.openTabs.get(item.path);
+        if (tab) {
+          tab.content = item.content;
+          tab.version = saved?.version || tab.version || null;
+          tab.isDirty = false;
+          const uri = monaco.Uri.parse("file:///" + item.path.split("/").map(encodeURIComponent).join("/"));
+          const model = monaco.editor.getModel(uri);
+          if (model) model.setValue(item.content);
+        }
+        if (item.remainingContent !== item.content) {
+          const pending = this.agentApplyFiles.find(file => file.path === item.path);
+          if (pending) {
+            pending.original = item.content;
+            pending.content = item.remainingContent;
+            pending.expectedVersion = saved?.version || tab?.version || pending.expectedVersion;
+            remainingFiles.push(pending);
+          }
         }
       }
-      this.agentApplyFiles=this.agentApplyFiles.filter(item=>!this.agentApplyAcceptedPaths.has(item.path));
+      this.agentApplyFiles = this.agentApplyFiles.filter(item => !prepared.some(done => done.path === item.path) || remainingFiles.some(left => left.path === item.path));
+      this.agentApplyHunkStates.clear();
       this.agentApplyAcceptedPaths.clear();
       this.closeAgentApplyReview();
-      if(this.agentApplyFiles.length){this.agentApplySelectedPath=this.agentApplyFiles[0].path;this.renderAgentApplyReview();}
+      if (this.agentApplyFiles.length) {
+        this.agentApplySelectedPath = this.agentApplyFiles[0].path;
+        this.renderAgentApplyReview();
+      } else {
+        this.agentApplyReady = false;
+      }
       await window.app?.loadWorkspaceFiles?.();
-      window.app?.renderSystemMessage("**Agent patch accepted.** "+applied.length+" file(s) saved with version checks.");
-      if(verify)await window.app?.runAgentVerification?.(applied);
-    }catch(error){
-      if(this.agentApplyStatus)this.agentApplyStatus.textContent="Apply failed: "+error.message;
-      if(this.agentApplyAcceptButton)this.agentApplyAcceptButton.disabled=false;
-      if(this.agentApplyVerifyButton)this.agentApplyVerifyButton.disabled=false;
-      window.app?.renderError("Agent Apply failed: "+error.message);
+      window.app?.renderSystemMessage("**Agent patch accepted.** " + applied.length + " file(s) updated with version checks; unaccepted hunks remain available for review.");
+      if (verify) await window.app?.runAgentVerification?.(applied);
+    } catch (error) {
+      if (this.agentApplyStatus) this.agentApplyStatus.textContent = "Apply failed: " + error.message;
+      if (this.agentApplyAcceptButton) this.agentApplyAcceptButton.disabled = false;
+      if (this.agentApplyVerifyButton) this.agentApplyVerifyButton.disabled = false;
+      window.app?.renderError("Agent Apply failed: " + error.message);
     }
   }
 
   rejectAgentChanges() {
-    this.closeAgentApplyReview();this.agentApplyFiles=[];this.agentApplyAcceptedPaths.clear();this.agentApplyReady=false;
+    this.closeAgentApplyReview();this.agentApplyFiles=[];this.agentApplyAcceptedPaths.clear();this.agentApplyHunkStates.clear();this.agentApplyReady=false;
     window.app?.renderSystemMessage("Agent patch rejected. No proposed files were written.");
   }
 
   closeAgentApplyReview() {
-    if (this.agentApplyViewZoneId && this.agentApplyZoneEditor) {
-      this.agentApplyZoneEditor.changeViewZones(accessor => accessor.removeZone(this.agentApplyViewZoneId));
-      this.agentApplyViewZoneId = null;
-      this.agentApplyZoneEditor = null;
+    if (this.agentApplyZoneEditor && (this.agentApplyViewZoneId || this.agentApplyHunkZoneIds.length)) {
+      this.agentApplyZoneEditor.changeViewZones(accessor => {
+        if (this.agentApplyViewZoneId) accessor.removeZone(this.agentApplyViewZoneId);
+        this.agentApplyHunkZoneIds.forEach(id => accessor.removeZone(id));
+      });
     }
+    this.agentApplyViewZoneId = null;
+    this.agentApplyHunkZoneIds = [];
+    this.agentApplyZoneEditor = null;
     this.agentApplyDecorations?.clear();
     this.agentApplyDecorations = null;
     this.agentApplyOverlay?.remove();
