@@ -2016,7 +2016,7 @@ textarea {
 @media (max-width:760px) { .agent-inline-hunk { grid-template-columns:1fr auto; gap:4px; } .agent-inline-hunk-preview { grid-column:1 / -1; grid-row:2; max-height:36px; } .agent-inline-hunk-controls { grid-column:2; grid-row:1; } }
 
 /* Focused Monaco inline edit surface */
-.code-editor-view { position: relative; }
+#code-editor-view, .code-editor-view { position: relative; }
 .ath-inline-edit { position: absolute; z-index: 40; top: 12px; right: 16px; width: min(680px, calc(100% - 32px)); max-height: calc(100% - 24px); overflow: auto; display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid rgba(129,140,248,.55); border-radius: 12px; background: rgba(18,19,24,.97); box-shadow: 0 18px 55px rgba(0,0,0,.55); backdrop-filter: blur(16px); }
 .ath-inline-edit-header, .ath-inline-edit-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .ath-inline-edit-header strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; color:var(--text-main); }
