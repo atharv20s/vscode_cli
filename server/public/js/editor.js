@@ -405,6 +405,7 @@ class EditorManager {
       if (this.inlineEditRequest?.requestId !== data?.requestId) return;
       this.inlineEditRequest.output = "";
       this.inlineEditRequest.status.textContent = "Generating focused edit…";
+      window.app?.transitionAgentState?.("editing", { source: "inline-edit" });
     });
     window.wsClient.on("inline.edit.delta", data => {
       if (this.inlineEditRequest?.requestId !== data?.requestId) return;
@@ -413,7 +414,13 @@ class EditorManager {
     });
     window.wsClient.on("inline.edit.complete", data => {
       if (this.inlineEditRequest?.requestId !== data?.requestId) return;
-      const replacement = String(data.replacement || "");
+      let replacement = String(data.replacement || "");
+      const fence = String.fromCharCode(96).repeat(3);
+      if (replacement.trimStart().startsWith(fence) && replacement.trimEnd().endsWith(fence)) {
+        const trimmed = replacement.trim();
+        const firstNewline = trimmed.indexOf("\n");
+        replacement = firstNewline >= 0 ? trimmed.slice(firstNewline + 1, -3).replace(/\n$/, "") : trimmed.slice(3, -3);
+      }
       this.inlineEditRequest.output = replacement;
       this.inlineEditRequest.preview.value = replacement;
       this.inlineEditRequest.preview.readOnly = false;
@@ -427,6 +434,7 @@ class EditorManager {
       this.inlineEditRequest.status.textContent = data.message || "Inline Edit failed.";
       this.inlineEditRequest.accept.disabled = true;
       this.inlineEditRequest.preview.readOnly = false;
+      window.app?.transitionAgentState?.("idle", { source: "inline-edit-error" });
     });
   }
 
@@ -511,6 +519,7 @@ class EditorManager {
       }
     }
     this.inlineEditPanel?.remove(); this.inlineEditPanel = null; this.inlineEditRequest = null;
+    window.app?.transitionAgentState?.("idle", { source: "inline-edit-closed" });
   }
 
   attachEditorGroup(editor, group) {
