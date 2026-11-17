@@ -730,10 +730,14 @@ class EditorManager {
     if (!this.monacoReady || !editor) { this.pendingModel = filePath; return; }
     const modelUri = this.lspRootUri ? this.lspRootUri + filePath.split("/").map(encodeURIComponent).join("/") : "file:///" + filePath.split("/").map(encodeURIComponent).join("/");
     const previousModel = editor.getModel();
-    const model = monaco.editor.createModel(tab.content || "", tab.language || this.detectLanguage(filePath), monaco.Uri.parse(modelUri));
-    const existing = monaco.editor.getModel(model.uri);
-    if (existing) { model.dispose(); editor.setModel(existing); }
-    else editor.setModel(model);
+    const parsedUri = monaco.Uri.parse(modelUri);
+    let model = monaco.editor.getModel(parsedUri);
+    if (!model || model.isDisposed()) {
+      model = monaco.editor.createModel(tab.content || "", tab.language || this.detectLanguage(filePath), parsedUri);
+    } else if (typeof tab.content === "string" && model.getValue() !== tab.content) {
+      model.setValue(tab.content);
+    }
+    editor.setModel(model);
     if (previousModel && previousModel !== editor.getModel() && this.activeTab === filePath && previousModel.uri.toString() !== modelUri) {
       const sharedElsewhere = [this.primaryEditor, this.secondaryEditor].some(other => other && other !== editor && other.getModel() === previousModel);
       if (!sharedElsewhere) previousModel.dispose();
