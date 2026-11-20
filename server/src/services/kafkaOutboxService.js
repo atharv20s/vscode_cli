@@ -88,7 +88,7 @@ class KafkaOutboxService {
       " SELECT event_id FROM kafka_outbox" +
       " WHERE published_at IS NULL AND next_attempt_at <= CURRENT_TIMESTAMP" +
       " AND (locked_until IS NULL OR locked_until < CURRENT_TIMESTAMP)" +
-      " ORDER BY created_at, event_id FOR UPDATE SKIP LOCKED LIMIT $1" +
+      " ORDER BY created_at, event_id LIMIT $1 FOR UPDATE SKIP LOCKED" +
       ") UPDATE kafka_outbox AS outbox" +
       " SET locked_until = CURRENT_TIMESTAMP + INTERVAL '30 seconds', attempts = outbox.attempts + 1" +
       " FROM candidates WHERE outbox.event_id = candidates.event_id" +
