@@ -239,12 +239,37 @@ export class EventBus extends EventEmitter {
       }
     }
 
+    // Persist only bounded domain lifecycle events. Terminal streams,
+    // keystrokes and presence updates remain ephemeral to avoid flooding Kafka.
+    const durableTypes = new Set([
+      "agent.command.requested", "agent.command.started", "agent.command.completed",
+      "agent.command.failed", "agent.status", "file.created", "file.changed",
+      "file.deleted", "file.renamed", "preview.started", "preview.ready",
+      "preview.failed", "preview.stopped", "permission.requested",
+      "permission.resolved", "queue.job_enqueued", "queue.job_started",
+      "queue.job_completed", "queue.job_failed",
+    ]);
+    if (durableTypes.has(envelope.type)) {
+      import("../services/kafkaOutboxService.js")
+        .then(({ kafkaOutboxService }) => kafkaOutboxService.enqueueEvent(envelope))
+        .catch(error => logger.warn("Could not persist event to Kafka outbox", {
+          eventId: envelope.eventId, type: envelope.type, error: error.message,
+        }));
+    }
+
     logger.debug("[EventBus] " + envelope.type + " (" + envelope.eventId + ")", {
       actor: envelope.actor,
       operationId: envelope.operationId,
       sessionId: envelope.sessionId,
     });
     return envelope;
+  }
+
+  /**
+   * Accept an event from Kafka without re-publishing it to Redis or Kafka.
+   */
+  receive(envelope) {
+    return this._emitLocal(envelope);
   }
 
   /**
