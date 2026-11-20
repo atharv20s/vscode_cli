@@ -50,7 +50,9 @@ crash before marking the outbox row published, so consumers must be idempotent
 by eventId. Producer idempotence reduces producer retry duplicates but does
 not make downstream side effects exactly-once.
 
-For a domain mutation that must be atomic with event creation, call
+For repository-agent task creation, the task row and sanitized
+agent.task.created event are inserted in the same PostgreSQL transaction.
+For other domain mutations that must be atomic with event creation, call
 enqueueEventInTransaction(client, event) using the same PostgreSQL transaction
 and client that writes the domain row. The generic EventBus integration
 persists a sanitized event record after local publication; it cannot
