@@ -15,7 +15,13 @@ Set these variables in the server environment:
     KAFKA_BROKERS=localhost:9092
     KAFKA_CLIENT_ID=ath-ide
     KAFKA_EVENT_TOPIC=ath-ide.events
+    KAFKA_EVENT_PARTITIONS=6
+    KAFKA_REPLICATION_FACTOR=1
     KAFKA_REQUIRED=false
+
+For production, provision enough brokers for the configured replication factor
+(typically 3) and set the partition count based on expected workspace concurrency.
+The local one-node Redpanda profile uses replication factor 1.
 
 Run the PostgreSQL migration before enabling the outbox relay:
 
