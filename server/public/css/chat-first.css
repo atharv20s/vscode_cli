@@ -276,6 +276,56 @@
   .chat-msg.user .chat-bubble { max-width: 94%; }
   .composer-chips { flex-wrap: nowrap; }
 }
+/* Remove the remaining saturated glow effects from the IDE chrome. */
+.logo-badge {
+  background: #29323c !important;
+  box-shadow: none !important;
+}
+.accent-text {
+  background: none !important;
+  color: #c4ced8 !important;
+  -webkit-text-fill-color: currentColor !important;
+}
+.mode-chip.active {
+  color: #e5ebf1 !important;
+  background: #29323c !important;
+  box-shadow: none !important;
+}
+.status-dot,
+.runtime-indicator[data-state="ready"] {
+  box-shadow: none !important;
+}
+.inline-tree-input,
+#inline-create-input,
+.inline-tree-input:focus,
+#inline-create-input:focus {
+  box-shadow: none !important;
+}
+.editor-streaming-hud {
+  background: #1b2026 !important;
+  border-color: #39424d !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  animation: none !important;
+}
+.hud-pulse-dot { box-shadow: none !important; animation: none !important; }
+.hud-badge.yellow { animation: none !important; }
+.code-editor-view.streaming {
+  box-shadow: none !important;
+  border-color: #536477 !important;
+}
+.welcome-icon-wrap {
+  background: #252d36 !important;
+  border-color: #39424d !important;
+  box-shadow: none !important;
+}
+.welcome-card h2 {
+  background: none !important;
+  color: #e6e9ed !important;
+  -webkit-text-fill-color: currentColor !important;
+}
+.welcome-card { box-shadow: 0 12px 32px rgba(0,0,0,.22) !important; }
+
 @media (prefers-reduced-motion: reduce) {
   .chat-msg, .artifact-card, .thinking-pulse { animation: none !important; }
 }
