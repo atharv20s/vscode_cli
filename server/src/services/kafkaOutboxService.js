@@ -41,6 +41,7 @@ function serializeEvent(event) {
       typeof event.eventId !== "string" || !event.eventId ||
       typeof event.type !== "string" || !event.type ||
       typeof event.workspaceId !== "string" || !event.workspaceId ||
+      !Number.isFinite(event.timestamp) ||
       !event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) {
     throw new Error("Invalid event envelope for Kafka outbox.");
   }
