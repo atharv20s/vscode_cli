@@ -4,6 +4,7 @@
  * PostgreSQL remains the source of truth for application/job state.
  */
 import os from "node:os";
+import { createHash } from "node:crypto";
 import { Kafka, Partitioners } from "kafkajs";
 import { logger } from "../config/logger.js";
 
@@ -22,6 +23,8 @@ class KafkaService {
     this.brokers = (process.env.KAFKA_BROKERS || "").split(",").map(value => value.trim()).filter(Boolean);
     this.clientId = process.env.KAFKA_CLIENT_ID || "ath-ide";
     this.topic = process.env.KAFKA_EVENT_TOPIC || "ath-ide.events";
+    this.partitions = Math.max(1, Number(process.env.KAFKA_EVENT_PARTITIONS || 6));
+    this.replicationFactor = Math.max(1, Number(process.env.KAFKA_REPLICATION_FACTOR || 1));
     this.groupId = process.env.KAFKA_EVENT_GROUP_ID || "ath-ide-gateway-" + os.hostname();
     this.kafka = null;
     this.producer = null;
@@ -62,6 +65,20 @@ class KafkaService {
       });
       await this.producer.connect();
       this.isConnected = true;
+
+      const admin = this.kafka.admin();
+      await admin.connect();
+      try {
+        await admin.createTopics({
+          waitForLeaders: true,
+          topics: [
+            { topic: this.topic, numPartitions: this.partitions, replicationFactor: this.replicationFactor },
+            { topic: this.topic + ".dlq", numPartitions: this.partitions, replicationFactor: this.replicationFactor },
+          ],
+        });
+      } finally {
+        await admin.disconnect();
+      }
 
       this.consumer = this.kafka.consumer({ groupId: this.groupId });
       await this.consumer.connect();
@@ -131,7 +148,7 @@ class KafkaService {
         acks: -1,
         messages: [{
           key: String(offset || "unknown"),
-          value: JSON.stringify({ sourceTopic: topic, sourcePartition: partition, sourceOffset: offset, reason, raw, failedAt: new Date().toISOString() }),
+          value: JSON.stringify({ sourceTopic: topic, sourcePartition: partition, sourceOffset: offset, reason, payloadBytes: Buffer.byteLength(raw || "", "utf8"), payloadSha256: createHash("sha256").update(raw || "").digest("hex"), failedAt: new Date().toISOString() }),
         }],
       });
     } catch (error) {
@@ -141,7 +158,7 @@ class KafkaService {
   }
 
   getStatus() {
-    return { connected: this.isConnected, brokers: this.brokers, topic: this.topic, consumerActive: this.isConsumerRunning, groupId: this.groupId };
+    return { connected: this.isConnected, brokers: this.brokers, topic: this.topic, partitions: this.partitions, replicationFactor: this.replicationFactor, consumerActive: this.isConsumerRunning, groupId: this.groupId };
   }
 
   async shutdown() {
