@@ -17,6 +17,13 @@ export const REDIS_EVENT_CHANNEL = "ath:workspace-events:v1";
 const MAX_EVENT_BYTES = 512 * 1024;
 const MAX_SEEN_EVENTS = 10000;
 const SEEN_EVENT_TTL_MS = 120000;
+const KAFKA_DURABLE_EVENT_TYPES = new Set([
+  "agent.command.requested", "agent.command.started", "agent.command.completed",
+  "agent.command.failed", "agent.status", "file.created", "file.changed",
+  "file.deleted", "file.renamed", "preview.started", "preview.ready",
+  "preview.failed", "preview.stopped", "permission.requested",
+  "permission.resolved",
+]);
 
 /**
  * Formalized Event Taxonomy Topics.
@@ -239,12 +246,29 @@ export class EventBus extends EventEmitter {
       }
     }
 
+    // Persist only bounded domain lifecycle events. Terminal streams,
+    // keystrokes and presence updates remain ephemeral to avoid flooding Kafka.
+    if (KAFKA_DURABLE_EVENT_TYPES.has(envelope.type)) {
+      import("../services/kafkaOutboxService.js")
+        .then(({ kafkaOutboxService }) => kafkaOutboxService.enqueueEvent(envelope))
+        .catch(error => logger.warn("Could not persist event to Kafka outbox", {
+          eventId: envelope.eventId, type: envelope.type, error: error.message,
+        }));
+    }
+
     logger.debug("[EventBus] " + envelope.type + " (" + envelope.eventId + ")", {
       actor: envelope.actor,
       operationId: envelope.operationId,
       sessionId: envelope.sessionId,
     });
     return envelope;
+  }
+
+  /**
+   * Accept an event from Kafka without re-publishing it to Redis or Kafka.
+   */
+  receive(envelope) {
+    return this._emitLocal(envelope);
   }
 
   /**

@@ -1,0 +1,29 @@
+# Optional local Kafka-compatible broker for ATH IDE development.
+# Start with: docker compose -f docker-compose.kafka.yml up -d
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.3.7
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - "512M"
+      - --reserve-memory
+      - "0M"
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - "0.0.0.0:9092"
+      - --advertise-kafka-addr
+      - "127.0.0.1:9092"
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+volumes:
+  redpanda-data:
