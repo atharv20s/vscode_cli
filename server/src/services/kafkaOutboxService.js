@@ -15,8 +15,7 @@ export const DURABLE_EVENT_TYPES = new Set([
   "agent.command.failed", "agent.status", "file.created", "file.changed",
   "file.deleted", "file.renamed", "preview.started", "preview.ready",
   "preview.failed", "preview.stopped", "permission.requested",
-  "permission.resolved", "queue.job_enqueued", "queue.job_started",
-  "queue.job_completed", "queue.job_failed",
+  "permission.resolved",
 ]);
 
 const SAFE_PAYLOAD_FIELDS = {
@@ -113,6 +112,7 @@ class KafkaOutboxService {
     if (this.inFlight) return this.inFlight;
     this.inFlight = this._flushBatch();
     try { return await this.inFlight; }
+    catch (error) { logger.error("Kafka outbox batch failed", { error: error.message }); }
     finally { this.inFlight = null; }
   }
 
