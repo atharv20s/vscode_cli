@@ -37,7 +37,7 @@ test("enqueueEventInTransaction writes an event using the supplied transaction c
 
 test("enqueueEventInTransaction rejects malformed envelopes", async () => {
   await assert.rejects(
-    enqueueEventInTransaction({ query: async () => ({}) }, { eventId: "missing-fields" }),
+    enqueueEventInTransaction({ query: async () => ({}) }, { eventId: "missing-fields", type: "agent.command.completed" }),
     /Invalid event envelope/
   );
 });
