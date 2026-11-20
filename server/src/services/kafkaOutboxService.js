@@ -19,6 +19,24 @@ export const DURABLE_EVENT_TYPES = new Set([
   "queue.job_completed", "queue.job_failed",
 ]);
 
+const SAFE_PAYLOAD_FIELDS = {
+  "agent.command.requested": [],
+  "agent.command.started": [],
+  "agent.command.completed": ["exitCode", "durationMs", "signal"],
+  "agent.command.failed": ["exitCode", "durationMs", "signal"],
+  "agent.status": ["status", "state", "agentId"],
+  "file.created": ["path", "operation", "version", "contentVersion", "size"],
+  "file.changed": ["path", "operation", "version", "contentVersion", "size"],
+  "file.deleted": ["path", "operation", "version"],
+  "file.renamed": ["from", "to", "path", "operation", "version"],
+  "preview.started": ["timestamp"],
+  "preview.ready": ["port", "timestamp"],
+  "preview.failed": ["status"],
+  "preview.stopped": ["timestamp", "code"],
+  "permission.requested": ["permissionId", "expiresAt"],
+  "permission.resolved": ["permissionId", "granted"],
+};
+
 function serializeEvent(event) {
   if (!event || typeof event !== "object" || Array.isArray(event) ||
       typeof event.eventId !== "string" || !event.eventId ||
@@ -27,7 +45,25 @@ function serializeEvent(event) {
       !event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) {
     throw new Error("Invalid event envelope for Kafka outbox.");
   }
-  const serialized = JSON.stringify(event);
+  const fields = SAFE_PAYLOAD_FIELDS[event.type] || [];
+  const payload = Object.fromEntries(fields
+    .filter(key => Object.prototype.hasOwnProperty.call(event.payload, key))
+    .map(key => [key, event.payload[key]]));
+  // Do not persist command text, shell output, workspace paths, preview
+  // capability URLs, permission descriptors, or arbitrary metadata.
+  const safeEvent = {
+    eventId: event.eventId,
+    type: event.type,
+    timestamp: event.timestamp,
+    workspaceId: event.workspaceId,
+    sessionId: event.sessionId || null,
+    turnId: event.turnId || null,
+    operationId: event.operationId || null,
+    source: event.source || "system",
+    actor: event.actor || "system",
+    payload,
+  };
+  const serialized = JSON.stringify(safeEvent);
   if (Buffer.byteLength(serialized, "utf8") > MAX_EVENT_BYTES) throw new Error("Event exceeds the Kafka outbox size limit.");
   return serialized;
 }
@@ -92,14 +128,14 @@ class KafkaOutboxService {
       ") UPDATE kafka_outbox AS outbox" +
       " SET locked_until = CURRENT_TIMESTAMP + INTERVAL '30 seconds', attempts = outbox.attempts + 1" +
       " FROM candidates WHERE outbox.event_id = candidates.event_id" +
-      " RETURNING outbox.event_id, outbox.payload, outbox.attempts",
+      " RETURNING outbox.event_id, outbox.topic, outbox.partition_key, outbox.payload, outbox.attempts",
       [BATCH_SIZE]
     );
 
     for (const row of claim.rows) {
       try {
         const event = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
-        await kafkaService.publishEvent(event);
+        await kafkaService.publishEvent(event, row.topic);
         await pool.query(
           "UPDATE kafka_outbox SET published_at = CURRENT_TIMESTAMP, locked_until = NULL, last_error = NULL WHERE event_id = $1",
           [row.event_id]
