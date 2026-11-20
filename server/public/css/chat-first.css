@@ -271,14 +271,7 @@
   .composer-container { padding: 8px 10px 10px; }
 }
 @media (max-width: 640px) {
-  .ai-composer-panel {
-    position: absolute;
-    z-index: 35;
-    inset: 0 0 0 38px;
-    width: calc(100% - 38px);
-    min-width: 0;
-    border-left: 1px solid #2a3038;
-  }
+  .ai-composer-panel { width: 290px; min-width: 270px; }
   .ai-timeline { padding: 16px 14px; }
   .chat-msg.user .chat-bubble { max-width: 94%; }
   .composer-chips { flex-wrap: nowrap; }
