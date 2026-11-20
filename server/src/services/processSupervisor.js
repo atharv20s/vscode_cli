@@ -159,10 +159,12 @@ class ProcessSupervisor {
         });
       } catch (err) {
         const durationMs = Date.now() - startTime;
+        const captured = outputCapture.snapshot();
         eventBus.publish(EVENT_TOPICS.AGENT_COMMAND_FAILED, {
           command,
           exitCode: 1,
           durationMs,
+          ...captured,
           error: err.message,
         }, {
           workspaceId,
@@ -173,7 +175,15 @@ class ProcessSupervisor {
           actor: "agent",
         });
 
-        return resolve({ success: false, output: err.message, exitCode: 1, operationId });
+        return resolve({
+          success: false,
+          ...captured,
+          output: [captured.output, err.message].filter(Boolean).join("\n"),
+          exitCode: 1,
+          signal: null,
+          durationMs,
+          operationId,
+        });
       }
 
       const pid = child.pid || null;
@@ -353,10 +363,12 @@ class ProcessSupervisor {
 
           const durationMs = Date.now() - startTime;
 
+          const captured = outputCapture.snapshot();
           eventBus.publish(EVENT_TOPICS.AGENT_COMMAND_FAILED, {
             command,
             exitCode: 1,
             durationMs,
+            ...captured,
             error: err.message,
           }, {
             workspaceId,
@@ -367,8 +379,15 @@ class ProcessSupervisor {
             actor: "agent",
           });
 
-          const captured = outputCapture.snapshot();
-          resolve({ success: false, ...captured, output: [captured.output, err.message].filter(Boolean).join("\\n"), exitCode: 1, signal: null, durationMs, operationId });
+          resolve({
+            success: false,
+            ...captured,
+            output: [captured.output, err.message].filter(Boolean).join("\n"),
+            exitCode: 1,
+            signal: null,
+            durationMs,
+            operationId,
+          });
         }
       });
     });
