@@ -10,7 +10,7 @@ class App {
     this.currentAssistantMessageEl = null;
     this.currentAssistantContent = "";
     this.currentThinkingEl = null;
-    this.currentThinkingContent = "";
+
     this.sessionTokens = 0;
     this.chatHistory = [];
     this.agentStateMachine = window.AgentStateMachine ? new window.AgentStateMachine() : null;
@@ -292,9 +292,7 @@ class App {
       if (agentStateEl) agentStateEl.textContent = "Agent: Thinking...";
     });
 
-    window.wsClient.on("thinking_delta", (data) => {
-      this.appendThinking(data.content || "");
-    });
+    // Internal model reasoning deltas are deliberately not rendered in the chat.
 
     window.wsClient.on("thinking_end", () => {
       if (this.currentThinkingEl) {
@@ -2780,40 +2778,26 @@ class App {
     const timeline = document.getElementById("ai-timeline");
     const msgEl = document.createElement("div");
     msgEl.className = "chat-msg agent";
-    msgEl.innerHTML = `<div class="chat-bubble"><span class="cursor-typing">Thinking...</span></div>`;
+    msgEl.innerHTML = `<div class="chat-bubble"><span class="cursor-typing">Working…</span></div>`;
     timeline.appendChild(msgEl);
     timeline.scrollTop = timeline.scrollHeight;
 
     this.currentAssistantMessageEl = msgEl.querySelector(".chat-bubble");
     this.currentAssistantContent = "";
     this.currentThinkingEl = null;
-    this.currentThinkingContent = "";
+
   }
 
   createThinkingCard() {
-    if (!this.currentAssistantMessageEl) return;
+    if (!this.currentAssistantMessageEl || this.currentThinkingEl) return;
 
-    const thinkingCard = document.createElement("div");
-    thinkingCard.className = "thinking-card";
-    thinkingCard.innerHTML = `
-      <div class="thinking-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
-        <div class="thinking-pulse"></div>
-        <span>Agent Reasoning Chain</span>
-      </div>
-      <div class="thinking-body"></div>
-    `;
-
-    this.currentAssistantMessageEl.insertBefore(thinkingCard, this.currentAssistantMessageEl.firstChild);
-    this.currentThinkingEl = thinkingCard.querySelector(".thinking-body");
-    this.currentThinkingContent = "";
-  }
-
-  appendThinking(text) {
-    if (!this.currentThinkingEl) {
-      this.createThinkingCard();
-    }
-    this.currentThinkingContent += text;
-    this.currentThinkingEl.textContent = this.currentThinkingContent;
+    const activity = document.createElement("div");
+    activity.className = "thinking-card";
+    activity.setAttribute("role", "status");
+    activity.setAttribute("aria-live", "polite");
+    activity.innerHTML = '<div class="thinking-header"><span class="thinking-pulse" aria-hidden="true"></span><span>Working on your request</span></div>';
+    this.currentAssistantMessageEl.insertBefore(activity, this.currentAssistantMessageEl.firstChild);
+    this.currentThinkingEl = activity;
   }
 
   detectTargetFile() {
