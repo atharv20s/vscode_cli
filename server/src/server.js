@@ -322,6 +322,7 @@ async function startServer() {
       }
     } catch (kErr) {
       logger.warn(`Kafka event transport startup warning: ${kErr.message}`);
+      if ((process.env.KAFKA_REQUIRED || "false").toLowerCase() === "true") throw kErr;
     }
 
     try {
