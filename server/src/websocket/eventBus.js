@@ -22,8 +22,7 @@ const KAFKA_DURABLE_EVENT_TYPES = new Set([
   "agent.command.failed", "agent.status", "file.created", "file.changed",
   "file.deleted", "file.renamed", "preview.started", "preview.ready",
   "preview.failed", "preview.stopped", "permission.requested",
-  "permission.resolved", "queue.job_enqueued", "queue.job_started",
-  "queue.job_completed", "queue.job_failed",
+  "permission.resolved",
 ]);
 
 /**
