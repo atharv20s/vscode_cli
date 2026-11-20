@@ -20,7 +20,7 @@ test("enqueueEventInTransaction writes an event using the supplied transaction c
     timestamp: Date.now(),
     workspaceId: "workspace-test",
     sessionId: "session-test",
-    payload: { commandId: "cmd-1", status: "completed" },
+    payload: { command: "deploy --token secret", exitCode: 0, durationMs: 42 },
   };
 
   await enqueueEventInTransaction(client, event);
@@ -29,7 +29,10 @@ test("enqueueEventInTransaction writes an event using the supplied transaction c
   assert.match(calls[0].sql, /INSERT INTO kafka_outbox/);
   assert.equal(calls[0].params[0], event.eventId);
   assert.equal(calls[0].params[2], event.workspaceId);
-  assert.deepEqual(JSON.parse(calls[0].params[3]), event);
+  const persisted = JSON.parse(calls[0].params[3]);
+  assert.equal(persisted.payload.exitCode, 0);
+  assert.equal(persisted.payload.durationMs, 42);
+  assert.equal("command" in persisted.payload, false);
 });
 
 test("enqueueEventInTransaction rejects malformed envelopes", async () => {
