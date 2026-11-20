@@ -17,11 +17,16 @@ Set these variables in the server environment:
     KAFKA_EVENT_TOPIC=ath-ide.events
     KAFKA_EVENT_PARTITIONS=6
     KAFKA_REPLICATION_FACTOR=1
+    KAFKA_MIN_INSYNC_REPLICAS=1
+    KAFKA_AUTO_CREATE_TOPICS=true
     KAFKA_REQUIRED=false
 
 For production, provision enough brokers for the configured replication factor
 (typically 3) and set the partition count based on expected workspace concurrency.
-The local one-node Redpanda profile uses replication factor 1.
+The local one-node Redpanda profile uses replication factor 1 and min ISR 1.
+For a multi-broker production cluster, use replication factor 3, min ISR 2,
+and pre-create topics with KAFKA_AUTO_CREATE_TOPICS=false if the application
+identity does not have topic-creation permissions.
 
 Run the PostgreSQL migration before enabling the outbox relay:
 
@@ -52,6 +57,8 @@ not make downstream side effects exactly-once.
 
 For repository-agent task creation, the task row and sanitized
 agent.task.created event are inserted in the same PostgreSQL transaction.
+Redis Streams remains the task-dispatch queue in this change; Kafka receives
+the durable task-created event for downstream consumers and recovery visibility.
 For other domain mutations that must be atomic with event creation, call
 enqueueEventInTransaction(client, event) using the same PostgreSQL transaction
 and client that writes the domain row. The generic EventBus integration
