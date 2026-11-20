@@ -30,8 +30,10 @@ Run the PostgreSQL migration before enabling the outbox relay:
 3. Selected domain lifecycle events are persisted in kafka_outbox.
 4. The outbox relay publishes those records to ath-ide.events with broker
    acknowledgements.
-5. Each API replica uses its own Kafka consumer group so its local WebSocket
-   clients receive the event. Event IDs deduplicate Redis/Kafka echoes.
+5. Redis remains the primary low-latency WebSocket fan-out path. Each API
+   replica also consumes Kafka with its own group; Kafka events are delivered
+   locally only while Redis Pub/Sub is unavailable. Event IDs deduplicate
+   Redis/Kafka overlap during recovery.
 6. Invalid Kafka envelopes are sent to ath-ide.events.dlq. Failed local
    delivery is allowed to fail the consumer callback so Kafka can retry.
 
@@ -45,8 +47,10 @@ not make downstream side effects exactly-once.
 For a domain mutation that must be atomic with event creation, call
 enqueueEventInTransaction(client, event) using the same PostgreSQL transaction
 and client that writes the domain row. The generic EventBus integration
-persists event records after local publication; it cannot retroactively make
-an unrelated earlier database mutation atomic.
+persists a sanitized event record after local publication; it cannot
+retroactively make an unrelated earlier database mutation atomic. The
+sanitized Kafka envelope intentionally omits command text, command output,
+workspace paths, preview capability URLs and permission descriptors.
 
 ## Scope boundary
 
