@@ -25,6 +25,8 @@ class KafkaService {
     this.topic = process.env.KAFKA_EVENT_TOPIC || "ath-ide.events";
     this.partitions = Math.max(1, Number(process.env.KAFKA_EVENT_PARTITIONS || 6));
     this.replicationFactor = Math.max(1, Number(process.env.KAFKA_REPLICATION_FACTOR || 1));
+    this.minInSyncReplicas = Math.max(1, Number(process.env.KAFKA_MIN_INSYNC_REPLICAS || 1));
+    this.autoCreateTopics = (process.env.KAFKA_AUTO_CREATE_TOPICS || "true").toLowerCase() === "true";
     this.groupId = process.env.KAFKA_EVENT_GROUP_ID || "ath-ide-gateway-" + os.hostname();
     this.kafka = null;
     this.producer = null;
@@ -59,25 +61,29 @@ class KafkaService {
     try {
       this.producer = this.kafka.producer({
         createPartitioner: Partitioners.DefaultPartitioner,
-        allowAutoTopicCreation: true,
+        allowAutoTopicCreation: this.autoCreateTopics,
         idempotent: true,
         maxInFlightRequests: 5,
       });
       await this.producer.connect();
       this.isConnected = true;
 
-      const admin = this.kafka.admin();
-      await admin.connect();
-      try {
-        await admin.createTopics({
-          waitForLeaders: true,
-          topics: [
-            { topic: this.topic, numPartitions: this.partitions, replicationFactor: this.replicationFactor },
-            { topic: this.topic + ".dlq", numPartitions: this.partitions, replicationFactor: this.replicationFactor },
-          ],
-        });
-      } finally {
-        await admin.disconnect();
+      if (this.autoCreateTopics) {
+        const admin = this.kafka.admin();
+        try {
+          await admin.connect();
+          await admin.createTopics({
+            waitForLeaders: true,
+            topics: [
+              { topic: this.topic, numPartitions: this.partitions, replicationFactor: this.replicationFactor,
+                configEntries: [{ name: "min.insync.replicas", value: String(this.minInSyncReplicas) }] },
+              { topic: this.topic + ".dlq", numPartitions: this.partitions, replicationFactor: this.replicationFactor,
+                configEntries: [{ name: "min.insync.replicas", value: String(this.minInSyncReplicas) }] },
+            ],
+          });
+        } finally {
+          await admin.disconnect().catch(() => {});
+        }
       }
 
       this.consumer = this.kafka.consumer({ groupId: this.groupId });
@@ -87,7 +93,7 @@ class KafkaService {
         eachMessage: async ({ topic, partition, message }) => {
           const raw = message.value?.toString("utf8") || "";
           if (Buffer.byteLength(raw, "utf8") > MAX_EVENT_BYTES) {
-            await this._deadLetter({ topic, partition, offset: message.offset, reason: "event_too_large", raw: raw.slice(0, 4096) });
+            await this._deadLetter({ topic, partition, offset: message.offset, reason: "event_too_large", raw });
             return;
           }
           let event;
@@ -158,12 +164,13 @@ class KafkaService {
   }
 
   getStatus() {
-    return { connected: this.isConnected, brokers: this.brokers, topic: this.topic, partitions: this.partitions, replicationFactor: this.replicationFactor, consumerActive: this.isConsumerRunning, groupId: this.groupId };
+    return { connected: this.isConnected, brokers: this.brokers, topic: this.topic, partitions: this.partitions, replicationFactor: this.replicationFactor, minInSyncReplicas: this.minInSyncReplicas, consumerActive: this.isConsumerRunning, groupId: this.groupId };
   }
 
   async shutdown() {
     this.isConsumerRunning = false;
-    await Promise.allSettled([this.consumer?.stop(), this.consumer?.disconnect(), this.producer?.disconnect()]);
+    await this.consumer?.stop().catch(() => {});
+    await Promise.allSettled([this.consumer?.disconnect(), this.producer?.disconnect()]);
     this.consumer = null;
     this.producer = null;
     this.kafka = null;
