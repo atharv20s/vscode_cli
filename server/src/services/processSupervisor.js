@@ -13,6 +13,7 @@ import { logger } from "../config/logger.js";
 import { config } from "../config/env.js";
 import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 import { buildStrictSSHOptions, resolveRemoteWorkspacePath, shellQuote, validateDockerContainer, validateSSHHost, validateSSHUsername } from "./sshSecurity.js";
+import { BoundedOutputCapture } from "./boundedOutputCapture.js";
 
 /**
  * Cross-platform process tree killer.
@@ -146,7 +147,7 @@ class ProcessSupervisor {
     }
 
     return new Promise((resolve) => {
-      let outputBuffer = "";
+      const outputCapture = new BoundedOutputCapture();
       let isSettled = false;
 
       let child;
@@ -158,10 +159,12 @@ class ProcessSupervisor {
         });
       } catch (err) {
         const durationMs = Date.now() - startTime;
+        const captured = outputCapture.snapshot();
         eventBus.publish(EVENT_TOPICS.AGENT_COMMAND_FAILED, {
           command,
           exitCode: 1,
           durationMs,
+          ...captured,
           error: err.message,
         }, {
           workspaceId,
@@ -172,7 +175,15 @@ class ProcessSupervisor {
           actor: "agent",
         });
 
-        return resolve({ success: false, output: err.message, exitCode: 1, operationId });
+        return resolve({
+          success: false,
+          ...captured,
+          output: [captured.output, err.message].filter(Boolean).join("\n"),
+          exitCode: 1,
+          signal: null,
+          durationMs,
+          operationId,
+        });
       }
 
       const pid = child.pid || null;
@@ -215,11 +226,14 @@ class ProcessSupervisor {
 
           const durationMs = Date.now() - startTime;
           const msg = `Command timed out after ${timeout / 1000}s.`;
+          const captured = outputCapture.snapshot();
 
           eventBus.publish(EVENT_TOPICS.AGENT_COMMAND_FAILED, {
             command,
             exitCode: -1,
             durationMs,
+            signal: "SIGKILL",
+            ...captured,
             error: msg,
           }, {
             workspaceId,
@@ -230,7 +244,7 @@ class ProcessSupervisor {
             actor: "agent",
           });
 
-          resolve({ success: false, output: msg, exitCode: -1, operationId });
+          resolve({ success: false, ...captured, output: captured.output.trim(), exitCode: -1, signal: "SIGKILL", durationMs, operationId });
         }
       }, timeout);
 
@@ -243,7 +257,9 @@ class ProcessSupervisor {
             await killProcessTree(pid);
             this.activeProcesses.delete(operationId);
 
-            resolve({ success: false, output: "Command aborted by user.", exitCode: -1, operationId });
+            const durationMs = Date.now() - startTime;
+            const captured = outputCapture.snapshot();
+            resolve({ success: false, ...captured, output: captured.output.trim(), exitCode: -1, signal: "SIGKILL", durationMs, operationId });
           }
         });
       }
@@ -251,7 +267,7 @@ class ProcessSupervisor {
       // Stream stdout chunks
       child.stdout.on("data", (chunk) => {
         const text = chunk.toString("utf8");
-        outputBuffer += text;
+        outputCapture.append("stdout", chunk);
 
         eventBus.publish(EVENT_TOPICS.AGENT_COMMAND_OUTPUT, {
           data: text,
@@ -269,7 +285,7 @@ class ProcessSupervisor {
       // Stream stderr chunks
       child.stderr.on("data", (chunk) => {
         const text = chunk.toString("utf8");
-        outputBuffer += text;
+        outputCapture.append("stderr", chunk);
 
         eventBus.publish(EVENT_TOPICS.AGENT_COMMAND_OUTPUT, {
           data: text,
@@ -284,22 +300,23 @@ class ProcessSupervisor {
         });
       });
 
-      child.on("close", (code) => {
+      child.on("close", (code, signal) => {
         if (!isSettled) {
           isSettled = true;
           clearTimeout(timeoutTimer);
           this.activeProcesses.delete(operationId);
 
           const durationMs = Date.now() - startTime;
-          const exitCode = code ?? 0;
-          const success = exitCode === 0;
+          const captured = outputCapture.snapshot();
+          const exitCode = Number.isInteger(code) ? code : -1;
+          const success = exitCode === 0 && !signal;
 
           if (success) {
             eventBus.publish(EVENT_TOPICS.AGENT_COMMAND_COMPLETED, {
               command,
               exitCode,
               durationMs,
-              output: outputBuffer.trim(),
+              ...captured,
             }, {
               workspaceId,
               sessionId,
@@ -313,7 +330,7 @@ class ProcessSupervisor {
               command,
               exitCode,
               durationMs,
-              output: outputBuffer.trim(),
+              ...captured,
             }, {
               workspaceId,
               sessionId,
@@ -328,8 +345,11 @@ class ProcessSupervisor {
 
           resolve({
             success,
-            output: outputBuffer.trim() || (success ? "(completed with no output)" : `Command exited with code ${exitCode}`),
+            ...captured,
+            output: captured.output.trim() || (success ? "(completed with no output)" : `Command exited with code ${exitCode}`),
             exitCode,
+            signal: signal || null,
+            durationMs,
             operationId,
           });
         }
@@ -343,10 +363,12 @@ class ProcessSupervisor {
 
           const durationMs = Date.now() - startTime;
 
+          const captured = outputCapture.snapshot();
           eventBus.publish(EVENT_TOPICS.AGENT_COMMAND_FAILED, {
             command,
             exitCode: 1,
             durationMs,
+            ...captured,
             error: err.message,
           }, {
             workspaceId,
@@ -357,7 +379,15 @@ class ProcessSupervisor {
             actor: "agent",
           });
 
-          resolve({ success: false, output: err.message, exitCode: 1, operationId });
+          resolve({
+            success: false,
+            ...captured,
+            output: [captured.output, err.message].filter(Boolean).join("\n"),
+            exitCode: 1,
+            signal: null,
+            durationMs,
+            operationId,
+          });
         }
       });
     });
