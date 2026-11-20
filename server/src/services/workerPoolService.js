@@ -61,9 +61,19 @@ export class WorkerPoolService {
 
   /**
    * Select the best worker for a task based on capacity and tag matching.
+   * Supports idempotent reservation for identical active task IDs.
    */
   assignWorker(taskId, tenantId, options = {}) {
     if (!taskId || !tenantId) throw new Error("taskId and tenantId are required.");
+
+    // Idempotent reservation: return existing active worker if already assigned
+    const existingTask = this.tasks.get(taskId);
+    if (existingTask && existingTask.status === "running") {
+      const existingWorker = this.workers.get(existingTask.workerId);
+      if (existingWorker && (Date.now() - existingWorker.lastHeartbeat) <= this.heartbeatTtlMs) {
+        return existingWorker;
+      }
+    }
 
     // Check tenant concurrency limit
     const tenantActiveCount = [...this.tasks.values()]
@@ -103,14 +113,29 @@ export class WorkerPoolService {
   }
 
   /**
-   * Mark a task completed and release worker capacity.
+   * Mark a task completed and release worker capacity idempotently.
    */
   completeTask(taskId) {
     const task = this.tasks.get(taskId);
     if (!task) return false;
+    if (task.status === "completed") return true;
     const worker = this.workers.get(task.workerId);
     if (worker) worker.activeTasks.delete(taskId);
     task.status = "completed";
+    task.completedAt = Date.now();
+    return true;
+  }
+
+  /**
+   * Release worker capacity for a task idempotently regardless of final state.
+   */
+  releaseTask(taskId, finalStatus = "completed") {
+    const task = this.tasks.get(taskId);
+    if (!task) return false;
+    if (["completed", "failed", "cancelled"].includes(task.status)) return true;
+    const worker = this.workers.get(task.workerId);
+    if (worker) worker.activeTasks.delete(taskId);
+    task.status = finalStatus;
     task.completedAt = Date.now();
     return true;
   }

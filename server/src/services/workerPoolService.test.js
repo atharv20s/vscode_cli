@@ -62,3 +62,28 @@ test("releases worker capacity when task completes", () => {
   const assignedNext = pool.assignWorker("t2", "u1");
   assert.ok(assignedNext);
 });
+
+test("supports idempotent reservation and release without capacity leaks", () => {
+  const pool = new WorkerPoolService({ maxConcurrentPerTenant: 2 });
+  pool.registerWorker({ workerId: "w1", maxTasks: 2 });
+
+  // 1. Initial reservation
+  const first = pool.assignWorker("idempotent-task", "tenant-1");
+  assert.equal(first.id, "w1");
+  assert.equal(pool.workers.get("w1").activeTasks.size, 1);
+
+  // 2. Duplicate reservation returns the same worker without double-counting
+  const duplicate = pool.assignWorker("idempotent-task", "tenant-1");
+  assert.equal(duplicate.id, "w1");
+  assert.equal(pool.workers.get("w1").activeTasks.size, 1);
+
+  // 3. Repeated completion is an idempotent no-op
+  assert.equal(pool.completeTask("idempotent-task"), true);
+  assert.equal(pool.workers.get("w1").activeTasks.size, 0);
+  assert.equal(pool.completeTask("idempotent-task"), true);
+  assert.equal(pool.workers.get("w1").activeTasks.size, 0);
+
+  // 4. Repeated releaseTask is also an idempotent no-op
+  assert.equal(pool.releaseTask("idempotent-task"), true);
+  assert.equal(pool.workers.get("w1").activeTasks.size, 0);
+});
