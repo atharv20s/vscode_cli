@@ -105,14 +105,14 @@ class KafkaService {
     }
   }
 
-  async publishEvent(event) {
+  async publishEvent(event, topic = this.topic) {
     if (!this.isConnected || !this.producer) throw new Error("Kafka producer is not connected.");
     if (!isValidEvent(event)) throw new Error("Refusing to publish an invalid ATH IDE event.");
     const value = JSON.stringify(event);
     if (Buffer.byteLength(value, "utf8") > MAX_EVENT_BYTES) throw new Error("ATH IDE event exceeds the Kafka event size limit.");
     const key = String(event.workspaceId || event.sessionId || "global");
     await this.producer.send({
-      topic: this.topic,
+      topic,
       acks: -1,
       timeout: 30000,
       messages: [{
