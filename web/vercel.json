@@ -2,6 +2,7 @@
   "framework": "nextjs",
   "buildCommand": "next build",
   "env": {
-    "BACKEND_URL": "https://ath-ide-542353973808.us-central1.run.app"
+    "BACKEND_URL": "https://13.201.213.156.sslip.io",
+    "NEXT_PUBLIC_WS_URL": "wss://13.201.213.156.sslip.io/ws"
   }
 }
