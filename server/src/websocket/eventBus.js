@@ -154,10 +154,16 @@ export class EventBus extends EventEmitter {
         publisher.quit?.(),
         subscriber.quit?.(),
       ]);
-      logger.error("Could not initialize the distributed workspace event bus", {
+      if (required) {
+        logger.error("Could not initialize the distributed workspace event bus", {
+          error: error.message,
+        });
+        throw error;
+      }
+      logger.warn("Redis workspace event bus unavailable, using local event bus", {
         error: error.message,
       });
-      throw error;
+      return false;
     }
   }
 
