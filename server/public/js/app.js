@@ -10,7 +10,7 @@ class App {
     this.currentAssistantMessageEl = null;
     this.currentAssistantContent = "";
     this.currentThinkingEl = null;
-    this.currentThinkingContent = "";
+
     this.sessionTokens = 0;
     this.chatHistory = [];
     this.agentStateMachine = window.AgentStateMachine ? new window.AgentStateMachine() : null;
@@ -2785,7 +2785,7 @@ class App {
     this.currentAssistantMessageEl = msgEl.querySelector(".chat-bubble");
     this.currentAssistantContent = "";
     this.currentThinkingEl = null;
-    this.currentThinkingContent = "";
+
   }
 
   createThinkingCard() {
@@ -2798,11 +2798,6 @@ class App {
     activity.innerHTML = '<div class="thinking-header"><span class="thinking-pulse" aria-hidden="true"></span><span>Working on your request</span></div>';
     this.currentAssistantMessageEl.insertBefore(activity, this.currentAssistantMessageEl.firstChild);
     this.currentThinkingEl = activity;
-  }
-
-  appendThinking() {
-    // Internal reasoning deltas are intentionally not displayed to users.
-    if (!this.currentThinkingEl) this.createThinkingCard();
   }
 
   detectTargetFile() {
