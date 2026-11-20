@@ -164,14 +164,13 @@ app.get("/api/cluster/nodes", requireAuth, async (req, res) => {
   });
 });
 
-// Kafka Distributed Queue Status endpoint
+// Kafka event transport and PostgreSQL outbox status endpoint
 app.get("/api/kafka/status", requireAuth, async (req, res) => {
   const { kafkaService } = await import("./services/kafkaService.js");
+  const { kafkaOutboxService } = await import("./services/kafkaOutboxService.js");
   res.json({
-    connected: kafkaService.isConnected,
-    brokers: kafkaService.brokers,
-    consumerActive: kafkaService.isConsumerRunning,
-    groupId: kafkaService.groupId,
+    ...kafkaService.getStatus(),
+    outbox: await kafkaOutboxService.getStatus(),
   });
 });
 
@@ -316,9 +315,13 @@ async function startServer() {
 
     try {
       const { kafkaService } = await import("./services/kafkaService.js");
-      await kafkaService.initialize();
+      await kafkaService.initialize({ onEvent: envelope => eventBus.receive(envelope) });
+      if (kafkaService.isConnected) {
+        const { kafkaOutboxService } = await import("./services/kafkaOutboxService.js");
+        await kafkaOutboxService.start();
+      }
     } catch (kErr) {
-      logger.warn(`Kafka service startup warning: ${kErr.message}`);
+      logger.warn(`Kafka event transport startup warning: ${kErr.message}`);
     }
 
     try {
@@ -353,6 +356,11 @@ async function handleShutdown(signal) {
   try {
     const { clusterManager } = await import("./services/clusterManager.js");
     await clusterManager.shutdown();
+  } catch {}
+
+  try {
+    const { kafkaOutboxService } = await import("./services/kafkaOutboxService.js");
+    await kafkaOutboxService.stop();
   } catch {}
 
   try {
