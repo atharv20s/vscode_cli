@@ -68,6 +68,7 @@ function serializeEvent(event) {
 }
 
 async function insertOutboxRecord(client, event) {
+  if (!DURABLE_EVENT_TYPES.has(event?.type)) throw new Error("Event type is not enabled for durable Kafka transport.");
   const serialized = serializeEvent(event);
   await client.query(
     "INSERT INTO kafka_outbox (event_id, topic, partition_key, payload) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (event_id) DO NOTHING",
