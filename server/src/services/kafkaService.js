@@ -22,7 +22,7 @@ class KafkaService {
     this.brokers = (process.env.KAFKA_BROKERS || "").split(",").map(value => value.trim()).filter(Boolean);
     this.clientId = process.env.KAFKA_CLIENT_ID || "ath-ide";
     this.topic = process.env.KAFKA_EVENT_TOPIC || "ath-ide.events";
-    this.groupId = process.env.KAFKA_EVENT_GROUP_ID || "ath-ide-gateway-" + os.hostname() + "-" + process.pid;
+    this.groupId = process.env.KAFKA_EVENT_GROUP_ID || "ath-ide-gateway-" + os.hostname();
     this.kafka = null;
     this.producer = null;
     this.consumer = null;
@@ -38,6 +38,8 @@ class KafkaService {
       return true;
     }
     if (!this.brokers.length) {
+      const error = new Error("KAFKA_BROKERS is required when Kafka transport is enabled.");
+      if ((process.env.KAFKA_REQUIRED || "false").toLowerCase() === "true") throw error;
       logger.info("Kafka transport disabled: KAFKA_BROKERS is not configured.");
       return false;
     }
