@@ -13,6 +13,7 @@ import { config } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
 import { sendMessage } from "../../websocket/connectionManager.js";
 import { eventBus, EVENT_TOPICS } from "../../websocket/eventBus.js";
+import { sanitizeChildEnv } from "../secretSanitizer.js";
 
 /**
  * @typedef {Object} ShellProvider
@@ -165,17 +166,17 @@ export class LocalBackend {
 
     logger.info(`LocalBackend: Spawning node-pty process for session ${sessionId}: ${shellCmd} in ${sessionCwd}`);
 
-    // Build clean sanitized virtual environment — hides host identity entirely
+    // Build clean sanitized virtual environment — hides host identity and strips sensitive server credentials
     const sanitizedEnv = isWindows
-      ? {
+      ? sanitizeChildEnv({
           ...process.env,
           TERM: "xterm-256color",
           USERNAME: "developer",
           USER: "developer",
           USERPROFILE: sessionCwd,
           HOME: sessionCwd,
-        }
-      : {
+        })
+      : sanitizeChildEnv({
           PATH: (process.env.PATH || "/usr/local/bin:/usr/bin:/bin"),
           TERM: "xterm-256color",
           COLORTERM: "truecolor",
@@ -188,7 +189,7 @@ export class LocalBackend {
           PROMPT_COMMAND: "",
           HISTFILE: "/dev/null",
           HISTSIZE: "100",
-        };
+        });
 
     try {
       this.ptyProcess = pty.spawn(shellCmd, shellArgs, {

@@ -14,6 +14,7 @@ import { config } from "../config/env.js";
 import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 import { buildStrictSSHOptions, resolveRemoteWorkspacePath, shellQuote, validateDockerContainer, validateSSHHost, validateSSHUsername } from "./sshSecurity.js";
 import { BoundedOutputCapture } from "./boundedOutputCapture.js";
+import { sanitizeChildEnv } from "./secretSanitizer.js";
 
 /**
  * Cross-platform process tree killer.
@@ -152,19 +153,7 @@ class ProcessSupervisor {
 
       let child;
       try {
-        const sanitizedChildEnv = { ...process.env, TERM: "dumb" };
-        delete sanitizedChildEnv.DATABASE_URL;
-        delete sanitizedChildEnv.DATABASE_URL_UNPOOLED;
-        delete sanitizedChildEnv.DIRECT_DATABASE_URL;
-        delete sanitizedChildEnv.JWT_SECRET;
-        delete sanitizedChildEnv.JWT_REFRESH_SECRET;
-        delete sanitizedChildEnv.OPENROUTER_API_KEY;
-        delete sanitizedChildEnv.MISTRAL_API_KEY;
-        delete sanitizedChildEnv.OPENAI_API_KEY;
-        delete sanitizedChildEnv.ANTHROPIC_API_KEY;
-        delete sanitizedChildEnv.TAVILY_API_KEY;
-        delete sanitizedChildEnv.REPO_AGENT_TOKEN_KEY;
-        delete sanitizedChildEnv.WORKER_SHARED_SECRET;
+        const sanitizedChildEnv = sanitizeChildEnv({ ...process.env, TERM: "dumb" });
 
         child = spawn(shellExecutable, shellArgs, {
           cwd,
