@@ -14,6 +14,7 @@ import { config } from "../config/env.js";
 import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 import { buildStrictSSHOptions, resolveRemoteWorkspacePath, shellQuote, validateDockerContainer, validateSSHHost, validateSSHUsername } from "./sshSecurity.js";
 import { BoundedOutputCapture } from "./boundedOutputCapture.js";
+import { sanitizeChildEnv } from "./secretSanitizer.js";
 
 /**
  * Cross-platform process tree killer.
@@ -152,9 +153,11 @@ class ProcessSupervisor {
 
       let child;
       try {
+        const sanitizedChildEnv = sanitizeChildEnv({ ...process.env, TERM: "dumb" });
+
         child = spawn(shellExecutable, shellArgs, {
           cwd,
-          env: { ...process.env, TERM: "dumb" },
+          env: sanitizedChildEnv,
           windowsHide: true,
         });
       } catch (err) {

@@ -89,3 +89,42 @@ test("workspace snapshot application refuses symlink traversal", async () => {
     }
   });
 });
+
+test("applyWorkspaceFiles preserves files created locally during in-flight remote operations", async () => {
+  await withWorkspace(async root => {
+    // Initial file sent to worker
+    await fs.writeFile(path.join(root, "initial.txt"), "initial-content");
+    const baselineFiles = [{ path: "initial.txt", content: encoded("initial-content") }];
+
+    // User creates a new file locally while worker is running
+    await fs.writeFile(path.join(root, "concurrent-local.txt"), "user-typed-this");
+
+    // Worker returns snapshot (which only knows about initial.txt and modified it)
+    await applyWorkspaceFiles(root, [
+      { path: "initial.txt", content: encoded("initial-updated-by-worker") },
+    ], { baselineFiles });
+
+    // Both the worker updated file and the newly created local file must exist
+    assert.equal(await fs.readFile(path.join(root, "initial.txt"), "utf8"), "initial-updated-by-worker");
+    assert.equal(await fs.readFile(path.join(root, "concurrent-local.txt"), "utf8"), "user-typed-this");
+  });
+});
+
+test("applyWorkspaceFiles preserves local edits when concurrent conflict occurs", async () => {
+  await withWorkspace(async root => {
+    // Initial file sent to worker
+    await fs.writeFile(path.join(root, "conflict.txt"), "version-1");
+    const baselineFiles = [{ path: "conflict.txt", content: encoded("version-1") }];
+
+    // User modified conflict.txt locally while worker ran
+    await fs.writeFile(path.join(root, "conflict.txt"), "version-1-local-edit");
+
+    // Worker returns a different version-2
+    await applyWorkspaceFiles(root, [
+      { path: "conflict.txt", content: encoded("version-2-remote") },
+    ], { baselineFiles });
+
+    // Local edit must be preserved over stale/conflicting remote snapshot
+    assert.equal(await fs.readFile(path.join(root, "conflict.txt"), "utf8"), "version-1-local-edit");
+  });
+});

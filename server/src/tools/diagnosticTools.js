@@ -14,11 +14,12 @@ import { LocalBackend } from "../services/backends/localBackend.js";
 import { worldStateService } from "../services/worldStateService.js";
 import { getWorkspaceService } from "../services/workspaceService.js";
 import { processSupervisor, killProcessTree } from "../services/processSupervisor.js";
+import { sanitizeChildEnv } from "../services/secretSanitizer.js";
 
 /** Helper to execute quick version check */
 function checkVersion(command) {
   return new Promise((resolve) => {
-    exec(command, { timeout: 3000 }, (err, stdout) => {
+    exec(command, { timeout: 3000, env: sanitizeChildEnv({ ...process.env, TERM: "dumb" }) }, (err, stdout) => {
       if (err) resolve(null);
       else resolve(stdout.trim().split("\n")[0]);
     });

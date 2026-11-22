@@ -1,4 +1,4 @@
--- Migration 002: Durable Kafka event outbox
+-- Migration 003: Durable Kafka event outbox
 -- Use enqueueEventInTransaction with the same PostgreSQL client as related
 -- aggregate mutations whenever state changes and event creation must be atomic.
 

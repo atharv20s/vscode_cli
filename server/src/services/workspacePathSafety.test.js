@@ -24,9 +24,10 @@ test("workspace path resolver rejects symlink files and parent directories", asy
     await fs.symlink(outside, path.join(root, "linked-dir"), "dir");
     await fs.symlink(path.join(outside, "secret.txt"), path.join(root, "linked-file"));
 
+    const canonicalRoot = await fs.realpath(root);
     assert.equal(
       await resolveSafeWorkspacePath(root, "real/new-file.txt"),
-      path.join(root, "real", "new-file.txt")
+      path.join(canonicalRoot, "real", "new-file.txt")
     );
     await assert.rejects(resolveSafeWorkspacePath(root, "linked-dir/secret.txt"), /symbolic links/);
     await assert.rejects(resolveSafeWorkspacePath(root, "linked-file"), /symbolic links/);

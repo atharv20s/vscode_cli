@@ -646,6 +646,8 @@ class EditorManager {
     });
     document.getElementById("editor-search-trigger")?.addEventListener("click", () => this.monacoEditor?.getAction("actions.find").run());
     document.getElementById("btn-git-diff-file")?.addEventListener("click", () => this.openGitDiff());
+    document.getElementById("btn-split-editor")?.addEventListener("click", () => this.toggleSplitEditor());
+    document.getElementById("btn-symbol-outline")?.addEventListener("click", () => this.monacoEditor?.getAction("editor.action.quickOutline")?.run());
   }
 
   saveStateToCache() {

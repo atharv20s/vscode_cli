@@ -360,6 +360,8 @@ export async function runAgent({
     : allTools;
   let totalTokens = 0;
   let iteration = 0;
+  let mutationCount = 0;
+  let verifiedMutationCount = 0;
 
   // 1. Task Controller: Classify complexity and determine execution workflow
   const complexity = taskController.classifyTask(message || "", {
@@ -422,7 +424,7 @@ export async function runAgent({
       turnNumber: iteration,
       recentActions: executedActions.slice(-4),
       recentErrors: executedErrors.slice(-4),
-      mutationsCount,
+      mutationsCount: mutationCount,
     });
     onEvent({ type: "agent.progress", data: turnEvaluation });
     if (turnEvaluation.recommendation === Recommendation.HALT_LOOP) {

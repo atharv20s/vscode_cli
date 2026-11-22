@@ -14,6 +14,7 @@ import { config } from "../config/env.js";
 import { eventBus, EVENT_TOPICS } from "../websocket/eventBus.js";
 import { killProcessTree } from "./processSupervisor.js";
 import { startRemotePreview, stopRemotePreview } from "./remoteExecutionWorker.js";
+import { sanitizeChildEnv } from "./secretSanitizer.js";
 
 /** Regex patterns for detecting localhost URLs and assigned ports */
 const URL_PATTERNS = [
@@ -142,7 +143,7 @@ class PreviewService {
       try {
         this.activeChild = spawn(shellExecutable, shellArgs, {
           cwd,
-          env: { ...process.env, TERM: "dumb" },
+          env: sanitizeChildEnv({ ...process.env, TERM: "dumb" }),
           windowsHide: true,
         });
       } catch (err) {
