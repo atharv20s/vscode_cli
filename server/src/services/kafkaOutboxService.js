@@ -12,7 +12,7 @@ const MAX_EVENT_BYTES = 512 * 1024;
 
 export const DURABLE_EVENT_TYPES = new Set([
   "agent.command.requested", "agent.command.started", "agent.command.completed",
-  "agent.command.failed", "agent.status", "file.created", "file.changed",
+  "agent.command.failed", "agent.status", "agent.task.created", "file.created", "file.changed",
   "file.deleted", "file.renamed", "preview.started", "preview.ready",
   "preview.failed", "preview.stopped", "permission.requested",
   "permission.resolved",
@@ -24,6 +24,7 @@ const SAFE_PAYLOAD_FIELDS = {
   "agent.command.completed": ["exitCode", "durationMs", "signal"],
   "agent.command.failed": ["exitCode", "durationMs", "signal"],
   "agent.status": ["status", "state", "agentId"],
+  "agent.task.created": ["taskId", "status"],
   "file.created": ["path", "operation", "version", "contentVersion", "size"],
   "file.changed": ["path", "operation", "version", "contentVersion", "size"],
   "file.deleted": ["path", "operation", "version"],

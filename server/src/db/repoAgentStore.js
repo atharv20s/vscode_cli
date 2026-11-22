@@ -1,5 +1,6 @@
 import { getDatabase, findUserById } from "../db/database.js";
 import { getPostgresPool } from "../db/postgres.js";
+import { enqueueEventInTransaction } from "../services/kafkaOutboxService.js";
 
 function pool() { return getPostgresPool(); }
 
@@ -40,16 +41,36 @@ export async function countActiveRepoTasks(userId) {
 
 export async function createRepoTask(task) {
   if (pool()) {
-    const result = await pool().query(
-      "INSERT INTO repo_agent_tasks (id,user_id,owner,repo,base_branch,base_sha,branch,prompt,workspace_path,status,events_json,github_token_ciphertext,github_token_iv,github_token_tag) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'','queued','[]'::jsonb,$9,$10,$11) RETURNING *",
-      [
-        task.id,task.userId,task.owner,task.repo,task.baseBranch,task.baseSha,task.branch,task.prompt,
-        task.credential?.github_token_ciphertext || null,
-        task.credential?.github_token_iv || null,
-        task.credential?.github_token_tag || null,
-      ]
-    );
-    return result.rows[0];
+    const client = await pool().connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        "INSERT INTO repo_agent_tasks (id,user_id,owner,repo,base_branch,base_sha,branch,prompt,workspace_path,status,events_json,github_token_ciphertext,github_token_iv,github_token_tag) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'','queued','[]'::jsonb,$9,$10,$11) RETURNING *",
+        [
+          task.id,task.userId,task.owner,task.repo,task.baseBranch,task.baseSha,task.branch,task.prompt,
+          task.credential?.github_token_ciphertext || null,
+          task.credential?.github_token_iv || null,
+          task.credential?.github_token_tag || null,
+        ]
+      );
+      await enqueueEventInTransaction(client, {
+        eventId: "repo-task-created:" + task.id,
+        type: "agent.task.created",
+        timestamp: Date.now(),
+        workspaceId: "repo-agent:" + task.id,
+        operationId: task.id,
+        source: "repo-agent",
+        actor: "system",
+        payload: { taskId: task.id, status: "queued" },
+      });
+      await client.query("COMMIT");
+      return result.rows[0];
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   getDatabase().prepare(
     "INSERT INTO repo_agent_tasks (id,user_id,owner,repo,base_branch,base_sha,branch,prompt,workspace_path,status,events_json,github_token_ciphertext,github_token_iv,github_token_tag) VALUES (?,?,?,?,?,?,?,?,?,'queued','[]',?,?,?)"
