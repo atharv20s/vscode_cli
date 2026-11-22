@@ -728,6 +728,14 @@ class App {
     const newChatBtn = document.getElementById("btn-new-chat");
     if (newChatBtn) newChatBtn.addEventListener("click", () => this.startNewConversation());
 
+    const modalNewChatBtn = document.getElementById("btn-modal-new-chat");
+    if (modalNewChatBtn) {
+      modalNewChatBtn.addEventListener("click", () => {
+        document.getElementById("chat-history-modal")?.classList.add("hidden");
+        this.startNewConversation();
+      });
+    }
+
     // Clear Conversation Button
     const clearChatBtn = document.getElementById("btn-clear-chat");
     if (clearChatBtn) {
