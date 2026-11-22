@@ -54,13 +54,14 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <link rel="stylesheet" href="/css/styles.css">
-  <!-- Monaco Editor: full IDE editing engine -->
-  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.47.0/min/vs/loader.js"></script>
+  <link rel="stylesheet" href="/css/chat-first.css">
   <!-- Xterm.js Core CSS & JS -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
   <!-- Xterm.js Fit Addon -->
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+  <!-- Monaco Editor: full IDE editing engine -->
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.47.0/min/vs/loader.js"></script>
 
 </head>
 <body>
@@ -98,8 +99,8 @@
           <button class="mode-chip" data-mode="plan" title="Plan step-by-step before editing">
             <i data-lucide="list-checks"></i> Plan
           </button>
-          <button class="mode-chip" data-mode="think" title="Deep reasoning mode with chain of thought">
-            <i data-lucide="brain"></i> Think
+          <button class="mode-chip" data-mode="think" title="Use deeper analysis for complex tasks">
+            <i data-lucide="brain"></i> Reason
           </button>
           <button class="mode-chip" data-mode="edit" title="Targeted file edit mode">
             <i data-lucide="file-edit"></i> Edit
@@ -456,7 +457,7 @@
       <aside class="ai-composer-panel" id="ai-panel" style="position:relative;">
         <div class="ai-header">
           <div class="ai-header-left" style="display:flex;align-items:center;gap:6px;overflow:hidden;flex:1;">
-            <i data-lucide="sparkles" class="ai-sparkle" style="flex-shrink:0;"></i>
+            <i data-lucide="message-circle" class="ai-sparkle" style="flex-shrink:0;"></i>
             <button id="btn-threads-menu" class="thread-selector-btn" title="Switch or manage chat threads" style="display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.06);border:1px solid var(--border-subtle);border-radius:4px;padding:3px 8px;color:#f8fafc;font-size:12px;cursor:pointer;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
               <span id="current-thread-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">New Thread</span>
               <i data-lucide="chevron-down" style="width:12px;height:12px;opacity:0.7;flex-shrink:0;"></i>
@@ -490,30 +491,31 @@
               <i data-lucide="bot"></i>
             </div>
             <div class="greeting-content">
-              <h3>Hello! I'm your ATH AI Pair Programmer.</h3>
-              <p>I can create files, write code, run shell tests, search the web with Tavily, and manage your workspace.</p>
+              <h3>What are we building today?</h3>
+              <p>Ask about this workspace, request a code change, or ask me to run and debug something. I can inspect files, edit code, use tools, and verify the result.</p>
             </div>
           </div>
         </div>
 
         <!-- Composer Input Area -->
         <div class="composer-container">
-          <div class="composer-chips" style="display:flex;gap:5px;overflow-x:auto;padding:6px 10px;scrollbar-width:none;">
-            <button class="chip-cmd" onclick="app.executeOneTouch('run')" style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.35);color:#34d399;" title="Run current script in terminal">⚡ Run</button>
-            <button class="chip-cmd" onclick="app.executeOneTouch('compile')" style="background:rgba(56,189,248,0.15);border:1px solid rgba(56,189,248,0.35);color:#38bdf8;" title="Compile active file">🔨 Compile</button>
-            <button class="chip-cmd" onclick="app.executeOneTouch('preview')" style="background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.35);color:#c084fc;" title="Open Live Preview">🌐 Preview</button>
-            <button class="chip-cmd" onclick="app.executeOneTouch('diagram')" title="Generate UML Diagram">📐 UML</button>
-            <button class="chip-cmd" onclick="app.executeOneTouch('git')" title="Check Git Status">🌿 Git</button>
-            <button class="chip-cmd" onclick="app.executeOneTouch('readme')" title="Generate README">📝 Readme</button>
-            <button class="chip-cmd" onclick="app.executeOneTouch('search')" title="Web Search">🔍 Search</button>
-            <button class="chip-cmd" onclick="app.executeOneTouch('health')" title="System Health Metrics">📊 Metrics</button>
+          <div class="composer-chips" aria-label="Quick actions">
+            <button class="chip-cmd" onclick="app.executeOneTouch('run')" title="Run current script in terminal"><i data-lucide="play"></i> Run</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('compile')" title="Compile active file"><i data-lucide="hammer"></i> Compile</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('preview')" title="Open live preview"><i data-lucide="external-link"></i> Preview</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('git')" title="Check Git status"><i data-lucide="git-branch"></i> Git</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('search')" title="Search the web"><i data-lucide="search"></i> Search</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('diagram')" title="Generate UML diagram"><i data-lucide="workflow"></i> Diagram</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('readme')" title="Generate README"><i data-lucide="file-text"></i> README</button>
+            <button class="chip-cmd" onclick="app.executeOneTouch('health')" title="Inspect system health"><i data-lucide="activity"></i> Metrics</button>
           </div>
           <div id="composer-image-previews" class="composer-image-previews" style="display:none;gap:6px;padding:6px 10px;flex-wrap:wrap;border-bottom:1px solid var(--border-subtle);"></div>
           <div class="composer-input-box">
             <textarea
               id="composer-input"
-              placeholder="Ask anything or paste images (Ctrl+V)... (Enter to send, Shift+Enter for newline)"
-              rows="2"
+              aria-label="Message ATH Assistant"
+              placeholder="Message ATH Assistant… (Enter to send, Shift+Enter for a new line)"
+              rows="3"
             ></textarea>
             <div class="composer-footer">
               <div style="display:flex;gap:8px;align-items:center;">

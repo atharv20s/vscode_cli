@@ -1,166 +1,175 @@
 /**
- * Apache Kafka Distributed Queue Service
- *
- * Implements production-ready message queueing with topic partitioning:
- * - `ath-ide.tasks`: Task and command execution queue partitioned across cluster nodes
- * - `ath-ide.events`: Real-time cluster-wide event stream
- *
- * Provides transparent fallback to in-memory / local queues if Kafka brokers are offline.
+ * Kafka transport for durable ATH IDE domain events.
+ * Redis remains responsible for leases, heartbeats and ephemeral fan-out.
+ * PostgreSQL remains the source of truth for application/job state.
  */
-
+import os from "node:os";
+import { createHash } from "node:crypto";
 import { Kafka, Partitioners } from "kafkajs";
-import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
+
+const MAX_EVENT_BYTES = 512 * 1024;
+
+function isValidEvent(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) &&
+    typeof value.eventId === "string" && value.eventId.length > 0 && value.eventId.length <= 128 &&
+    typeof value.type === "string" && value.type.length > 0 && value.type.length <= 128 &&
+    typeof value.workspaceId === "string" && value.workspaceId.length > 0 &&
+    Number.isFinite(value.timestamp) && value.payload && typeof value.payload === "object" && !Array.isArray(value.payload));
+}
 
 class KafkaService {
   constructor() {
-    this.brokers = (process.env.KAFKA_BROKERS || "").split(",").filter(Boolean);
-    this.clientId = process.env.KAFKA_CLIENT_ID || "ath-ide-studio";
-    this.groupId = process.env.KAFKA_GROUP_ID || "ath-ide-worker-group";
+    this.brokers = (process.env.KAFKA_BROKERS || "").split(",").map(value => value.trim()).filter(Boolean);
+    this.clientId = process.env.KAFKA_CLIENT_ID || "ath-ide";
+    this.topic = process.env.KAFKA_EVENT_TOPIC || "ath-ide.events";
+    this.partitions = Math.max(1, Number(process.env.KAFKA_EVENT_PARTITIONS || 6));
+    this.replicationFactor = Math.max(1, Number(process.env.KAFKA_REPLICATION_FACTOR || 1));
+    this.groupId = process.env.KAFKA_EVENT_GROUP_ID || "ath-ide-gateway-" + os.hostname();
     this.kafka = null;
     this.producer = null;
     this.consumer = null;
     this.isConnected = false;
     this.isConsumerRunning = false;
-    this.taskHandlers = new Set();
+    this.onEvent = null;
+    this.consumerRun = null;
   }
 
-  /**
-   * Initialize Kafka producer and consumer connections.
-   */
-  async initialize() {
-    if (this.brokers.length === 0) {
-      logger.info("KafkaService: KAFKA_BROKERS not configured. Using localized event queue.");
-      return;
+  async initialize({ onEvent } = {}) {
+    if (this.isConnected) {
+      if (onEvent) this.onEvent = onEvent;
+      return true;
+    }
+    if (!this.brokers.length) {
+      const error = new Error("KAFKA_BROKERS is required when Kafka transport is enabled.");
+      if ((process.env.KAFKA_REQUIRED || "false").toLowerCase() === "true") throw error;
+      logger.info("Kafka transport disabled: KAFKA_BROKERS is not configured.");
+      return false;
     }
 
+    this.onEvent = onEvent || this.onEvent;
+    this.kafka = new Kafka({
+      clientId: this.clientId,
+      brokers: this.brokers,
+      connectionTimeout: 5000,
+      requestTimeout: 25000,
+      retry: { initialRetryTime: 300, retries: 8 },
+    });
+
     try {
-      logger.info(`KafkaService: Connecting to Kafka brokers: ${this.brokers.join(", ")}...`);
-
-      this.kafka = new Kafka({
-        clientId: this.clientId,
-        brokers: this.brokers,
-        connectionTimeout: 5000,
-        requestTimeout: 25000,
-        retry: {
-          initialRetryTime: 300,
-          retries: 5,
-        },
-      });
-
       this.producer = this.kafka.producer({
         createPartitioner: Partitioners.DefaultPartitioner,
         allowAutoTopicCreation: true,
+        idempotent: true,
+        maxInFlightRequests: 5,
       });
-
       await this.producer.connect();
       this.isConnected = true;
-      logger.info("KafkaService: Producer connected successfully.");
 
-      // Start consumer
-      await this.startConsumer();
-    } catch (err) {
-      this.isConnected = false;
-      logger.warn(`KafkaService: Broker connection failed: ${err.message}. Operating in fallback queue mode.`);
-    }
-  }
+      const admin = this.kafka.admin();
+      await admin.connect();
+      try {
+        await admin.createTopics({
+          waitForLeaders: true,
+          topics: [
+            { topic: this.topic, numPartitions: this.partitions, replicationFactor: this.replicationFactor },
+            { topic: this.topic + ".dlq", numPartitions: this.partitions, replicationFactor: this.replicationFactor },
+          ],
+        });
+      } finally {
+        await admin.disconnect();
+      }
 
-  /**
-   * Start consumer for task topic.
-   */
-  async startConsumer() {
-    if (!this.kafka || this.isConsumerRunning) return;
-
-    try {
       this.consumer = this.kafka.consumer({ groupId: this.groupId });
       await this.consumer.connect();
-      await this.consumer.subscribe({ topic: "ath-ide.tasks", fromBeginning: false });
-
-      this.isConsumerRunning = true;
-      logger.info(`KafkaService: Consumer connected to group '${this.groupId}', subscribed to 'ath-ide.tasks'.`);
-
-      await this.consumer.run({
+      await this.consumer.subscribe({ topic: this.topic, fromBeginning: false });
+      this.consumerRun = this.consumer.run({
         eachMessage: async ({ topic, partition, message }) => {
-          try {
-            const raw = message.value ? message.value.toString() : "{}";
-            const task = JSON.parse(raw);
-            logger.debug(`KafkaService: Received task on partition ${partition}`, { taskId: task.id });
-
-            for (const handler of this.taskHandlers) {
-              try {
-                await handler(task);
-              } catch (hErr) {
-                logger.error("KafkaService: Task handler execution error", { error: hErr.message });
-              }
-            }
-          } catch (pErr) {
-            logger.error("KafkaService: Error parsing message from Kafka", { error: pErr.message });
+          const raw = message.value?.toString("utf8") || "";
+          if (Buffer.byteLength(raw, "utf8") > MAX_EVENT_BYTES) {
+            await this._deadLetter({ topic, partition, offset: message.offset, reason: "event_too_large", raw: raw.slice(0, 4096) });
+            return;
           }
+          let event;
+          try { event = JSON.parse(raw); }
+          catch {
+            await this._deadLetter({ topic, partition, offset: message.offset, reason: "invalid_json", raw: raw.slice(0, 4096) });
+            return;
+          }
+          if (!isValidEvent(event)) {
+            await this._deadLetter({ topic, partition, offset: message.offset, reason: "invalid_event_envelope", raw: raw.slice(0, 4096) });
+            return;
+          }
+          // Do not swallow local-delivery errors: KafkaJS must retry the record.
+          if (this.onEvent) await this.onEvent(event);
         },
+      }).catch(error => {
+        this.isConsumerRunning = false;
+        logger.error("Kafka event consumer stopped", { error: error.message });
       });
-    } catch (err) {
-      this.isConsumerRunning = false;
-      logger.warn(`KafkaService: Consumer initialization note: ${err.message}`);
-    }
-  }
-
-  /**
-   * Publish a task into the Kafka task queue topic.
-   * @param {object} task - Task payload with id, operation, command, etc.
-   * @returns {Promise<boolean>}
-   */
-  async publishTask(task) {
-    if (!this.isConnected || !this.producer) {
-      return false; // Fallback to local queue
-    }
-
-    try {
-      const partitionKey = task.userId || task.sessionId || "global";
-      await this.producer.send({
-        topic: "ath-ide.tasks",
-        messages: [
-          {
-            key: String(partitionKey),
-            value: JSON.stringify({
-              ...task,
-              enqueuedAt: new Date().toISOString(),
-            }),
-            headers: {
-              source: "ath-ide-server",
-              priority: String(task.priority || "normal"),
-            },
-          },
-        ],
-      });
-
-      logger.debug(`KafkaService: Task published to 'ath-ide.tasks'`, { taskId: task.id, partitionKey });
+      this.isConsumerRunning = true;
+      logger.info("Kafka event transport connected", { brokers: this.brokers, topic: this.topic, groupId: this.groupId });
       return true;
-    } catch (err) {
-      logger.warn(`KafkaService: Failed to publish task: ${err.message}`);
+    } catch (error) {
+      logger.error("Kafka event transport initialization failed", { error: error.message });
+      await Promise.allSettled([this.consumer?.disconnect(), this.producer?.disconnect()]);
+      this.consumer = null;
+      this.producer = null;
+      this.isConnected = false;
+      this.isConsumerRunning = false;
+      if ((process.env.KAFKA_REQUIRED || "false").toLowerCase() === "true") throw error;
       return false;
     }
   }
 
-  /**
-   * Register a task handler for consumed Kafka messages.
-   * @param {Function} handler
-   */
-  onTask(handler) {
-    if (typeof handler === "function") {
-      this.taskHandlers.add(handler);
+  async publishEvent(event, topic = this.topic) {
+    if (!this.isConnected || !this.producer) throw new Error("Kafka producer is not connected.");
+    if (!isValidEvent(event)) throw new Error("Refusing to publish an invalid ATH IDE event.");
+    const value = JSON.stringify(event);
+    if (Buffer.byteLength(value, "utf8") > MAX_EVENT_BYTES) throw new Error("ATH IDE event exceeds the Kafka event size limit.");
+    const key = String(event.workspaceId || event.sessionId || "global");
+    await this.producer.send({
+      topic,
+      acks: -1,
+      timeout: 30000,
+      messages: [{
+        key,
+        value,
+        headers: { eventId: event.eventId, eventType: event.type, source: "ath-ide" },
+      }],
+    });
+  }
+
+  async _deadLetter({ topic, partition, offset, reason, raw }) {
+    if (!this.producer) return;
+    try {
+      await this.producer.send({
+        topic: this.topic + ".dlq",
+        acks: -1,
+        messages: [{
+          key: String(offset || "unknown"),
+          value: JSON.stringify({ sourceTopic: topic, sourcePartition: partition, sourceOffset: offset, reason, payloadBytes: Buffer.byteLength(raw || "", "utf8"), payloadSha256: createHash("sha256").update(raw || "").digest("hex"), failedAt: new Date().toISOString() }),
+        }],
+      });
+    } catch (error) {
+      logger.error("Kafka dead-letter publish failed", { error: error.message, reason });
+      throw error;
     }
   }
 
-  /**
-   * Graceful disconnection on server shutdown.
-   */
+  getStatus() {
+    return { connected: this.isConnected, brokers: this.brokers, topic: this.topic, partitions: this.partitions, replicationFactor: this.replicationFactor, consumerActive: this.isConsumerRunning, groupId: this.groupId };
+  }
+
   async shutdown() {
-    try {
-      if (this.consumer) await this.consumer.disconnect();
-      if (this.producer) await this.producer.disconnect();
-      this.isConnected = false;
-      logger.info("KafkaService: Disconnected from Kafka brokers.");
-    } catch {}
+    this.isConsumerRunning = false;
+    await Promise.allSettled([this.consumer?.stop(), this.consumer?.disconnect(), this.producer?.disconnect()]);
+    this.consumer = null;
+    this.producer = null;
+    this.kafka = null;
+    this.isConnected = false;
+    this.consumerRun = null;
+    logger.info("Kafka event transport disconnected.");
   }
 }
 

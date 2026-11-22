@@ -84,10 +84,10 @@ class GitService {
    * Commit staged/unstaged changes.
    */
   async commit(message, cwd = config.workspaceRoot) {
-    if (!message) throw new Error("Commit message cannot be empty.");
-    const escaped = message.replace(/"/g, '\\"');
+    if (!message || typeof message !== "string") throw new Error("Commit message cannot be empty.");
+    const escaped = message.replace(/[`$"\\;]/g, "\\$&");
     const res = await executionService.execute({
-      command: `git add . ; git commit -m "${escaped}"`,
+      command: `git add . && git commit -m "${escaped}"`,
       cwd,
       mode: "AGENT_BACKGROUND",
     });
@@ -98,6 +98,12 @@ class GitService {
    * Push to remote repository.
    */
   async push(remote = "origin", branch = null, cwd = config.workspaceRoot) {
+    if (typeof remote !== "string" || !/^[A-Za-z0-9._-]+$/.test(remote) || remote.startsWith("-")) {
+      throw new Error("Invalid git remote name.");
+    }
+    if (branch && (typeof branch !== "string" || !/^[A-Za-z0-9._\/-]+$/.test(branch) || branch.startsWith("-"))) {
+      throw new Error("Invalid git branch name.");
+    }
     const cmd = branch ? `git push ${remote} ${branch}` : `git push ${remote}`;
     const res = await executionService.execute({
       command: cmd,
@@ -111,8 +117,12 @@ class GitService {
    * Restore a file to a specific commit or HEAD.
    */
   async restoreFile(filePath, commit = "HEAD", cwd = config.workspaceRoot) {
+    if (typeof commit !== "string" || !/^[A-Za-z0-9._~^-]+$/.test(commit) || commit.startsWith("-")) {
+      throw new Error("Invalid git commit ref.");
+    }
+    const safePath = String(filePath || "").replace(/[`$"\\;]/g, "\\$&");
     const res = await executionService.execute({
-      command: `git checkout ${commit} -- "${filePath}"`,
+      command: `git checkout ${commit} -- "${safePath}"`,
       cwd,
       mode: "AGENT_BACKGROUND",
     });

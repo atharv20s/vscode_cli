@@ -13,6 +13,7 @@ import { config } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
 import { sendMessage } from "../../websocket/connectionManager.js";
 import { eventBus, EVENT_TOPICS } from "../../websocket/eventBus.js";
+import { sanitizeChildEnv } from "../secretSanitizer.js";
 
 /**
  * @typedef {Object} ShellProvider
@@ -40,12 +41,14 @@ export class LocalBackend {
     const shells = [];
 
     if (isWindows) {
+      const psPromptCmd = "function prompt { $p = (Get-Location).Path; $idx = $p.IndexOf('users'); if ($idx -ge 0) { $sub = $p.Substring($idx + 5).TrimStart('\\', '/'); $slash = $sub.IndexOfAny(@([char]'\\', [char]'/')); if ($slash -ge 0) { return 'workspace:\\' + $sub.Substring($slash + 1) + '> ' } }; return 'workspace> ' }; Clear-Host";
+
       // 1. Windows PowerShell (always available on Windows)
       shells.push({
         id: "powershell",
         name: "Windows PowerShell",
         executable: "powershell.exe",
-        args: ["-NoProfile", "-ExecutionPolicy", "Bypass"],
+        args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", psPromptCmd],
         platform: "win32",
       });
 
@@ -54,7 +57,7 @@ export class LocalBackend {
         id: "cmd",
         name: "Command Prompt",
         executable: "cmd.exe",
-        args: [],
+        args: ["/k", "prompt workspace$G"],
         platform: "win32",
       });
 
@@ -69,7 +72,7 @@ export class LocalBackend {
             id: "pwsh",
             name: "PowerShell 7",
             executable: p,
-            args: ["-NoProfile", "-ExecutionPolicy", "Bypass"],
+            args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", psPromptCmd],
             platform: "win32",
           });
           break;
@@ -163,10 +166,17 @@ export class LocalBackend {
 
     logger.info(`LocalBackend: Spawning node-pty process for session ${sessionId}: ${shellCmd} in ${sessionCwd}`);
 
-    // Build clean sanitized virtual environment — hides host identity entirely
+    // Build clean sanitized virtual environment — hides host identity and strips sensitive server credentials
     const sanitizedEnv = isWindows
-      ? { ...process.env, TERM: "xterm-256color" }
-      : {
+      ? sanitizeChildEnv({
+          ...process.env,
+          TERM: "xterm-256color",
+          USERNAME: "developer",
+          USER: "developer",
+          USERPROFILE: sessionCwd,
+          HOME: sessionCwd,
+        })
+      : sanitizeChildEnv({
           PATH: (process.env.PATH || "/usr/local/bin:/usr/bin:/bin"),
           TERM: "xterm-256color",
           COLORTERM: "truecolor",
@@ -179,7 +189,7 @@ export class LocalBackend {
           PROMPT_COMMAND: "",
           HISTFILE: "/dev/null",
           HISTSIZE: "100",
-        };
+        });
 
     try {
       this.ptyProcess = pty.spawn(shellCmd, shellArgs, {
@@ -190,10 +200,15 @@ export class LocalBackend {
         env: sanitizedEnv,
       });
 
-      // Stream PTY output to the EventBus and WebSocket
+      // Stream PTY output to the EventBus and WebSocket, stripping host path leaks
       this.ptyProcess.onData((data) => {
+        let cleanData = data;
+        if (isWindows) {
+          if (sessionCwd) cleanData = cleanData.split(sessionCwd).join("workspace");
+          if (process.env.USERPROFILE) cleanData = cleanData.split(process.env.USERPROFILE).join("~");
+        }
         eventBus.publish(EVENT_TOPICS.TERMINAL_OUTPUT, {
-          data,
+          data: cleanData,
           sessionId,
           workspaceId,
         }, {
@@ -203,8 +218,8 @@ export class LocalBackend {
           actor: "user",
         });
 
-        if (this.onData) this.onData(data);
-        else if (this.ws) sendMessage(this.ws, "terminal.output", { text: data, sessionId });
+        if (this.onData) this.onData(cleanData);
+        else if (this.ws) sendMessage(this.ws, "terminal.output", { text: cleanData, sessionId });
       });
 
       this.ptyProcess.onExit(({ exitCode, signal }) => {

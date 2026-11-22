@@ -534,6 +534,19 @@ export function getWorkspaceService(userId, workspaceKey = "default") {
   if (!workspaceServices.has(cacheKey)) {
     fs.mkdirSync(root, { recursive: true, mode: 0o700 });
     try { fs.chmodSync(root, 0o700); } catch {}
+    // Seed sample files if workspace is empty and demo templates exist in storageRoot
+    try {
+      const existing = fs.readdirSync(root).filter(name => !name.startsWith("."));
+      if (existing.length === 0) {
+        const seedCandidates = ["package.json", "AGENTS.md", "src"];
+        for (const item of seedCandidates) {
+          const srcPath = path.join(storageRoot, item);
+          if (fs.existsSync(srcPath)) {
+            fs.cpSync(srcPath, path.join(root, item), { recursive: true });
+          }
+        }
+      }
+    } catch {}
     const service = new WorkspaceService(root, cacheKey, {
       quotaRoot: ownerRoot,
       lockRoot: path.join(ownerRoot, ".ath-locks"),

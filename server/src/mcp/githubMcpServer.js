@@ -143,10 +143,18 @@ async function callTool(name, args) {
 
     case "git_commit_and_push": {
       try {
+        const remote = String(args.remote || "origin");
+        const branch = String(args.branch || "");
+        if (!/^[a-zA-Z0-9._-]+$/.test(remote) || remote.startsWith("-")) {
+          return { isError: true, content: [{ type: "text", text: "Invalid git remote name." }] };
+        }
+        if (branch && (!/^[a-zA-Z0-9._\/-]+$/.test(branch) || branch.startsWith("-"))) {
+          return { isError: true, content: [{ type: "text", text: "Invalid git branch name." }] };
+        }
         await execAsync("git add -A", { cwd: WORKSPACE_ROOT });
-        const safeMsg = args.message.replace(/"/g, '\\"');
+        const safeMsg = (args.message || "").replace(/[`$"\\;]/g, "\\$&");
         const commitRes = await execAsync(`git commit -m "${safeMsg}"`, { cwd: WORKSPACE_ROOT });
-        const pushRes = await execAsync(`git push ${args.remote || "origin"} ${args.branch || ""}`, { cwd: WORKSPACE_ROOT });
+        const pushRes = await execAsync(`git push ${remote} ${branch}`.trim(), { cwd: WORKSPACE_ROOT });
         return {
           content: [{ type: "text", text: `Committed & Pushed successfully!\n${commitRes.stdout}\n${pushRes.stdout}` }],
         };
@@ -157,9 +165,12 @@ async function callTool(name, args) {
 
     case "generate_uml_diagram": {
       const fileName = args.output_file || "architecture.md";
+      const targetPath = path.resolve(WORKSPACE_ROOT, fileName);
+      if (!targetPath.startsWith(WORKSPACE_ROOT + path.sep) && targetPath !== WORKSPACE_ROOT) {
+        return { isError: true, content: [{ type: "text", text: "Path traversal rejected: output file outside workspace." }] };
+      }
       const cleanMermaid = (args.mermaid_code || "").trim().replace(/^```mermaid\s*/i, "").replace(/```$/, "").trim();
       const content = `# ${args.title}\n\n\`\`\`mermaid\n${cleanMermaid}\n\`\`\`\n\n## Architecture Details\n${args.explanation || ""}\n`;
-      const targetPath = path.resolve(WORKSPACE_ROOT, fileName);
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
       await fs.writeFile(targetPath, content, "utf8");
       return { content: [{ type: "text", text: `UML diagram saved to ${fileName}` }] };
@@ -178,16 +189,26 @@ async function callTool(name, args) {
     }
 
     case "compile_file": {
-      const filePath = args.path;
+      const filePath = String(args.path || "");
+      const resolvedPath = path.resolve(WORKSPACE_ROOT, filePath);
+      if (!resolvedPath.startsWith(WORKSPACE_ROOT + path.sep) && resolvedPath !== WORKSPACE_ROOT) {
+        return { isError: true, content: [{ type: "text", text: "Path traversal rejected: target file outside workspace." }] };
+      }
+      const flags = String(args.flags || "");
+      if (/[;&|`$><\\]/.test(flags)) {
+        return { isError: true, content: [{ type: "text", text: "Invalid compiler flags: shell metacharacters rejected." }] };
+      }
+      const safeFlags = flags;
+      const safePath = resolvedPath.replace(/[`$"\\;]/g, "\\$&");
       const ext = filePath.split(".").pop().toLowerCase();
       let cmd = "";
-      if (ext === "c") cmd = `gcc ${args.flags || ""} "${filePath}" -o "${filePath}.out" -lm`;
-      else if (ext === "cpp") cmd = `g++ -std=c++20 ${args.flags || ""} "${filePath}" -o "${filePath}.out" -lm`;
-      else if (ext === "rs") cmd = `rustc "${filePath}"`;
-      else if (ext === "go") cmd = `go build "${filePath}"`;
-      else if (ext === "ts") cmd = `npx -y tsc --noEmit "${filePath}"`;
-      else if (ext === "py") cmd = `python3 -m py_compile "${filePath}"`;
-      else if (ext === "js" || ext === "mjs") cmd = `node --check "${filePath}"`;
+      if (ext === "c") cmd = `gcc ${safeFlags} "${safePath}" -o "${safePath}.out" -lm`;
+      else if (ext === "cpp") cmd = `g++ -std=c++20 ${safeFlags} "${safePath}" -o "${safePath}.out" -lm`;
+      else if (ext === "rs") cmd = `rustc "${safePath}"`;
+      else if (ext === "go") cmd = `go build "${safePath}"`;
+      else if (ext === "ts") cmd = `npx -y tsc --noEmit "${safePath}"`;
+      else if (ext === "py") cmd = `python3 -m py_compile "${safePath}"`;
+      else if (ext === "js" || ext === "mjs") cmd = `node --check "${safePath}"`;
       else if (ext === "html" || ext === "htm" || ext === "json") {
         return { content: [{ type: "text", text: `Syntax verification succeeded for ${filePath}. File is valid.` }] };
       }

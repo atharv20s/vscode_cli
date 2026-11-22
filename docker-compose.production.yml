@@ -1,0 +1,132 @@
+version: "3.8"
+
+services:
+  # =========================================================================
+  # 1. ATH IDE 2.0 API & Web Interface
+  # =========================================================================
+  ath-ide-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ath-ide/api:2.0.0
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ath}:${POSTGRES_PASSWORD:-securepassword}@postgres:5432/${POSTGRES_DB:-ath_ide}
+      REDIS_URL: redis://redis:6379
+      WORKER_SHARED_SECRET: ${WORKER_SHARED_SECRET}
+      WORKSPACE_ROOT: /data/workspaces
+      EXECUTION_RUNTIME: ${EXECUTION_RUNTIME:-linux}
+      DEFAULT_LLM_PROVIDER: ${DEFAULT_LLM_PROVIDER:-openrouter}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+    volumes:
+      - workspace-data:/data/workspaces
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ath-internal
+      - ath-public
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =========================================================================
+  # 2. Dedicated Execution Worker Daemon
+  # =========================================================================
+  ath-ide-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ath-ide/worker:2.0.0
+    command: ["npm", "run", "start:worker"]
+    restart: always
+    environment:
+      NODE_ENV: production
+      WORKER_PORT: 8081
+      WORKER_SHARED_SECRET: ${WORKER_SHARED_SECRET}
+      WORKSPACE_ROOT: /data/workspaces
+      EXECUTION_RUNTIME: ${EXECUTION_RUNTIME:-linux}
+    volumes:
+      - workspace-data:/data/workspaces
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - redis
+    networks:
+      - ath-internal
+
+  # =========================================================================
+  # 3. PostgreSQL Database
+  # =========================================================================
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ath}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-securepassword}
+      POSTGRES_DB: ${POSTGRES_DB:-ath_ide}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - ath-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ath} -d ${POSTGRES_DB:-ath_ide}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # =========================================================================
+  # 4. Redis Cluster & Distributed Locking Registry
+  # =========================================================================
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "volatile-lru"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - ath-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # =========================================================================
+  # 5. Caddy Automated HTTPS Reverse Proxy
+  # =========================================================================
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - ath-public
+    depends_on:
+      - ath-ide-api
+
+networks:
+  ath-internal:
+    internal: true
+  ath-public:
+
+volumes:
+  workspace-data:
+  postgres-data:
+  redis-data:
+  caddy-data:
+  caddy-config:

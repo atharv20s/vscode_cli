@@ -11,6 +11,10 @@ class EditorManager {
     this.editorView = document.getElementById("code-editor-view");
     this.saveBtn = document.getElementById("btn-save-file");
     this.monacoEditor = null;
+    this.primaryEditor = null;
+    this.secondaryEditor = null;
+    this.activeGroup = "primary";
+    this.groupTabs = { primary: null, secondary: null };
     this.monacoReady = false;
     this.pendingModel = null;
     this.gitDecorationIds = new Map();
@@ -43,6 +47,8 @@ class EditorManager {
     this.lspRootUri = null;
     this.lspLanguage = null;
     this.suppressModelChange = false;
+    this.diagnosticTimers = new Map();
+    this.documentSymbols = new Map();
     this.initEventListeners();
     this.initInlineEditListeners();
     this.restoreStateFromCache();
@@ -99,6 +105,7 @@ class EditorManager {
         links: true,
         mouseWheelZoom: true
       });
+      this.primaryEditor = this.monacoEditor;
 
       const symbolLanguages = ["javascript", "typescript", "python", "rust", "go", "java"];
       const symbolHeaders = () => ({ Authorization: "Bearer " + (localStorage.getItem("token") || "") });
@@ -522,6 +529,10 @@ class EditorManager {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => this.openWorkspaceSearch());
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => this.openQuickOpen());
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => { this.activateGroup(group); this.openInlineEdit(); });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyI, () => {
+      const input = document.getElementById("composer-input");
+      if (input) { input.focus(); }
+    });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => this.openCommandPalette());
     editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyUp, () => editor.getAction("editor.action.moveLinesUpAction").run());
     editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyDown, () => editor.getAction("editor.action.moveLinesDownAction").run());
@@ -641,6 +652,8 @@ class EditorManager {
     });
     document.getElementById("editor-search-trigger")?.addEventListener("click", () => this.monacoEditor?.getAction("actions.find").run());
     document.getElementById("btn-git-diff-file")?.addEventListener("click", () => this.openGitDiff());
+    document.getElementById("btn-split-editor")?.addEventListener("click", () => this.toggleSplitEditor());
+    document.getElementById("btn-symbol-outline")?.addEventListener("click", () => this.monacoEditor?.getAction("editor.action.quickOutline")?.run());
   }
 
   saveStateToCache() {
@@ -713,23 +726,28 @@ class EditorManager {
     this.suppressModelChange = false;
   }
 
-  selectTab(filePath, group = this.activeGroup) {
+  selectTab(filePath, group = this.activeGroup || "primary") {
+    if (!this.groupTabs) this.groupTabs = { primary: null, secondary: null };
     const tab = this.openTabs.get(filePath);
     if (!tab) return;
     if (group === "secondary" && !this.secondaryEditor) group = "primary";
     this.groupTabs[group] = filePath;
     this.activeGroup = group;
     this.activeTab = filePath;
-    const editor = group === "secondary" ? this.secondaryEditor : this.primaryEditor;
+    const editor = group === "secondary" ? this.secondaryEditor : (this.primaryEditor || this.monacoEditor);
     if (this.welcomeScreen) this.welcomeScreen.style.display = "none";
     if (this.editorView) this.editorView.style.display = "block";
     if (!this.monacoReady || !editor) { this.pendingModel = filePath; return; }
     const modelUri = this.lspRootUri ? this.lspRootUri + filePath.split("/").map(encodeURIComponent).join("/") : "file:///" + filePath.split("/").map(encodeURIComponent).join("/");
     const previousModel = editor.getModel();
-    const model = monaco.editor.createModel(tab.content || "", tab.language || this.detectLanguage(filePath), monaco.Uri.parse(modelUri));
-    const existing = monaco.editor.getModel(model.uri);
-    if (existing) { model.dispose(); editor.setModel(existing); }
-    else editor.setModel(model);
+    const parsedUri = monaco.Uri.parse(modelUri);
+    let model = monaco.editor.getModel(parsedUri);
+    if (!model || model.isDisposed()) {
+      model = monaco.editor.createModel(tab.content || "", tab.language || this.detectLanguage(filePath), parsedUri);
+    } else if (typeof tab.content === "string" && model.getValue() !== tab.content) {
+      model.setValue(tab.content);
+    }
+    editor.setModel(model);
     if (previousModel && previousModel !== editor.getModel() && this.activeTab === filePath && previousModel.uri.toString() !== modelUri) {
       const sharedElsewhere = [this.primaryEditor, this.secondaryEditor].some(other => other && other !== editor && other.getModel() === previousModel);
       if (!sharedElsewhere) previousModel.dispose();
@@ -1293,6 +1311,7 @@ class EditorManager {
 
   scheduleDiagnostics(filePath, editor) {
     if (!filePath || !editor) return;
+    if (!this.diagnosticTimers) this.diagnosticTimers = new Map();
     clearTimeout(this.diagnosticTimers.get(filePath));
     const timer = setTimeout(() => this.refreshDiagnostics(filePath, editor), 650);
     this.diagnosticTimers.set(filePath, timer);

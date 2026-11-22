@@ -14,6 +14,9 @@
       "allowedTools": [
         "read_file",
         "read_multiple_files",
+        "write_file",
+        "create_directory",
+        "move_file",
         "list_directory",
         "directory_tree",
         "get_file_info",

@@ -5,10 +5,11 @@
  * Attaches decoded user payload to req.user.
  */
 
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { config } from "../config/env.js";
 
-const REFRESH_SECRET = (config.jwtSecret || "dev-secret") + "_refresh";
+const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || crypto.createHmac("sha256", config.jwtSecret || "dev-secret").update("ath_ide_refresh_salt_v1").digest("hex");
 
 /**
  * Generate a short-lived Access Token (15 minutes).

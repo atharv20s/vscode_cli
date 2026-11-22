@@ -5,12 +5,13 @@
  * isolated, resource-constrained Kubernetes Pods for each user.
  */
 
-import { exec } from "child_process";
+import { exec, execFile, spawn } from "child_process";
 import { promisify } from "util";
 import { logger } from "../config/logger.js";
 import { config } from "../config/env.js";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const NAMESPACE = process.env.K8S_NAMESPACE || "ath-ide";
 const USER_POD_PREFIX = "ws-pod-";
@@ -110,8 +111,19 @@ export async function ensureUserPod(userId, options = {}) {
       },
     };
 
-    const jsonStr = JSON.stringify(manifest).replace(/"/g, '\\"');
-    await execAsync(`echo "${jsonStr}" | kubectl apply -f -`);
+    const jsonStr = JSON.stringify(manifest);
+    await new Promise((resolve, reject) => {
+      const applyProc = spawn("kubectl", ["apply", "-f", "-"], {
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      applyProc.on("error", reject);
+      applyProc.on("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`kubectl apply exited with code ${code}`));
+      });
+      applyProc.stdin.end(jsonStr, "utf8");
+    });
 
     logger.info(`Provisioned Kubernetes Pod for user`, { userId, podName, cpuLimit, memLimit });
 
@@ -137,10 +149,11 @@ export async function execInUserPod(userId, command, timeoutMs = 30000) {
   await ensureUserPod(userId);
 
   try {
-    const escapedCmd = command.replace(/"/g, '\\"');
-    const fullCmd = `kubectl exec ${podName} -n ${NAMESPACE} -c workspace-runner -- sh -c "${escapedCmd}"`;
-
-    const { stdout, stderr } = await execAsync(fullCmd, { timeout: timeoutMs });
+    const { stdout, stderr } = await execFileAsync(
+      "kubectl",
+      ["exec", podName, "-n", NAMESPACE, "-c", "workspace-runner", "--", "sh", "-c", command],
+      { timeout: timeoutMs, windowsHide: true }
+    );
     return {
       success: true,
       output: (stdout || stderr || "Command executed successfully.").trim(),
