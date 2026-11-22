@@ -425,6 +425,8 @@ class EditorManager {
     if (!editor || !model || !this.activeTab) { window.app?.logTerminal("Open a file before using Inline Edit.", "warning"); return; }
     if (window.app?.isGenerating) { window.app?.logTerminal("Wait for the current Composer run to finish before starting Inline Edit.", "warning"); return; }
     this.closeInlineEdit();
+    const filePath = this.activeTab;
+    const openedModelVersion = model.getVersionId();
     const selection = editor.getSelection();
     const hasSelection = Boolean(selection && !selection.isEmpty());
     const selectedText = hasSelection ? model.getValueInRange(selection) : "";
@@ -432,7 +434,7 @@ class EditorManager {
     const panel = document.createElement("section");
     panel.className = "ath-inline-edit"; panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "Inline Edit");
     const header = document.createElement("div"); header.className = "ath-inline-edit-header";
-    const title = document.createElement("strong"); title.textContent = "Inline Edit · " + this.activeTab;
+    const title = document.createElement("strong"); title.textContent = "Inline Edit · " + filePath;
     const close = document.createElement("button"); close.type = "button"; close.textContent = "×"; close.setAttribute("aria-label", "Close Inline Edit");
     close.addEventListener("click", () => this.closeInlineEdit()); header.append(title, close);
     const instruction = document.createElement("textarea"); instruction.rows = 2;
@@ -451,16 +453,20 @@ class EditorManager {
     send.addEventListener("click", () => {
       const request = instruction.value.trim();
       if (!request) { status.textContent = "Describe the change first."; instruction.focus(); return; }
+      if (this.activeTab !== filePath || this.monacoEditor?.getModel() !== model || model.getVersionId() !== openedModelVersion) {
+        status.textContent = "The active file or buffer changed while this prompt was open. Close Inline Edit and reopen it.";
+        return;
+      }
       const requestId = "ie_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
-      const cursor = editor.getPosition(), tab = this.openTabs.get(this.activeTab);
-      this.inlineEditRequest = { requestId, filePath: this.activeTab, model, modelVersion: model.getVersionId(), range,
+      const cursor = editor.getPosition(), tab = this.openTabs.get(filePath);
+      this.inlineEditRequest = { requestId, filePath, model, modelVersion: openedModelVersion, range,
         hasSelection, selectedText, instruction: request, output: "", preview, status, accept, openComposer };
       preview.value = ""; preview.readOnly = true; accept.disabled = true; openComposer.disabled = true;
       status.textContent = "Connecting to the focused edit model…";
       window.app?.transitionAgentState?.("planning", { source: "inline-edit" });
       if (!window.wsClient?.isConnected) window.wsClient?.connect(localStorage.getItem("token") || "");
       window.wsClient?.send("inline.edit", {
-        requestId, filePath: this.activeTab, instruction: request, content: model.getValue(), selectedText,
+        requestId, filePath, instruction: request, content: model.getValue(), selectedText,
         expectedVersion: tab?.version || null, language: monaco.editor.getModelLanguage(model),
         selection: hasSelection ? { startLineNumber: range.startLineNumber, startColumn: range.startColumn, endLineNumber: range.endLineNumber, endColumn: range.endColumn } : null,
         cursor: cursor ? { line: cursor.lineNumber, column: cursor.column } : null
@@ -482,7 +488,7 @@ class EditorManager {
 
   acceptInlineEdit() {
     const request = this.inlineEditRequest;
-    if (!request || request.model.isDisposed() || request.model.getVersionId() !== request.modelVersion) {
+    if (!request || request.model.isDisposed() || this.activeTab !== request.filePath || this.monacoEditor?.getModel() !== request.model || request.model.getVersionId() !== request.modelVersion) {
       if (request) request.status.textContent = "The editor changed while the edit was generating. Regenerate against the latest buffer.";
       return;
     }

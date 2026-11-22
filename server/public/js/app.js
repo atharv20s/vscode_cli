@@ -2328,6 +2328,7 @@ class App {
   async sendMessage() {
     if (this.isGenerating) return;
     if (this.agentAwaitingApproval) { this.renderError("Finish accepting or rejecting the current Agent Apply proposal before starting another Composer run."); return; }
+    if (this.activeAgentRunId) { await this.completeAgentRunSnapshot(); if (this.activeAgentRunId) { this.renderError("The previous run snapshot could not be finalized. Retry it before starting another run."); return; } }
     try {
       const composerInput = document.getElementById("composer-input");
       if (!composerInput) return;
