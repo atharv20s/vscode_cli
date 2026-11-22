@@ -17,6 +17,18 @@ const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
 const IGNORED = new Set([".git", "node_modules", ".next", "dist", "build", ".cache"]);
 
+const workspaceGenerations = new Map();
+
+export function getWorkspaceGeneration(workspaceId) {
+  return workspaceGenerations.get(workspaceId) || 0;
+}
+
+export function bumpWorkspaceGeneration(workspaceId) {
+  const next = (workspaceGenerations.get(workspaceId) || 0) + 1;
+  workspaceGenerations.set(workspaceId, next);
+  return next;
+}
+
 export function workspaceRuntimeKey(workspaceId) {
   if (typeof workspaceId !== "string" || !workspaceId.trim()) throw new Error("A stable workspace identity is required.");
   return crypto.createHash("sha256").update(workspaceId).digest("hex");
@@ -67,7 +79,8 @@ export async function collectWorkspaceFiles(root) {
   return files;
 }
 
-export async function applyWorkspaceFiles(root, returnedFiles) {
+export async function applyWorkspaceFiles(root, returnedFiles, options = {}) {
+  const { baselineFiles = null, workspaceId = null, generation = null } = options;
   if (!Array.isArray(returnedFiles) || returnedFiles.length > MAX_FILES) throw new Error("Execution worker returned an invalid workspace snapshot.");
   const next = new Map();
   let total = 0;
@@ -82,9 +95,16 @@ export async function applyWorkspaceFiles(root, returnedFiles) {
     next.set(file.path, bytes);
   }
 
+  const baselineMap = baselineFiles ? new Map(baselineFiles.map(f => [f.path, Buffer.from(f.content, "base64")])) : null;
+
   const previous = await collectWorkspaceFiles(root);
   for (const file of previous) {
     if (next.has(file.path)) continue;
+    // Concurrency fencing: only delete if the file was in baseline sent to worker.
+    // If the file was created locally after the baseline was taken, do NOT delete it!
+    if (baselineMap && !baselineMap.has(file.path)) {
+      continue;
+    }
     const target = await resolveSafeWorkspacePath(root, file.path);
     await fs.promises.rm(target, { force: true });
   }
@@ -95,6 +115,18 @@ export async function applyWorkspaceFiles(root, returnedFiles) {
       throw error;
     });
     if (current?.equals(bytes)) continue;
+
+    // Concurrency fencing: if current local file was modified since baseline was taken,
+    // prevent silent overwrite if it differs from the returned remote snapshot
+    if (baselineMap && current && baselineMap.has(relative)) {
+      const baselineBytes = baselineMap.get(relative);
+      if (!current.equals(baselineBytes) && !current.equals(bytes)) {
+        // Local file was edited concurrently during the remote execution window.
+        // Preserve local version to prevent stale write overwrite.
+        continue;
+      }
+    }
+
     await fs.promises.mkdir(path.dirname(target), { recursive: true });
     const temporary = target + "." + process.pid + "." + crypto.randomBytes(5).toString("hex") + ".tmp";
     try {
@@ -142,8 +174,10 @@ export async function syncWorkspaceOnRemote({ workspaceId, workspaceDir, signal,
 
 export async function pullWorkspaceFromRemote({ workspaceId, workspaceDir, signal }) {
   if (!path.isAbsolute(workspaceDir)) throw new Error("Workspace directory must be absolute.");
+  const currentGen = bumpWorkspaceGeneration(workspaceId);
   const result = await postWorkerJson("/v1/workspace/pull", {
     workspaceId: workspaceRuntimeKey(workspaceId),
+    generation: currentGen,
   }, { timeoutMs: 90000, signal });
   const localFiles = await collectWorkspaceFiles(workspaceDir);
   // A newly provisioned worker may not have received its first snapshot yet.
@@ -152,7 +186,7 @@ export async function pullWorkspaceFromRemote({ workspaceId, workspaceDir, signa
     await syncWorkspaceOnRemote({ workspaceId, workspaceDir, signal });
     return { success: true, files: localFiles.length, initializedRemote: true };
   }
-  await applyWorkspaceFiles(workspaceDir, result.files);
+  await applyWorkspaceFiles(workspaceDir, result.files, { baselineFiles: localFiles, workspaceId, generation: currentGen });
   return { success: true, files: result.files.length };
 }
 
@@ -162,13 +196,14 @@ export async function ensureRemoteWorkspace({ workspaceId, workspaceDir, signal 
 
 export async function executeOnRemoteWorker({ workspaceId, workspaceDir, cwd, command, timeout = 45000, signal }) {
   if (!path.isAbsolute(workspaceDir)) throw new Error("Workspace directory must be absolute.");
+  const currentGen = bumpWorkspaceGeneration(workspaceId);
   const files = await collectWorkspaceFiles(workspaceDir);
   const relativeCwd = path.relative(workspaceDir, cwd || workspaceDir).split(path.sep).join("/") || ".";
   if (relativeCwd === ".." || relativeCwd.startsWith("../") || path.isAbsolute(relativeCwd)) throw new Error("Execution working directory is outside the workspace.");
   const result = await postWorkerJson("/v1/execute", {
-    workspaceId: workspaceRuntimeKey(workspaceId), files, cwd: relativeCwd, command, timeout,
+    workspaceId: workspaceRuntimeKey(workspaceId), files, cwd: relativeCwd, command, timeout, generation: currentGen,
   }, { timeoutMs: timeout + 30000, signal });
-  await applyWorkspaceFiles(workspaceDir, result.files);
+  await applyWorkspaceFiles(workspaceDir, result.files, { baselineFiles: files, workspaceId, generation: currentGen });
   return result.execution;
 }
 

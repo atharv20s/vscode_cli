@@ -104,8 +104,13 @@ export default function Home() {
     try {
       if (!api.getAccessToken()) {
         const guest = await fetch("/api/auth/guest", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-        const auth = await guest.json();
-        if (!guest.ok || !auth.accessToken) throw new Error(auth.message || "Could not initialize guest authentication.");
+        let auth: any = {};
+        try {
+          auth = await guest.json();
+        } catch {
+          throw new Error(`API backend returned status ${guest.status} (non-JSON response). Verify backend server is running.`);
+        }
+        if (!guest.ok || !auth.accessToken) throw new Error(auth.message || `Could not initialize guest authentication (${guest.status}).`);
         api.setTokens(auth.accessToken, auth.refreshToken || "");
       }
 

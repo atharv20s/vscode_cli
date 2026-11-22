@@ -26,6 +26,7 @@ import { pullWorkspaceFromRemote, syncWorkspaceOnRemote } from "../services/remo
 import { createAgentRunSnapshot, completeAgentRunSnapshot, rollbackAgentRunSnapshot } from "../services/agentRunSnapshotService.js";
 import { streamChatCompletion } from "../services/llmService.js";
 import { buildRepositorySymbolIndex, getTreeSitterDiagnostics } from "../services/repoSymbolIndex.js";
+import { sanitizeChildEnv } from "../services/secretSanitizer.js";
 
 const router = Router();
 const execFileAsync = promisify(execFile);
@@ -346,7 +347,7 @@ function runDiagnosticTool(command, args, source, cwd) {
   return new Promise(resolve => {
     let child;
     try {
-      child = spawn(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      child = spawn(command, args, { cwd, env: sanitizeChildEnv({ ...process.env, TERM: "dumb" }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     } catch {
       resolve({ available: false, diagnostics: [] });
       return;

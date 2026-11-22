@@ -83,3 +83,49 @@ export function sanitizeObject(value, depth = 0) {
   }
   return value;
 }
+
+const SENSITIVE_ENV_KEYS = new Set([
+  "DATABASE_URL",
+  "DATABASE_URL_UNPOOLED",
+  "DIRECT_DATABASE_URL",
+  "POSTGRES_URL",
+  "PGPASSWORD",
+  "MYSQL_PWD",
+  "REDIS_URL",
+  "JWT_SECRET",
+  "JWT_REFRESH_SECRET",
+  "WORKER_SHARED_SECRET",
+  "AUTH_SECRET",
+  "SESSION_SECRET",
+  "COOKIE_SECRET",
+  "HASH_SALT",
+  "OPENROUTER_API_KEY",
+  "MISTRAL_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "TAVILY_API_KEY",
+  "GITHUB_TOKEN",
+  "REPO_AGENT_TOKEN_KEY",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "CLOUDFLARE_API_KEY",
+]);
+
+/**
+ * Filter host environment variables to strip sensitive database URLs, authentication secrets,
+ * and API keys before spawning any child process, shell, or background supervisor.
+ *
+ * @param {Record<string, string|undefined>} [baseEnv=process.env]
+ * @returns {Record<string, string|undefined>} Sanitized environment object
+ */
+export function sanitizeChildEnv(baseEnv = process.env) {
+  const sanitized = { ...baseEnv };
+  for (const key of Object.keys(sanitized)) {
+    if (SENSITIVE_ENV_KEYS.has(key) || /(?:SECRET|PASSWORD|PRIVATE_KEY|API_KEY|TOKEN)/i.test(key)) {
+      delete sanitized[key];
+    }
+  }
+  return sanitized;
+}
+

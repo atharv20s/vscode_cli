@@ -25,6 +25,13 @@ import { buildRepositoryContext, formatRepositoryContext } from "./repoContextEn
 import { registerAgentHook, runAgentHooks } from "./agentLifecycleHooks.js";
 import { classifyCommandForPolicy, classifyFileOperationForPolicy } from "./permissionEngine.js";
 import { sanitizeSecrets } from "./secretSanitizer.js";
+import { repoIntelligence } from "./repoIntelligence.js";
+import { TaskMemory } from "./taskMemory.js";
+import { toolScheduler } from "./toolScheduler.js";
+import { evidenceVerifier } from "./evidenceVerifier.js";
+import { progressEvaluator, Recommendation } from "./progressEvaluator.js";
+import { taskController, WorkflowPhases } from "./taskController.js";
+import { SharedTaskState } from "./sharedTaskState.js";
 
 /** Default system prompt */
 const DEFAULT_SYSTEM_PROMPT = `You are ATH Agent, an autonomous software engineering agent operating inside ATH IDE.
@@ -353,6 +360,52 @@ export async function runAgent({
     : allTools;
   let totalTokens = 0;
   let iteration = 0;
+  let mutationCount = 0;
+  let verifiedMutationCount = 0;
+
+  // 1. Task Controller: Classify complexity and determine execution workflow
+  const complexity = taskController.classifyTask(message || "", {
+    openTabsCount: context?.editor?.openFiles?.length || 0,
+  });
+  const executionPhases = taskController.getExecutionPhases(complexity);
+  onEvent?.({
+    type: "task.classified",
+    data: { complexity, phases: executionPhases },
+  });
+
+  // 2. Repo Intelligence: Query indexed AST symbol map and dependency graph
+  let astRepoMap = "";
+  if (workspaceDir) {
+    try {
+      const openFilesList = context?.editor?.openFiles || (context?.editor?.activeFile ? [context.editor.activeFile] : []);
+      const relevantSymbols = repoIntelligence.queryRelevantContext({
+        task: message || "",
+        openFiles: openFilesList,
+        maxFiles: 6,
+      });
+      astRepoMap = repoIntelligence.formatRepoMap(relevantSymbols);
+      if (astRepoMap) {
+        onEvent?.({
+          type: "repository.ast_map",
+          data: { fileCount: relevantSymbols.length },
+        });
+      }
+    } catch (err) {
+      logger.debug("AST repo intelligence query skipped", { error: err.message });
+    }
+  }
+
+  // 3. Durable Task Memory & Shared Multi-Agent State
+  const taskMemory = new TaskMemory({ objective: message || "" });
+  const sharedTaskState = new SharedTaskState({ sessionId, workspaceId });
+  const executedActions = [];
+  const executedErrors = [];
+
+  // Re-inject AST repository map and durable task memory into prompt context
+  if (astRepoMap || taskMemory) {
+    const enrichedMemory = taskMemory.formatPromptMemory();
+    messages[0].content += (astRepoMap ? `\n\n${astRepoMap}` : "") + (enrichedMemory ? `\n\n${enrichedMemory}` : "");
+  }
 
   // Agentic loop
   while (iteration < maxIterations) {
@@ -365,6 +418,21 @@ export async function runAgent({
       type: "turn_start",
       data: { turn: iteration, maxTurns: maxIterations, turnId: currentTurnId },
     });
+
+    // 8. Progress Evaluator: Inspect checkpoints for loops or stagnant errors
+    const turnEvaluation = progressEvaluator.evaluateTurn({
+      turnNumber: iteration,
+      recentActions: executedActions.slice(-4),
+      recentErrors: executedErrors.slice(-4),
+      mutationsCount: mutationCount,
+    });
+    onEvent({ type: "agent.progress", data: turnEvaluation });
+    if (turnEvaluation.recommendation === Recommendation.HALT_LOOP) {
+      messages.push({
+        role: "user",
+        content: "System Directive: An execution loop was detected (identical tool calls repeated with no new information). Stop repeating previous actions and change your strategy.",
+      });
+    }
 
     const toolContext = { workspaceDir, executionWorkspaceDir, workspaceId, workspaceKey: workspaceService?.workspaceKey || null, userId, sessionId, turnId: currentTurnId, signal, workspaceService, allowedTools, onEvent };
 
@@ -477,10 +545,38 @@ export async function runAgent({
           durationMs: Date.now() - verificationStartedAt,
         }, onEvent);
         verifiedMutationCount = mutationCount;
-        const report = verification.success
-          ? "Automatic workspace verification passed. Evidence:\\n" + (verification.output || "All detected checks passed.")
-          : "Automatic workspace verification is incomplete or failed. Do not claim the implementation is verified. Inspect this evidence, repair concrete failures where possible, and call verify_workspace again after changes.\\n" +
+        let report = verification.success
+          ? "Automatic workspace verification passed. Evidence:\n" + (verification.output || "All detected checks passed.")
+          : "Automatic workspace verification is incomplete or failed. Do not claim the implementation is verified. Inspect this evidence, repair concrete failures where possible, and call verify_workspace again after changes.\n" +
             (verification.output || verification.error || "No supported checks were detected.");
+
+        if (!verification.success && verification.output) {
+          const evidenceList = evidenceVerifier.parseTestOutput(verification.output, {
+            changedFiles: Array.from(taskMemory.fileLedger.keys()),
+          });
+          if (evidenceList.length > 0) {
+            report = evidenceVerifier.generateRepairPrompt(evidenceList);
+            evidenceList.forEach(item => {
+              taskMemory.recordTestResult(item.testName, {
+                passed: false,
+                error: item.error,
+              });
+              taskMemory.recordFailure(item.testName, {
+                severity: item.severity,
+                suggestedFix: item.suggestedRepair,
+              });
+            });
+            sharedTaskState.setTestEvidence(userId || "agent", {
+              passed: false,
+              total: evidenceList.length,
+              failures: evidenceList,
+            });
+          }
+        } else if (verification.success) {
+          taskMemory.recordTestResult("workspace_verification", { passed: true });
+          sharedTaskState.setTestEvidence(userId || "agent", { passed: true, total: 1 });
+        }
+
         onEvent({
           type: "verification_result",
           data: { success: verification.success === true, verified: verification.verified === true, output: verification.output || verification.error || "" },
@@ -493,7 +589,7 @@ export async function runAgent({
       break;
     }
 
-    // If we got tool calls → execute them
+    // If we got tool calls → execute them via ToolScheduler
     if (pendingToolCalls.length > 0) {
       // Add assistant message with tool calls
       messages.push({
@@ -509,8 +605,7 @@ export async function runAgent({
         })),
       });
 
-      // Execute each tool
-      for (const tc of pendingToolCalls) {
+      const mappedCalls = pendingToolCalls.map((tc) => {
         let args = {};
         if (typeof tc.arguments === "object" && tc.arguments !== null) {
           args = tc.arguments;
@@ -521,15 +616,19 @@ export async function runAgent({
             args = { raw: tc.arguments };
           }
         }
+        return { id: tc.id, name: tc.name, args, rawArguments: tc.rawArguments || tc.arguments };
+      });
 
+      const executeScheduledTool = async (name, args) => {
+        const tc = mappedCalls.find(c => c.name === name) || { id: `tc_${Date.now()}`, name, args };
         onEvent({
           type: "tool_start",
-          data: { id: tc.id, name: tc.name, args },
+          data: { id: tc.id, name, args },
         });
 
         const toolMetadata = {
           userId, workspaceId, sessionId, turnId: currentTurnId,
-          toolName: tc.name, toolCallId: tc.id,
+          toolName: name, toolCallId: tc.id,
           args,
           argumentKeys: Object.keys(args || {}).slice(0, 40),
           allowedTools: Array.isArray(allowedTools) ? allowedTools : null,
@@ -541,7 +640,7 @@ export async function runAgent({
           result = { success: false, error: toolGate.reason || "Tool blocked by lifecycle policy." };
         } else {
           try {
-            result = await executeTool(tc.name, args, toolContext);
+            result = await executeTool(name, args, toolContext);
           } catch (error) {
             await runLifecycle("on_error", { ...toolMetadata, errorCode: error.code || "TOOL_EXECUTION_FAILED" }, onEvent);
             throw error;
@@ -555,10 +654,17 @@ export async function runAgent({
           success: result?.success === true,
           durationMs: Date.now() - toolStartedAt,
         }, onEvent);
-        if (result.success && ["write_file","edit_file","delete_file"].includes(tc.name)) {
+
+        if (result.success && ["write_file", "edit_file", "delete_file", "propose_changes"].includes(name)) {
           mutationCount++;
+          taskMemory.recordFileMutation(args.path || "workspace_file", { action: name });
+          sharedTaskState.addPatch(userId || "agent", {
+            file: args.path || "workspace_file",
+            diff: args.diff || args.content || "",
+            rationale: `Applied via ${name}`,
+          });
         }
-        if (tc.name === "verify_workspace") {
+        if (name === "verify_workspace") {
           verifiedMutationCount = mutationCount;
         }
 
@@ -566,19 +672,26 @@ export async function runAgent({
           type: "tool_result",
           data: {
             id: tc.id,
-            name: tc.name,
+            name,
             success: result.success,
             output: result.output || result.error,
           },
         });
 
-        // Add tool result to conversation
+        return result;
+      };
+
+      const scheduledResults = await toolScheduler.scheduleAndExecute(mappedCalls, executeScheduledTool);
+
+      for (const res of scheduledResults) {
+        executedActions.push({ name: res.name || "tool", argsHash: res.id });
+        if (!res.success && res.error) {
+          executedErrors.push(String(res.error).slice(0, 120));
+        }
         messages.push({
           role: "tool",
-          tool_call_id: tc.id,
-          content: result.success
-            ? result.output
-            : `Error: ${result.error}`,
+          tool_call_id: res.id,
+          content: res.success ? (res.output || "Success") : `Error: ${res.error}`,
         });
       }
 

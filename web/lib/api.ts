@@ -53,7 +53,7 @@ class ApiClient {
           body: JSON.stringify({ refreshToken: this.refreshToken }),
         });
         if (!response.ok) throw new Error("Session refresh failed. Sign in again.");
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
         if (!data.accessToken || !data.refreshToken) throw new Error("Invalid token refresh response.");
         this.setTokens(data.accessToken, data.refreshToken);
         return data.accessToken as string;

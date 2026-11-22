@@ -84,8 +84,19 @@ class Config:
     @classmethod
     def from_env(cls) -> Config:
         """Create config from environment variables."""
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except ImportError:
+            pass
+
         # Support both OCI_* and REMOTE_* env vars
-        remote_enabled_env = os.getenv("OCI_REMOTE_ENABLED") or os.getenv("REMOTE_SANDBOX_ENABLED") or "false"
+        remote_enabled_env = (
+            os.getenv("REMOTE_ENABLED")
+            or os.getenv("REMOTE_SANDBOX_ENABLED")
+            or os.getenv("OCI_REMOTE_ENABLED")
+            or "false"
+        )
         remote_enabled = remote_enabled_env.lower() in ("true", "1", "yes", "on")
         
         return cls(
@@ -98,12 +109,21 @@ class Config:
             temperature=float(os.getenv("AGENTIC_TEMPERATURE", "0.7")),
             max_iterations=int(os.getenv("AGENTIC_MAX_ITERATIONS", "25")),
             remote_enabled=remote_enabled,
-            remote_host=os.getenv("OCI_HOST") or os.getenv("REMOTE_HOST", ""),
-            remote_user=os.getenv("OCI_USER") or os.getenv("REMOTE_USER", "ubuntu"),
-            remote_key_path=os.getenv("OCI_SSH_KEY_PATH") or os.getenv("REMOTE_KEY_PATH", ""),
-            remote_port=int(os.getenv("OCI_PORT") or os.getenv("REMOTE_PORT", "22")),
-            remote_workspace=os.getenv("OCI_WORKSPACE") or os.getenv("REMOTE_WORKSPACE", "/home/ubuntu/agent-workspace"),
-            remote_docker_container=os.getenv("OCI_DOCKER_CONTAINER") or os.getenv("REMOTE_DOCKER_CONTAINER", ""),
+            remote_host=os.getenv("REMOTE_HOST") or os.getenv("OCI_HOST", ""),
+            remote_user=os.getenv("REMOTE_USER") or os.getenv("OCI_USER", "ubuntu"),
+            remote_key_path=(
+                os.getenv("REMOTE_SSH_KEY_PATH")
+                or os.getenv("REMOTE_KEY_PATH")
+                or os.getenv("OCI_SSH_KEY_PATH")
+                or ""
+            ),
+            remote_port=int(os.getenv("REMOTE_PORT") or os.getenv("OCI_PORT", "22")),
+            remote_workspace=(
+                os.getenv("REMOTE_WORKSPACE")
+                or os.getenv("OCI_WORKSPACE")
+                or "/home/ubuntu/ath-ide/workspace"
+            ),
+            remote_docker_container=os.getenv("REMOTE_DOCKER_CONTAINER") or os.getenv("OCI_DOCKER_CONTAINER", ""),
         )
     
     def to_dict(self) -> dict[str, Any]:
