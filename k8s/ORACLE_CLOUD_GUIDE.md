@@ -15,7 +15,7 @@ This guide walks you through setting up your **100% Free 24/7 Cloud IDE** on an 
      - **OCPUs**: `4`
      - **Memory**: `24 GB` (Marked *Always Free Eligible*)
    - **Networking**: Select your default VCN & subnet (ensure *Assign a public IPv4 address* is checked).
-   - **Save Private Key**: Click **Download Private Key** (`ssh-key-*.key`). Save this on your Windows machine (e.g., `C:\Users\athar\oracle_key.key`).
+   - **Save Private Key**: Click **Download Private Key** (`ssh-key-*.key`). Save this on your machine (e.g., `~/.ssh/oracle_key.key` or `C:\keys\oracle_key.key`).
    - **Boot Volume**: Set size to `200 GB` (100% Free).
 4. Click **Create**.
 
@@ -41,7 +41,7 @@ By default, Oracle Cloud blocks incoming HTTP/HTTPS traffic at the network level
 Open PowerShell on your Windows PC and run:
 ```powershell
 # Set file permissions if needed (replace path with your downloaded key)
-ssh -i "C:\Users\athar\oracle_key.key" ubuntu@YOUR_ORACLE_PUBLIC_IP
+ssh -i "C:\keys\oracle_key.key" ubuntu@YOUR_ORACLE_PUBLIC_IP
 ```
 
 ---
