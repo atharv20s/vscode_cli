@@ -152,9 +152,23 @@ class ProcessSupervisor {
 
       let child;
       try {
+        const sanitizedChildEnv = { ...process.env, TERM: "dumb" };
+        delete sanitizedChildEnv.DATABASE_URL;
+        delete sanitizedChildEnv.DATABASE_URL_UNPOOLED;
+        delete sanitizedChildEnv.DIRECT_DATABASE_URL;
+        delete sanitizedChildEnv.JWT_SECRET;
+        delete sanitizedChildEnv.JWT_REFRESH_SECRET;
+        delete sanitizedChildEnv.OPENROUTER_API_KEY;
+        delete sanitizedChildEnv.MISTRAL_API_KEY;
+        delete sanitizedChildEnv.OPENAI_API_KEY;
+        delete sanitizedChildEnv.ANTHROPIC_API_KEY;
+        delete sanitizedChildEnv.TAVILY_API_KEY;
+        delete sanitizedChildEnv.REPO_AGENT_TOKEN_KEY;
+        delete sanitizedChildEnv.WORKER_SHARED_SECRET;
+
         child = spawn(shellExecutable, shellArgs, {
           cwd,
-          env: { ...process.env, TERM: "dumb" },
+          env: sanitizedChildEnv,
           windowsHide: true,
         });
       } catch (err) {
