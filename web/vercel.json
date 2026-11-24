@@ -4,5 +4,15 @@
   "env": {
     "BACKEND_URL": "https://13.201.213.156.sslip.io",
     "NEXT_PUBLIC_WS_URL": "wss://13.201.213.156.sslip.io/ws"
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://13.201.213.156.sslip.io/api/:path*"
+    },
+    {
+      "source": "/preview/:path*",
+      "destination": "https://13.201.213.156.sslip.io/preview/:path*"
+    }
+  ]
 }
