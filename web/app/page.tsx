@@ -871,9 +871,15 @@ export default function Home() {
   const activeTitle = conversations.find(c => c.id === conversationId)?.title || "New Conversation";
 
   return (
-    <main className="h-screen bg-[#0a0a0a] text-neutral-200 flex flex-col overflow-hidden select-none">
+    <main className="h-screen bg-[#0a0a0a] text-neutral-200 flex flex-col overflow-hidden select-none relative">
+      {/* Single Full-IDE Shadow Background */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 bg-center bg-no-repeat bg-cover opacity-[0.15] z-0"
+        style={{ backgroundImage: "url('/images/shadow-bg.jpg')" }}
+      />
       {/* Top Bar */}
-      <header className="h-11 shrink-0 border-b border-neutral-800/80 flex items-center justify-between px-3 bg-[#111111]">
+      <header className="h-11 shrink-0 border-b border-neutral-800/80 flex items-center justify-between px-3 bg-[#111111]/90 backdrop-blur-sm relative z-10">
         <div className="flex items-center gap-2.5 min-w-0">
           <button onClick={() => setSidebarVisible(v => !v)} className="p-1.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200" title="Toggle Sidebar (Ctrl+B)">
             <PanelLeft size={15} />
@@ -1043,10 +1049,10 @@ export default function Home() {
       )}
 
       {/* Main 3-Pane Body */}
-      <div className="flex-1 min-h-0 flex">
+      <div className="flex-1 min-h-0 flex relative z-10">
         {/* Left Sidebar */}
         {sidebarVisible && (
-          <aside className="w-60 shrink-0 border-r border-neutral-800/80 bg-[#111111] flex flex-col min-h-0">
+          <aside className="w-60 shrink-0 border-r border-neutral-800/80 bg-[#111111]/85 backdrop-blur-sm flex flex-col min-h-0">
             <div className="p-2.5 border-b border-neutral-800/80 space-y-2">
               <button onClick={() => { openConversation(""); promptRef.current?.focus(); }} className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg bg-[#1a1a1c] hover:bg-[#222225] border border-neutral-800 text-xs font-medium text-neutral-200">
                 <span className="flex items-center gap-2"><MessageSquarePlus size={14} />New Conversation</span>
@@ -1177,12 +1183,7 @@ export default function Home() {
         )}
 
         {/* Center Pane: Antigravity Conversation */}
-        <section className="flex-1 min-w-0 flex flex-col bg-[#0a0a0a] relative overflow-hidden">
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 bg-center bg-no-repeat bg-contain opacity-[0.07] transition-opacity"
-            style={{ backgroundImage: "url('/images/shadow-bg.jpg')" }}
-          />
+        <section className="flex-1 min-w-0 flex flex-col bg-[#0a0a0a]/65 relative overflow-hidden">
           <div className="flex-1 overflow-auto px-4 sm:px-6 py-4 space-y-4 select-text relative z-10">
             {messages.map((item, index) => (
               <div key={index} className={item.role === "user" ? "flex justify-end" : "space-y-2"}>
@@ -1310,7 +1311,7 @@ export default function Home() {
 
         {/* Right Pane: Monaco Editor + DiffEditor + Linux Terminal */}
         {editorVisible && (
-          <section className="w-[48%] min-w-[340px] border-l border-neutral-800/80 flex flex-col min-h-0 bg-[#0a0a0a]">
+          <section className="w-[48%] min-w-[340px] border-l border-neutral-800/80 flex flex-col min-h-0 bg-[#0a0a0a]/70">
             {/* Editor Tabs & Actions */}
             <div className="h-10 shrink-0 border-b border-neutral-800/80 flex items-center justify-between px-2.5 bg-[#111111] gap-2">
               <div className="flex items-center gap-1 overflow-x-auto min-w-0">
@@ -1424,17 +1425,10 @@ export default function Home() {
                   />
                 )
               ) : (
-                <div className="h-full flex flex-col items-center justify-center text-neutral-500 gap-3 relative overflow-hidden">
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute inset-0 bg-center bg-no-repeat bg-contain opacity-20"
-                    style={{ backgroundImage: "url('/images/shadow-bg.jpg')" }}
-                  />
-                  <div className="relative z-10 flex flex-col items-center gap-3">
-                    <Code2 size={32} className="text-neutral-400" />
-                    <div className="text-xs text-neutral-400">Open a file from the sidebar or press Ctrl+K to edit</div>
-                    <button onClick={createFile} className="text-xs px-3 py-1.5 bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 rounded-lg border border-neutral-700">New File</button>
-                  </div>
+                <div className="h-full flex flex-col items-center justify-center text-neutral-500 gap-3">
+                  <Code2 size={32} className="text-neutral-400" />
+                  <div className="text-xs text-neutral-400">Open a file from the sidebar or press Ctrl+K to edit</div>
+                  <button onClick={createFile} className="text-xs px-3 py-1.5 bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 rounded-lg border border-neutral-700">New File</button>
                 </div>
               )}
             </div>
@@ -1469,7 +1463,7 @@ export default function Home() {
       </div>
 
       {/* Bottom IDE Status Bar */}
-      <footer className="h-6 shrink-0 border-t border-neutral-800/80 bg-[#111111] px-3 flex items-center justify-between text-[10px] text-neutral-500">
+      <footer className="h-6 shrink-0 border-t border-neutral-800/80 bg-[#111111]/90 backdrop-blur-sm px-3 flex items-center justify-between text-[10px] text-neutral-500 relative z-10">
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1 text-neutral-300"><GitBranch size={11} />{gitBranch}</span>
           <span className="flex items-center gap-1"><span className={"w-1.5 h-1.5 rounded-full " + (apiStatus === "Online" ? "bg-emerald-400" : "bg-amber-400")} />{apiStatus}</span>
