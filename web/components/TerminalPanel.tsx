@@ -5,19 +5,28 @@ import { api } from "@/lib/api";
 
 type TerminalStatus = "Waiting for API" | "Connecting" | "Connected" | "Reconnecting" | "Unavailable";
 
-export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, onPreviewStopped }: {
+export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, onPreviewStopped, onPermissionRequested, onPermissionResolved, onRegisterWsSender }: {
   workspaceId: string;
   apiStatus: string;
   onPreviewReady?: (url: string) => void;
   onPreviewStopped?: () => void;
+  onPermissionRequested?: (req: { permissionId: string; resource: string; action: string; payload: any }) => void;
+  onPermissionResolved?: (res: { permissionId: string; granted: boolean }) => void;
+  onRegisterWsSender?: (sender: (type: string, payload?: Record<string, unknown>) => void) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<TerminalStatus>("Waiting for API");
   const previewReadyRef = useRef(onPreviewReady);
   const previewStoppedRef = useRef(onPreviewStopped);
+  const permissionRequestedRef = useRef(onPermissionRequested);
+  const permissionResolvedRef = useRef(onPermissionResolved);
+  const registerWsSenderRef = useRef(onRegisterWsSender);
 
   useEffect(() => { previewReadyRef.current = onPreviewReady; }, [onPreviewReady]);
   useEffect(() => { previewStoppedRef.current = onPreviewStopped; }, [onPreviewStopped]);
+  useEffect(() => { permissionRequestedRef.current = onPermissionRequested; }, [onPermissionRequested]);
+  useEffect(() => { permissionResolvedRef.current = onPermissionResolved; }, [onPermissionResolved]);
+  useEffect(() => { registerWsSenderRef.current = onRegisterWsSender; }, [onRegisterWsSender]);
 
   useEffect(() => {
     if (!containerRef.current || apiStatus !== "API online") {
@@ -79,6 +88,7 @@ export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, 
       socket.onopen = () => {
         retryDelay = 800;
         setStatus("Connected");
+        registerWsSenderRef.current?.(send);
       };
 
       socket.onmessage = event => {
@@ -100,6 +110,10 @@ export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, 
           if (typeof payload.url === "string") previewReadyRef.current?.(payload.url);
         } else if (packet.type === "preview.stopped") {
           previewStoppedRef.current?.();
+        } else if (packet.type === "permission.requested") {
+          permissionRequestedRef.current?.(payload);
+        } else if (packet.type === "permission.resolved") {
+          permissionResolvedRef.current?.(payload);
         } else if (packet.type === "terminal.exit" || packet.type === "terminal_exit") {
           terminal?.write("\r\n[terminal process exited]\r\n");
           setStatus("Unavailable");

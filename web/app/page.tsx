@@ -63,6 +63,8 @@ export default function Home() {
   const [showInlineEdit, setShowInlineEdit] = useState(false);
   const [inlineEditPrompt, setInlineEditPrompt] = useState("");
   const [inlineEditBusy, setInlineEditBusy] = useState(false);
+  const [pendingPermissions, setPendingPermissions] = useState<Array<{ permissionId: string; resource: string; action: string; payload: any }>>([]);
+  const wsSenderRef = useRef<((type: string, payload?: Record<string, unknown>) => void) | null>(null);
   const editorRef = useRef<any>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const clearPreview = useCallback(() => setPreviewUrl(""), []);
@@ -307,6 +309,14 @@ export default function Home() {
       if (buffer.trim()) handleFrame(buffer);
       await refreshFiles(".");
       setCurrentDir(".");
+      if (activeFile && fileContent === savedContent) {
+        try {
+          const updated = await api.json<any>("/api/workspace/file?path=" + encodeURIComponent(activeFile));
+          setFileContent(updated.content || "");
+          setSavedContent(updated.content || "");
+          setFileVersion(updated.version || null);
+        } catch { /* file may have been deleted or moved */ }
+      }
       await loadConversations(false);
     } catch (error: any) {
       setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, content: item.content + "\n\n" + error.message } : item));
@@ -482,6 +492,25 @@ export default function Home() {
     editorRef.current.getAction("editor.action.quickOutline")?.run();
   };
 
+  const handlePermissionRequested = useCallback((req: { permissionId: string; resource: string; action: string; payload: any }) => {
+    if (!req?.permissionId) return;
+    setPendingPermissions(prev => prev.some(p => p.permissionId === req.permissionId) ? prev : [...prev, req]);
+  }, []);
+
+  const handlePermissionResolved = useCallback((res: { permissionId: string; granted: boolean }) => {
+    if (!res?.permissionId) return;
+    setPendingPermissions(prev => prev.filter(p => p.permissionId !== res.permissionId));
+  }, []);
+
+  const respondPermission = (permissionId: string, granted: boolean) => {
+    wsSenderRef.current?.("permission.resolve", {
+      permissionId,
+      granted,
+      reason: granted ? "Approved by user" : "Denied by user",
+    });
+    setPendingPermissions(prev => prev.filter(p => p.permissionId !== permissionId));
+  };
+
   const dirty = Boolean(activeFile && fileContent !== savedContent);
   const configuredModels = useMemo(() => models.filter(item => item.configured), [models]);
 
@@ -593,7 +622,7 @@ export default function Home() {
               <span className="flex items-center gap-2"><SquareTerminal size={14}/>Interactive terminal</span>
               <span className="text-slate-500">xterm.js · Linux PTY</span>
             </div>
-            <div className="flex-1 min-h-0 p-2"><TerminalPanel workspaceId={workspaceId} apiStatus={apiStatus} onPreviewReady={setPreviewUrl} onPreviewStopped={clearPreview}/></div>
+            <div className="flex-1 min-h-0 p-2"><TerminalPanel workspaceId={workspaceId} apiStatus={apiStatus} onPreviewReady={setPreviewUrl} onPreviewStopped={clearPreview} onPermissionRequested={handlePermissionRequested} onPermissionResolved={handlePermissionResolved} onRegisterWsSender={fn => { wsSenderRef.current = fn; }}/></div>
           </div>}
           {previewUrl && <div className="h-9 shrink-0 border-t border-slate-800 flex items-center px-3 text-xs text-emerald-300">Preview ready: <a className="ml-2 underline" href={previewUrl} target="_blank" rel="noreferrer">{previewUrl}</a></div>}
         </section>
@@ -617,6 +646,14 @@ export default function Home() {
                 <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">{item.role === "user" ? "You" : "ATH Agent"}</div>
                 <div className="whitespace-pre-wrap break-words leading-relaxed text-[13px]">{item.content || (busy && index === messages.length - 1 ? "Thinking…" : "")}</div>
                 {item.activity?.length ? <div className="mt-3 pt-2 border-t border-slate-800 space-y-1">{item.activity.map((line, i) => <div key={i} className="text-[10px] text-slate-500 flex gap-1.5"><Activity size={11}/>{line}</div>)}</div> : null}
+              </div>)}
+              {pendingPermissions.map(req => <div key={req.permissionId} className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-2">
+                <div className="font-semibold text-amber-300 uppercase text-[10px] tracking-wider">Approval Required · {req.resource}.{req.action}</div>
+                <div className="font-mono text-[11px] text-slate-200 bg-slate-950/80 rounded p-2 break-all">{req.payload?.command || req.payload?.path || JSON.stringify(req.payload)}</div>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={() => respondPermission(req.permissionId, true)} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded py-1.5 font-medium">Approve</button>
+                  <button type="button" onClick={() => respondPermission(req.permissionId, false)} className="flex-1 bg-rose-600/80 hover:bg-rose-600 text-white rounded py-1.5 font-medium">Deny</button>
+                </div>
               </div>)}
               <div ref={bottomRef}/>
             </div>
