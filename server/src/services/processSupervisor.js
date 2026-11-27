@@ -16,6 +16,44 @@ import { buildStrictSSHOptions, resolveRemoteWorkspacePath, shellQuote, validate
 import { BoundedOutputCapture } from "./boundedOutputCapture.js";
 import { sanitizeChildEnv } from "./secretSanitizer.js";
 
+export function syncRemoteSandboxDir(direction, localDir, remoteDir, rs) {
+  return new Promise((resolve) => {
+    if (!localDir || !remoteDir || !rs?.host) return resolve();
+    try {
+      const isWindows = process.platform === "win32";
+      const sshBin = isWindows ? "ssh.exe" : "ssh";
+      const tarBin = isWindows ? "tar.exe" : "tar";
+      const sshArgs = buildStrictSSHOptions({ port: rs.port || 22, connectTimeout: 10 });
+      if (rs.keyPath) sshArgs.push("-i", rs.keyPath);
+      const remoteUser = validateSSHUsername(rs.user || "ubuntu");
+      validateSSHHost(rs.host);
+      const target = remoteUser + "@" + rs.host;
+
+      if (direction === "push") {
+        const remoteCmd = `mkdir -p ${shellQuote(remoteDir)} && tar -xf - -C ${shellQuote(remoteDir)}`;
+        const tarProc = spawn(tarBin, ["-cf", "-", "--exclude=node_modules", "--exclude=.git", "-C", localDir, "."], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+        const sshProc = spawn(sshBin, [...sshArgs, target, remoteCmd], { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
+        tarProc.stdout.pipe(sshProc.stdin);
+        const timer = setTimeout(() => { try { tarProc.kill(); sshProc.kill(); } catch {} resolve(); }, 15000);
+        sshProc.on("close", () => { clearTimeout(timer); resolve(); });
+        sshProc.on("error", () => { clearTimeout(timer); resolve(); });
+        tarProc.on("error", () => { clearTimeout(timer); try { sshProc.kill(); } catch {} resolve(); });
+      } else {
+        const remoteCmd = `mkdir -p ${shellQuote(remoteDir)} && tar -cf - --exclude=node_modules --exclude=.git -C ${shellQuote(remoteDir)} .`;
+        const sshProc = spawn(sshBin, [...sshArgs, target, remoteCmd], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+        const tarProc = spawn(tarBin, ["-xf", "-", "-C", localDir], { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
+        sshProc.stdout.pipe(tarProc.stdin);
+        const timer = setTimeout(() => { try { sshProc.kill(); tarProc.kill(); } catch {} resolve(); }, 15000);
+        tarProc.on("close", () => { clearTimeout(timer); resolve(); });
+        tarProc.on("error", () => { clearTimeout(timer); try { sshProc.kill(); } catch {} resolve(); });
+        sshProc.on("error", () => { clearTimeout(timer); try { tarProc.kill(); } catch {} resolve(); });
+      }
+    } catch {
+      resolve();
+    }
+  });
+}
+
 /**
  * Cross-platform process tree killer.
  * Ensures child subprocesses (e.g. Node, Vite, Python) spawned by the shell are killed.
@@ -106,6 +144,7 @@ class ProcessSupervisor {
     const isWindows = process.platform === "win32";
     let shellExecutable = "powershell.exe";
     let shellArgs = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command];
+    let remoteSyncContext = null;
 
     // Check if remote Oracle Cloud (OCI) sandbox execution is enabled
     if (config.remoteSandbox?.enabled && config.remoteSandbox?.host) {
@@ -116,6 +155,9 @@ class ProcessSupervisor {
       const relativeWorkspacePath = cwd && cwd !== config.workspaceRoot ? path.relative(config.workspaceRoot, cwd).replaceAll("\\", "/") : ".";
       if (relativeWorkspacePath.startsWith("../") || relativeWorkspacePath === ".." || path.isAbsolute(relativeWorkspacePath)) throw new Error("Requested working directory is outside the configured workspace.");
       const remoteCwd = resolveRemoteWorkspacePath(remoteBase, relativeWorkspacePath);
+      if (cwd && cwd !== config.workspaceRoot && relativeWorkspacePath !== ".") {
+        remoteSyncContext = { localDir: cwd, remoteDir: remoteCwd, rs };
+      }
       const remoteCommand = "mkdir -p " + shellQuote(remoteCwd) + " && cd " + shellQuote(remoteCwd) + " && " + command;
       let remotePayload;
       if (rs.dockerContainer) {
@@ -145,6 +187,10 @@ class ProcessSupervisor {
     } else {
       shellExecutable = "bash";
       shellArgs = ["-c", command];
+    }
+
+    if (remoteSyncContext) {
+      await syncRemoteSandboxDir("push", remoteSyncContext.localDir, remoteSyncContext.remoteDir, remoteSyncContext.rs);
     }
 
     return new Promise((resolve) => {
@@ -303,11 +349,14 @@ class ProcessSupervisor {
         });
       });
 
-      child.on("close", (code, signal) => {
+      child.on("close", async (code, signal) => {
         if (!isSettled) {
           isSettled = true;
           clearTimeout(timeoutTimer);
           this.activeProcesses.delete(operationId);
+          if (remoteSyncContext) {
+            await syncRemoteSandboxDir("pull", remoteSyncContext.localDir, remoteSyncContext.remoteDir, remoteSyncContext.rs);
+          }
 
           const durationMs = Date.now() - startTime;
           const captured = outputCapture.snapshot();

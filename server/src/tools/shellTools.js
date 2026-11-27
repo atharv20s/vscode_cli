@@ -10,6 +10,7 @@ import { registerTool } from "./index.js";
 import { config } from "../config/env.js";
 import { executionService } from "../services/executionService.js";
 import { permissionEngine } from "../services/permissionEngine.js";
+import { pullWorkspaceFromRemote, syncWorkspaceOnRemote } from "../services/remoteExecutionWorker.js";
 
 export function registerShellTools() {
   registerTool(
@@ -101,6 +102,14 @@ export function registerShellTools() {
       const operationId = `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
       const timeoutMs = Math.min(Math.max((args.timeout_seconds || 60) * 1000, 5000), 300000);
 
+      if (config.executionRuntime === "remote") {
+        await syncWorkspaceOnRemote({
+          workspaceId: workspace.workspaceId || ctx.workspaceId || "default",
+          workspaceDir: baseDir,
+          signal: ctx.signal || null,
+        });
+      }
+
       // 5. Execute via ExecutionService in dedicated AGENT_BACKGROUND mode
       const result = await executionService.execute({
         command: args.command,
@@ -110,11 +119,19 @@ export function registerShellTools() {
         operationId,
         turnId: ctx.turnId || null,
         sessionId: ctx.sessionId || null,
-        workspaceId: ctx.workspaceId || "default",
+        workspaceId: workspace.workspaceId || ctx.workspaceId || "default",
         shell: args.shell || "powershell",
         timeout: timeoutMs,
         signal: ctx.signal || null,
       });
+
+      if (config.executionRuntime === "remote") {
+        await pullWorkspaceFromRemote({
+          workspaceId: workspace.workspaceId || ctx.workspaceId || "default",
+          workspaceDir: baseDir,
+          signal: ctx.signal || null,
+        }).catch(() => {});
+      }
 
       if (result.success) {
         return { success: true, output: result.output, operationId };
