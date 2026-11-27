@@ -165,12 +165,12 @@ export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, 
           fontFamily: 'Consolas, "Cascadia Code", "Fira Code", monospace',
           fontSize: 12,
           theme: {
-            background: "#080c13",
-            foreground: "#dbe4f0",
-            cursor: "#a5b4fc",
-            selectionBackground: "#334155",
-            black: "#0b1220",
-            brightBlack: "#475569",
+            background: "#0a0a0a",
+            foreground: "#e5e5e5",
+            cursor: "#ffffff",
+            selectionBackground: "#262626",
+            black: "#0a0a0a",
+            brightBlack: "#525252",
           },
         });
         fitAddon = new FitAddon();
