@@ -27,7 +27,7 @@ export async function chatStream(req, res) {
   const requestedId = typeof requestedConversationId === "string" ? requestedConversationId.trim() : "";
   let conversation = null;
   if (requestedId) {
-    conversation = getConversationForUser(requestedId, ownerId);
+    conversation = await getConversationForUser(requestedId, ownerId);
     if (!conversation) return res.status(404).json({ error: "NotFound", message: "Conversation not found." });
   }
 
@@ -38,7 +38,7 @@ export async function chatStream(req, res) {
 
   if (!conversation) {
     try {
-      createConversation({
+      await createConversation({
         id: convId,
         sessionId,
         userId: ownerId,
@@ -92,7 +92,7 @@ export async function chatStream(req, res) {
     });
 
     if (Array.isArray(result?.messages) && result.messages.length) {
-      const updated = updateConversationMessagesForUser(convId, result.messages, result.totalTokens || 0, ownerId);
+      const updated = await updateConversationMessagesForUser(convId, result.messages, result.totalTokens || 0, ownerId);
       if (!updated.changes) throw new Error("Conversation ownership changed while the response was running.");
     }
     emit({
