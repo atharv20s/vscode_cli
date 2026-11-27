@@ -78,7 +78,21 @@ export function classifyFileOperationForPolicy(action, filePath = "", options = 
 }
 
 class PermissionEngine {
-  constructor() { this.pendingRequests = new Map(); this.defaultPolicy = "ASK"; }
+  constructor() { this.pendingRequests = new Map(); this.defaultPolicy = "ASK"; this.autoApproveWorkspaces = new Set(); }
+
+  setApproveAll(workspaceId, enabled) {
+    if (!workspaceId) return;
+    if (enabled) {
+      this.autoApproveWorkspaces.add(workspaceId);
+      for (const [id, pending] of Array.from(this.pendingRequests.entries())) {
+        if (pending.workspaceId === workspaceId) {
+          pending.resolve(true, "Approved by Approve All");
+        }
+      }
+    } else {
+      this.autoApproveWorkspaces.delete(workspaceId);
+    }
+  }
 
   async checkPermission({ resource, action, payload = {}, sessionId = null, turnId = null, workspaceId = "default", timeout = 60000 }) {
     const decision = this._evaluatePolicy(resource, action, payload);
@@ -87,6 +101,9 @@ class PermissionEngine {
       return { granted: false, decision: "DENY", reason: `Operation blocked by security policy: ${resource}.${action}` };
     }
     if (decision === "ALLOW") return { granted: true, decision: "ALLOW" };
+    if (this.autoApproveWorkspaces.has(workspaceId)) {
+      return { granted: true, decision: "ALLOW_ALL", reason: "Auto-approved by user (Approve All)" };
+    }
 
     const permissionId = `perm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     eventBus.publish(EVENT_TOPICS.PERMISSION_REQUESTED, { permissionId, resource, action, payload, expiresAt: Date.now() + timeout },
@@ -111,11 +128,14 @@ class PermissionEngine {
     });
   }
 
-  resolvePermission(permissionId, granted, reason = "", workspaceId = null) {
+  resolvePermission(permissionId, granted, reason = "", workspaceId = null, approveAll = false) {
     const pending = this.pendingRequests.get(permissionId);
     if (!pending || pending.workspaceId !== workspaceId) return false;
     pending.resolve(granted, reason);
-    logger.info(`PermissionEngine: Resolved [${permissionId}] -> ${granted ? "GRANTED" : "REJECTED"}`);
+    if (granted && approveAll) {
+      this.setApproveAll(workspaceId, true);
+    }
+    logger.info(`PermissionEngine: Resolved [${permissionId}] -> ${granted ? "GRANTED" : "REJECTED"}${approveAll ? " (Approve All enabled)" : ""}`);
     return true;
   }
 

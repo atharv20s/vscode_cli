@@ -467,6 +467,10 @@ export async function runAgent({
       onEvent: (event) => {
         if (signal?.aborted) return;
         switch (event.type) {
+          case "thinking_delta":
+            onEvent({ type: "thinking_delta", data: event.data });
+            break;
+
           case "text_delta":
             textContent += event.data.content;
             onEvent({ type: "text_delta", data: event.data });

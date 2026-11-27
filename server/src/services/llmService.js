@@ -113,6 +113,8 @@ export async function streamChatCompletion({ messages, tools, model = "coding", 
       if (!chunk.choices?.length) continue;
       if (chunk.choices[0].finish_reason) finishReason = chunk.choices[0].finish_reason;
       const delta = chunk.choices[0].delta || {};
+      const reasoningDelta = delta.reasoning || delta.reasoning_content;
+      if (reasoningDelta) { onEvent({ type: "thinking_delta", data: { content: reasoningDelta } }); }
       if (delta.content) { fullContent += delta.content; onEvent({ type: "text_delta", data: { content: delta.content, text: delta.content } }); }
       for (const call of delta.tool_calls || []) {
         const index = call.index ?? 0;

@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 
 type WorkspaceSession = { id: string; name: string; createdAt: string };
 type FileEntry = { name: string; path: string; isDirectory: boolean; size: number };
-type ChatMessage = { role: "user" | "assistant"; content: string; activity?: string[] };
+type ChatMessage = { role: "user" | "assistant"; content: string; thinking?: string; activity?: string[] };
 type ModelOption = { key: string; name: string; tier: string; provider: string; id: string; configured: boolean; multimodal?: boolean };
 type RepoOption = { full_name: string; name: string; owner: { login: string }; default_branch: string };
 type AgentTask = { id: string; owner: string; repo: string; status: string; pr_url?: string; error?: string };
@@ -64,6 +64,7 @@ export default function Home() {
   const [inlineEditPrompt, setInlineEditPrompt] = useState("");
   const [inlineEditBusy, setInlineEditBusy] = useState(false);
   const [pendingPermissions, setPendingPermissions] = useState<Array<{ permissionId: string; resource: string; action: string; payload: any }>>([]);
+  const [approveAllEnabled, setApproveAllEnabled] = useState(false);
   const wsSenderRef = useRef<((type: string, payload?: Record<string, unknown>) => void) | null>(null);
   const editorRef = useRef<any>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -282,6 +283,9 @@ export default function Home() {
           } else if (event.type === "conversation_updated" && data.conversationId) {
             setConversationId(data.conversationId);
             void loadConversations(false);
+          } else if (event.type === "thinking_delta") {
+            const delta = data.content || data.text || "";
+            setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, thinking: (item.thinking || "") + delta } : item));
           } else if (event.type === "text_delta") {
             const delta = data.content || data.text || "";
             setMessages(prev => prev.map((item, index) => index === prev.length - 1 ? { ...item, content: item.content + delta } : item));
@@ -502,13 +506,26 @@ export default function Home() {
     setPendingPermissions(prev => prev.filter(p => p.permissionId !== res.permissionId));
   }, []);
 
-  const respondPermission = (permissionId: string, granted: boolean) => {
+  const respondPermission = (permissionId: string, granted: boolean, approveAll = false) => {
     wsSenderRef.current?.("permission.resolve", {
       permissionId,
       granted,
-      reason: granted ? "Approved by user" : "Denied by user",
+      approveAll,
+      reason: granted ? (approveAll ? "Approved all by user" : "Approved by user") : "Disapproved by user",
     });
-    setPendingPermissions(prev => prev.filter(p => p.permissionId !== permissionId));
+    if (granted && approveAll) {
+      setApproveAllEnabled(true);
+      setPendingPermissions([]);
+    } else {
+      setPendingPermissions(prev => prev.filter(p => p.permissionId !== permissionId));
+    }
+  };
+
+  const toggleApproveAll = () => {
+    const next = !approveAllEnabled;
+    setApproveAllEnabled(next);
+    wsSenderRef.current?.("permission.approve_all", { enabled: next });
+    if (next) setPendingPermissions([]);
   };
 
   const dirty = Boolean(activeFile && fileContent !== savedContent);
@@ -644,22 +661,35 @@ export default function Home() {
             <div className="flex-1 overflow-auto p-3 space-y-4">
               {messages.map((item, index) => <div key={index} className={"text-sm rounded-lg p-3 " + (item.role === "user" ? "bg-indigo-600/15 border border-indigo-500/20 ml-5" : "bg-slate-900 border border-slate-800 mr-2")}>
                 <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">{item.role === "user" ? "You" : "ATH Agent"}</div>
-                <div className="whitespace-pre-wrap break-words leading-relaxed text-[13px]">{item.content || (busy && index === messages.length - 1 ? "Thinking…" : "")}</div>
+                {item.thinking ? <details open={!item.content && busy && index === messages.length - 1} className="mb-2.5 rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[11px] text-slate-400">
+                  <summary className="cursor-pointer select-none font-medium text-indigo-300/90 hover:text-indigo-200">Thought Process</summary>
+                  <div className="mt-1.5 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-slate-400">{item.thinking}</div>
+                </details> : null}
+                <div className="whitespace-pre-wrap break-words leading-relaxed text-[13px]">{item.content || (busy && index === messages.length - 1 ? (item.thinking ? "Generating response…" : "Thinking…") : "")}</div>
                 {item.activity?.length ? <div className="mt-3 pt-2 border-t border-slate-800 space-y-1">{item.activity.map((line, i) => <div key={i} className="text-[10px] text-slate-500 flex gap-1.5"><Activity size={11}/>{line}</div>)}</div> : null}
               </div>)}
               {pendingPermissions.map(req => <div key={req.permissionId} className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-2">
                 <div className="font-semibold text-amber-300 uppercase text-[10px] tracking-wider">Approval Required · {req.resource}.{req.action}</div>
                 <div className="font-mono text-[11px] text-slate-200 bg-slate-950/80 rounded p-2 break-all">{req.payload?.command || req.payload?.path || JSON.stringify(req.payload)}</div>
-                <div className="flex items-center gap-2">
-                  <button type="button" onClick={() => respondPermission(req.permissionId, true)} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded py-1.5 font-medium">Approve</button>
-                  <button type="button" onClick={() => respondPermission(req.permissionId, false)} className="flex-1 bg-rose-600/80 hover:bg-rose-600 text-white rounded py-1.5 font-medium">Deny</button>
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => respondPermission(req.permissionId, true, false)} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded py-1.5 font-medium">Approve</button>
+                  <button type="button" onClick={() => respondPermission(req.permissionId, false, false)} className="flex-1 bg-rose-600/80 hover:bg-rose-600 text-white rounded py-1.5 font-medium">Disapprove</button>
+                  <button type="button" onClick={() => respondPermission(req.permissionId, true, true)} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded py-1.5 font-medium" title="Auto-approve safe/asked commands for this session">Approve All</button>
                 </div>
               </div>)}
               <div ref={bottomRef}/>
             </div>
             <form onSubmit={sendPrompt} className="p-3 border-t border-slate-800">
               <textarea value={prompt} onChange={event => setPrompt(event.target.value)} placeholder="Ask ATH to inspect, build, debug or modify this workspace…" className="w-full h-24 resize-none bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs outline-none focus:border-indigo-500"/>
-              <div className="flex items-center justify-between mt-2"><span className="text-[10px] text-slate-600">{configuredModels.length} configured models</span><button disabled={busy || !prompt.trim()} className="flex items-center gap-2 px-3 py-2 rounded bg-indigo-600 disabled:opacity-40 text-xs"><Send size={13}/>{busy ? "Working…" : "Send"}</button></div>
+              <div className="flex items-center justify-between mt-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-slate-600">{configuredModels.length} models</span>
+                  <button type="button" onClick={toggleApproveAll} className={"text-[10px] px-2 py-0.5 rounded border " + (approveAllEnabled ? "bg-indigo-600/25 border-indigo-500/40 text-indigo-300" : "border-slate-800 text-slate-500 hover:text-slate-300")} title="Toggle Approve All for this workspace">
+                    Approve All: {approveAllEnabled ? "ON" : "OFF"}
+                  </button>
+                </div>
+                <button disabled={busy || !prompt.trim()} className="flex items-center gap-2 px-3 py-2 rounded bg-indigo-600 disabled:opacity-40 text-xs"><Send size={13}/>{busy ? "Working…" : "Send"}</button>
+              </div>
             </form>
           </> : <>
             <div className="p-3 border-b border-slate-800">

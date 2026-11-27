@@ -342,7 +342,7 @@ async function handleMessage(ws, msg, user) {
     return;
   }
   const ownerOnly = new Set([
-    "abort", "agent.command.stop", "inline.edit", "inline.edit.cancel", "permission.resolve", "permission_resolve",
+    "abort", "agent.command.stop", "inline.edit", "inline.edit.cancel", "permission.resolve", "permission_resolve", "permission.approve_all",
     "bridge.register", "bridge.output", "bridge.completed",
     "preview.start", "preview_start", "preview.stop", "preview_stop",
     "preview.restart", "preview_restart", "terminal.paste", "terminal_resize",
@@ -424,8 +424,12 @@ async function handleMessage(ws, msg, user) {
     case "permission.resolve":
     case "permission_resolve":
       if (payload?.permissionId) {
-        permissionEngine.resolvePermission(payload.permissionId, payload.granted, payload.reason, ws.workspaceId);
+        permissionEngine.resolvePermission(payload.permissionId, payload.granted, payload.reason, ws.workspaceId, Boolean(payload.approveAll));
       }
+      break;
+
+    case "permission.approve_all":
+      permissionEngine.setApproveAll(ws.workspaceId, Boolean(payload?.enabled));
       break;
 
     // Shell Providers Query

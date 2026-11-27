@@ -106,6 +106,17 @@ export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, 
         } else if (packet.type === "terminal.output") {
           const output = payload.text ?? payload.data ?? "";
           if (typeof output === "string" && output) terminal?.write(output);
+        } else if (packet.type === "agent.command.started") {
+          terminal?.write(`\r\n\x1b[36m[ATH Agent] $ ${payload.command || "command"}\x1b[0m\r\n`);
+        } else if (packet.type === "agent.command.output") {
+          const output = payload.text ?? payload.data ?? "";
+          if (typeof output === "string" && output) {
+            terminal?.write(output.replace(/\r?\n/g, "\r\n"));
+          }
+        } else if (packet.type === "agent.command.completed") {
+          terminal?.write(`\r\n\x1b[32m[ATH Agent] ✓ Completed (exit ${payload.exitCode ?? 0})\x1b[0m\r\n`);
+        } else if (packet.type === "agent.command.failed") {
+          terminal?.write(`\r\n\x1b[31m[ATH Agent] ✗ Failed (exit ${payload.exitCode ?? 1})${payload.error ? ": " + payload.error : ""}\x1b[0m\r\n`);
         } else if (packet.type === "preview.ready") {
           if (typeof payload.url === "string") previewReadyRef.current?.(payload.url);
         } else if (packet.type === "preview.stopped") {
