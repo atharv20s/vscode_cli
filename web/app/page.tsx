@@ -193,6 +193,13 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Array<{ file: string; line: number; text: string }>>([]);
   const [searchBusy, setSearchBusy] = useState(false);
+  const [dialogState, setDialogState] = useState<
+    | null
+    | { kind: "new-file" | "new-folder"; title: string; placeholder: string; defaultValue: string }
+    | { kind: "rename"; title: string; entry: FileEntry; defaultValue: string }
+    | { kind: "delete"; title: string; entry: FileEntry }
+  >(null);
+  const [dialogInput, setDialogInput] = useState("");
   const [models, setModels] = useState<ModelOption[]>([]);
   const [model, setModel] = useState("devstral");
   const [conversations, setConversations] = useState<ConversationOption[]>([]);
@@ -428,54 +435,74 @@ export default function Home() {
   }, [activeFile, currentDir, fileContent, fileVersion, refreshFiles]);
 
   const createFile = () => {
-    const name = window.prompt("New relative file path:", "src/index.js");
-    if (!name?.trim()) return;
-    const clean = name.trim();
-    setActiveFile(clean);
-    setOpenTabs(prev => prev.includes(clean) ? prev : [...prev, clean]);
-    setFileContent("");
-    setSavedContent("");
-    setFileVersion(null);
-    setEditorVisible(true);
+    const base = currentDir === "." ? "src/index.js" : currentDir + "/index.js";
+    setDialogInput(base);
+    setDialogState({ kind: "new-file", title: "New File", placeholder: "src/index.js", defaultValue: base });
   };
 
-  const createFolder = async () => {
-    const name = window.prompt("New folder path:", currentDir === "." ? "src" : currentDir + "/new-folder");
-    if (!name?.trim()) return;
-    try {
-      await api.json("/api/workspace/folder", { method: "POST", body: JSON.stringify({ path: name.trim() }) });
-      await refreshFiles(currentDir);
-      setNotice("Folder created.");
-    } catch (error: any) { setNotice(error.message || "Failed to create folder."); }
+  const createFolder = () => {
+    const base = currentDir === "." ? "src" : currentDir + "/new-folder";
+    setDialogInput(base);
+    setDialogState({ kind: "new-folder", title: "New Folder", placeholder: "src/components", defaultValue: base });
   };
 
-  const deleteEntry = async (entry: FileEntry, e: React.MouseEvent) => {
+  const deleteEntry = (entry: FileEntry, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm(`Delete ${entry.path}?`)) return;
-    try {
-      await api.json("/api/workspace/file?path=" + encodeURIComponent(entry.path), { method: "DELETE" });
-      setOpenTabs(prev => prev.filter(t => t !== entry.path));
-      if (activeFile === entry.path) {
-        setActiveFile("");
-        setFileContent("");
-        setSavedContent("");
-      }
-      await refreshFiles(currentDir);
-      setNotice("Deleted " + entry.path);
-    } catch (error: any) { setNotice(error.message || "Failed to delete."); }
+    setDialogState({ kind: "delete", title: `Delete ${entry.name}?`, entry });
   };
 
-  const renameEntry = async (entry: FileEntry, e: React.MouseEvent) => {
+  const renameEntry = (entry: FileEntry, e: React.MouseEvent) => {
     e.stopPropagation();
-    const nextPath = window.prompt("Rename / move to:", entry.path);
-    if (!nextPath?.trim() || nextPath.trim() === entry.path) return;
-    try {
-      await api.json("/api/workspace/move", { method: "POST", body: JSON.stringify({ source: entry.path, destination: nextPath.trim() }) });
-      setOpenTabs(prev => prev.map(t => t === entry.path ? nextPath.trim() : t));
-      if (activeFile === entry.path) setActiveFile(nextPath.trim());
-      await refreshFiles(currentDir);
-      setNotice("Renamed to " + nextPath.trim());
-    } catch (error: any) { setNotice(error.message || "Failed to rename."); }
+    setDialogInput(entry.path);
+    setDialogState({ kind: "rename", title: `Rename ${entry.name}`, entry, defaultValue: entry.path });
+  };
+
+  const submitDialog = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!dialogState) return;
+    const val = dialogInput.trim();
+    if (dialogState.kind === "new-file") {
+      if (!val) return;
+      setActiveFile(val);
+      setOpenTabs(prev => prev.includes(val) ? prev : [...prev, val]);
+      setFileContent("");
+      setSavedContent("");
+      setFileVersion(null);
+      setEditorVisible(true);
+      setDialogState(null);
+    } else if (dialogState.kind === "new-folder") {
+      if (!val) return;
+      try {
+        await api.json("/api/workspace/folder", { method: "POST", body: JSON.stringify({ path: val }) });
+        await refreshFiles(currentDir);
+        setNotice("Folder created.");
+      } catch (error: any) { setNotice(error.message || "Failed to create folder."); }
+      setDialogState(null);
+    } else if (dialogState.kind === "rename") {
+      if (!val || val === dialogState.entry.path) { setDialogState(null); return; }
+      try {
+        await api.json("/api/workspace/move", { method: "POST", body: JSON.stringify({ source: dialogState.entry.path, destination: val }) });
+        setOpenTabs(prev => prev.map(t => t === dialogState.entry.path ? val : t));
+        if (activeFile === dialogState.entry.path) setActiveFile(val);
+        await refreshFiles(currentDir);
+        setNotice("Renamed to " + val);
+      } catch (error: any) { setNotice(error.message || "Failed to rename."); }
+      setDialogState(null);
+    } else if (dialogState.kind === "delete") {
+      const target = dialogState.entry;
+      try {
+        await api.json("/api/workspace/file?path=" + encodeURIComponent(target.path), { method: "DELETE" });
+        setOpenTabs(prev => prev.filter(t => t !== target.path));
+        if (activeFile === target.path) {
+          setActiveFile("");
+          setFileContent("");
+          setSavedContent("");
+        }
+        await refreshFiles(currentDir);
+        setNotice("Deleted " + target.path);
+      } catch (error: any) { setNotice(error.message || "Failed to delete."); }
+      setDialogState(null);
+    }
   };
 
   const runWorkspaceSearch = async (e?: React.FormEvent) => {
@@ -506,6 +533,7 @@ export default function Home() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setShowQuickOpen(false);
+        setDialogState(null);
         return;
       }
       const mod = e.ctrlKey || e.metaKey;
@@ -941,6 +969,37 @@ export default function Home() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Obsidian Action Dialog (New File / New Folder / Rename / Delete) */}
+      {dialogState && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setDialogState(null)}>
+          <form onSubmit={submitDialog} className="w-full max-w-md rounded-xl border border-neutral-800 bg-[#141416] shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
+              <span className="text-xs font-semibold text-neutral-100">{dialogState.title}</span>
+              <button type="button" onClick={() => setDialogState(null)} className="text-neutral-400 hover:text-neutral-200"><X size={14} /></button>
+            </div>
+            <div className="p-4 space-y-4">
+              {dialogState.kind === "delete" ? (
+                <p className="text-xs text-neutral-400">Are you sure you want to permanently delete <span className="font-mono text-neutral-200">{dialogState.entry.path}</span>?</p>
+              ) : (
+                <input
+                  autoFocus
+                  value={dialogInput}
+                  onChange={e => setDialogInput(e.target.value)}
+                  placeholder={dialogState.kind === "rename" ? "" : dialogState.placeholder}
+                  className="w-full bg-[#0a0a0a] border border-neutral-700 focus:border-neutral-500 rounded-lg px-3 py-2 text-xs text-neutral-100 outline-none font-mono"
+                />
+              )}
+              <div className="flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setDialogState(null)} className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs">Cancel</button>
+                <button type="submit" className={"px-3.5 py-1.5 rounded-lg text-xs font-medium " + (dialogState.kind === "delete" ? "bg-rose-600 hover:bg-rose-500 text-white" : "bg-neutral-100 hover:bg-white text-black")}>
+                  {dialogState.kind === "delete" ? "Delete" : "Confirm"}
+                </button>
+              </div>
+            </div>
+          </form>
         </div>
       )}
 
