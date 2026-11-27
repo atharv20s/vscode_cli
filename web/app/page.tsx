@@ -933,8 +933,13 @@ export default function Home() {
         )}
 
         {/* Center Pane: Antigravity Conversation */}
-        <section className="flex-1 min-w-0 flex flex-col bg-[#0a0a0a]">
-          <div className="flex-1 overflow-auto px-4 sm:px-6 py-4 space-y-4 select-text">
+        <section className="flex-1 min-w-0 flex flex-col bg-[#0a0a0a] relative overflow-hidden">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 bg-center bg-no-repeat bg-contain opacity-[0.07] transition-opacity"
+            style={{ backgroundImage: "url('/images/shadow-bg.jpg')" }}
+          />
+          <div className="flex-1 overflow-auto px-4 sm:px-6 py-4 space-y-4 select-text relative z-10">
             {messages.map((item, index) => (
               <div key={index} className={item.role === "user" ? "flex justify-end" : "space-y-2"}>
                 {item.role === "user" ? (
@@ -1169,10 +1174,17 @@ export default function Home() {
                   />
                 )
               ) : (
-                <div className="h-full flex flex-col items-center justify-center text-neutral-600 gap-3">
-                  <Code2 size={32} />
-                  <div className="text-xs">Open a file from the sidebar or press Ctrl+K to edit</div>
-                  <button onClick={createFile} className="text-xs px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded border border-neutral-700">New File</button>
+                <div className="h-full flex flex-col items-center justify-center text-neutral-500 gap-3 relative overflow-hidden">
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-0 bg-center bg-no-repeat bg-contain opacity-20"
+                    style={{ backgroundImage: "url('/images/shadow-bg.jpg')" }}
+                  />
+                  <div className="relative z-10 flex flex-col items-center gap-3">
+                    <Code2 size={32} className="text-neutral-400" />
+                    <div className="text-xs text-neutral-400">Open a file from the sidebar or press Ctrl+K to edit</div>
+                    <button onClick={createFile} className="text-xs px-3 py-1.5 bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 rounded-lg border border-neutral-700">New File</button>
+                  </div>
                 </div>
               )}
             </div>
