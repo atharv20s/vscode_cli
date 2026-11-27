@@ -15,14 +15,19 @@ import {
   FilePlus2,
   Folder,
   FolderGit2,
+  FolderPlus,
+  GitBranch,
   GitCompare,
   ListTree,
   MessageSquarePlus,
   PanelLeft,
   PanelRight,
+  Pencil,
+  Play,
   Plus,
   RefreshCw,
   Save,
+  Search,
   Send,
   Share2,
   Sparkles,
@@ -174,12 +179,20 @@ export default function Home() {
   const [workspaceId, setWorkspaceId] = useState("default");
   const [sessions, setSessions] = useState<WorkspaceSession[]>([]);
   const [files, setFiles] = useState<FileEntry[]>([]);
+  const [allFiles, setAllFiles] = useState<FileEntry[]>([]);
   const [currentDir, setCurrentDir] = useState(".");
   const [activeFile, setActiveFile] = useState("");
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [fileContent, setFileContent] = useState("");
   const [savedContent, setSavedContent] = useState("");
   const [fileVersion, setFileVersion] = useState<string | null>(null);
+  const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
+  const [gitBranch, setGitBranch] = useState("main");
+  const [showQuickOpen, setShowQuickOpen] = useState(false);
+  const [quickOpenQuery, setQuickOpenQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<Array<{ file: string; line: number; text: string }>>([]);
+  const [searchBusy, setSearchBusy] = useState(false);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [model, setModel] = useState("devstral");
   const [conversations, setConversations] = useState<ConversationOption[]>([]);
@@ -192,7 +205,7 @@ export default function Home() {
   const [terminalVisible, setTerminalVisible] = useState(true);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [editorVisible, setEditorVisible] = useState(true);
-  const [sidebarTab, setSidebarTab] = useState<"files" | "chats" | "repos">("files");
+  const [sidebarTab, setSidebarTab] = useState<"files" | "search" | "chats" | "repos">("files");
   const [previewUrl, setPreviewUrl] = useState("");
   const [notice, setNotice] = useState("");
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
@@ -232,8 +245,15 @@ export default function Home() {
   const clearPreview = useCallback(() => setPreviewUrl(""), []);
 
   const refreshFiles = useCallback(async (directory = ".") => {
-    const data = await api.json<{ entries: FileEntry[] }>("/api/workspace/files?path=" + encodeURIComponent(directory));
+    const [data, allData] = await Promise.all([
+      api.json<{ entries: FileEntry[] }>("/api/workspace/files?path=" + encodeURIComponent(directory)),
+      api.json<{ entries: FileEntry[] }>("/api/workspace/files?path=.&recursive=1").catch(() => ({ entries: [] })),
+    ]);
     setFiles(data.entries || []);
+    if (allData.entries?.length) setAllFiles(allData.entries);
+    api.json<{ branch?: string }>("/api/workspace/git/status").then(g => {
+      if (g?.branch) setGitBranch(g.branch);
+    }).catch(() => {});
   }, []);
 
   const loadTasks = useCallback(async () => {
@@ -419,13 +439,87 @@ export default function Home() {
     setEditorVisible(true);
   };
 
-  // Global keyboard shortcuts matching Antigravity
+  const createFolder = async () => {
+    const name = window.prompt("New folder path:", currentDir === "." ? "src" : currentDir + "/new-folder");
+    if (!name?.trim()) return;
+    try {
+      await api.json("/api/workspace/folder", { method: "POST", body: JSON.stringify({ path: name.trim() }) });
+      await refreshFiles(currentDir);
+      setNotice("Folder created.");
+    } catch (error: any) { setNotice(error.message || "Failed to create folder."); }
+  };
+
+  const deleteEntry = async (entry: FileEntry, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(`Delete ${entry.path}?`)) return;
+    try {
+      await api.json("/api/workspace/file?path=" + encodeURIComponent(entry.path), { method: "DELETE" });
+      setOpenTabs(prev => prev.filter(t => t !== entry.path));
+      if (activeFile === entry.path) {
+        setActiveFile("");
+        setFileContent("");
+        setSavedContent("");
+      }
+      await refreshFiles(currentDir);
+      setNotice("Deleted " + entry.path);
+    } catch (error: any) { setNotice(error.message || "Failed to delete."); }
+  };
+
+  const renameEntry = async (entry: FileEntry, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextPath = window.prompt("Rename / move to:", entry.path);
+    if (!nextPath?.trim() || nextPath.trim() === entry.path) return;
+    try {
+      await api.json("/api/workspace/move", { method: "POST", body: JSON.stringify({ source: entry.path, destination: nextPath.trim() }) });
+      setOpenTabs(prev => prev.map(t => t === entry.path ? nextPath.trim() : t));
+      if (activeFile === entry.path) setActiveFile(nextPath.trim());
+      await refreshFiles(currentDir);
+      setNotice("Renamed to " + nextPath.trim());
+    } catch (error: any) { setNotice(error.message || "Failed to rename."); }
+  };
+
+  const runWorkspaceSearch = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!searchQuery.trim() || searchBusy) return;
+    setSearchBusy(true);
+    try {
+      const data = await api.json<{ results: Array<{ file: string; line: number; text: string }> }>("/api/workspace/search?q=" + encodeURIComponent(searchQuery.trim()));
+      setSearchResults(data.results || []);
+    } catch (error: any) { setNotice(error.message || "Search failed."); }
+    finally { setSearchBusy(false); }
+  };
+
+  const runActiveFile = () => {
+    if (!activeFile) return;
+    setTerminalVisible(true);
+    const ext = activeFile.split(".").pop()?.toLowerCase() || "";
+    const cmd =
+      ext === "py" ? `python3 "${activeFile}"\r` :
+      ext === "sh" ? `bash "${activeFile}"\r` :
+      ext === "ts" ? `npx tsx "${activeFile}"\r` :
+      `node "${activeFile}"\r`;
+    wsSenderRef.current?.("terminal_input", { data: cmd });
+  };
+
+  // Global keyboard shortcuts matching Antigravity & VS Code
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setShowQuickOpen(false);
+        return;
+      }
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
       const key = e.key.toLowerCase();
-      if (key === "s") {
+      if (key === "p") {
+        e.preventDefault();
+        setQuickOpenQuery("");
+        setShowQuickOpen(v => !v);
+      } else if (e.shiftKey && key === "f") {
+        e.preventDefault();
+        setSidebarVisible(true);
+        setSidebarTab("search");
+      } else if (key === "s") {
         e.preventDefault();
         void saveFile();
       } else if (key === "k") {
@@ -730,10 +824,17 @@ export default function Home() {
   };
 
   const dirty = Boolean(activeFile && fileContent !== savedContent);
+  const filePool = allFiles.length ? allFiles : files;
   const filteredMentions = useMemo(() => {
     if (mentionQuery === null) return [];
-    return files.filter(f => !f.isDirectory && f.path.toLowerCase().includes(mentionQuery)).slice(0, 8);
-  }, [files, mentionQuery]);
+    return filePool.filter(f => !f.isDirectory && f.path.toLowerCase().includes(mentionQuery)).slice(0, 8);
+  }, [filePool, mentionQuery]);
+  const quickOpenMatches = useMemo(() => {
+    const q = quickOpenQuery.trim().toLowerCase();
+    const list = filePool.filter(f => !f.isDirectory);
+    if (!q) return list.slice(0, 12);
+    return list.filter(f => f.path.toLowerCase().includes(q)).slice(0, 12);
+  }, [filePool, quickOpenQuery]);
   const filteredSlash = useMemo(() => {
     if (slashQuery === null) return [];
     return SLASH_ACTIONS.filter(a => a.cmd.slice(1).includes(slashQuery));
@@ -843,6 +944,45 @@ export default function Home() {
         </div>
       )}
 
+      {/* Quick Open Palette (Ctrl+P) */}
+      {showQuickOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-start justify-center pt-20 p-4" onClick={() => setShowQuickOpen(false)}>
+          <div className="w-full max-w-xl rounded-xl border border-neutral-800 bg-[#141416] shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2.5 px-3.5 py-2.5 border-b border-neutral-800">
+              <Search size={14} className="text-neutral-400" />
+              <input
+                autoFocus
+                value={quickOpenQuery}
+                onChange={e => setQuickOpenQuery(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && quickOpenMatches.length) {
+                    e.preventDefault();
+                    void openFileByPath(quickOpenMatches[0].path);
+                    setShowQuickOpen(false);
+                  }
+                }}
+                placeholder="Go to file by name… (Enter to open, Esc to close)"
+                className="flex-1 bg-transparent text-xs text-neutral-100 placeholder:text-neutral-500 outline-none"
+              />
+              <span className="text-[10px] text-neutral-500">Ctrl+P</span>
+            </div>
+            <div className="max-h-72 overflow-auto p-1.5 space-y-0.5">
+              {quickOpenMatches.map(f => (
+                <button
+                  key={f.path}
+                  onClick={() => { void openFileByPath(f.path); setShowQuickOpen(false); }}
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-neutral-800/80 text-left text-xs text-neutral-200"
+                >
+                  <span className="flex items-center gap-2 truncate"><File size={13} className="text-neutral-400 shrink-0" />{f.name}</span>
+                  <span className="text-[10px] text-neutral-500 truncate ml-3">{f.path}</span>
+                </button>
+              ))}
+              {!quickOpenMatches.length && <div className="text-xs text-neutral-500 p-3 text-center">No matching files</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main 3-Pane Body */}
       <div className="flex-1 min-h-0 flex">
         {/* Left Sidebar */}
@@ -853,8 +993,9 @@ export default function Home() {
                 <span className="flex items-center gap-2"><MessageSquarePlus size={14} />New Conversation</span>
                 <span className="text-[10px] text-neutral-500">Ctrl+L</span>
               </button>
-              <div className="grid grid-cols-3 gap-1 bg-[#0a0a0a] p-0.5 rounded-lg border border-neutral-800/80 text-[11px]">
+              <div className="grid grid-cols-4 gap-1 bg-[#0a0a0a] p-0.5 rounded-lg border border-neutral-800/80 text-[11px]">
                 <button onClick={() => setSidebarTab("files")} className={"py-1 rounded " + (sidebarTab === "files" ? "bg-neutral-800 text-white" : "text-neutral-500 hover:text-neutral-300")}>Files</button>
+                <button onClick={() => setSidebarTab("search")} className={"py-1 rounded " + (sidebarTab === "search" ? "bg-neutral-800 text-white" : "text-neutral-500 hover:text-neutral-300")}>Search</button>
                 <button onClick={() => setSidebarTab("chats")} className={"py-1 rounded " + (sidebarTab === "chats" ? "bg-neutral-800 text-white" : "text-neutral-500 hover:text-neutral-300")}>Chats</button>
                 <button onClick={() => setSidebarTab("repos")} className={"py-1 rounded " + (sidebarTab === "repos" ? "bg-neutral-800 text-white" : "text-neutral-500 hover:text-neutral-300")}>Repos</button>
               </div>
@@ -866,6 +1007,7 @@ export default function Home() {
                   <span className="truncate">{currentDir}</span>
                   <div className="flex items-center gap-1.5">
                     <button onClick={createFile} title="New File" className="hover:text-neutral-200"><FilePlus2 size={13} /></button>
+                    <button onClick={createFolder} title="New Folder" className="hover:text-neutral-200"><FolderPlus size={13} /></button>
                     <button onClick={() => { setCurrentDir("."); refreshFiles("."); }} title="Refresh" className="hover:text-neutral-200"><RefreshCw size={12} /></button>
                   </div>
                 </div>
@@ -876,12 +1018,55 @@ export default function Home() {
                     </button>
                   )}
                   {files.map(entry => (
-                    <button key={entry.path} onClick={() => openFile(entry)} className={"w-full flex items-center gap-2 px-2 py-1.5 rounded text-left " + (activeFile === entry.path ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200")}>
-                      {entry.isDirectory ? <Folder size={13} className="text-neutral-400 shrink-0" /> : <File size={13} className="text-neutral-500 shrink-0" />}
-                      <span className="truncate">{entry.name}</span>
-                    </button>
+                    <div key={entry.path} onClick={() => openFile(entry)} className={"group cursor-pointer w-full flex items-center justify-between gap-1 px-2 py-1.5 rounded text-left " + (activeFile === entry.path ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200")}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        {entry.isDirectory ? <Folder size={13} className="text-neutral-400 shrink-0" /> : <File size={13} className="text-neutral-500 shrink-0" />}
+                        <span className="truncate">{entry.name}</span>
+                      </div>
+                      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 shrink-0 transition-opacity">
+                        <button type="button" onClick={e => renameEntry(entry, e)} className="p-0.5 hover:text-white" title="Rename"><Pencil size={11} /></button>
+                        <button type="button" onClick={e => deleteEntry(entry, e)} className="p-0.5 hover:text-rose-400" title="Delete"><Trash2 size={11} /></button>
+                      </div>
+                    </div>
                   ))}
                   {!files.length && <div className="text-[11px] text-neutral-600 p-2">Empty directory</div>}
+                </div>
+              </div>
+            )}
+
+            {sidebarTab === "search" && (
+              <div className="flex-1 min-h-0 flex flex-col p-2 space-y-2 text-xs">
+                <form onSubmit={runWorkspaceSearch} className="flex items-center gap-1.5">
+                  <input
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Find in files… (Ctrl+Shift+F)"
+                    className="flex-1 bg-[#0a0a0a] border border-neutral-800 rounded px-2.5 py-1.5 text-xs text-neutral-200 outline-none focus:border-neutral-600"
+                  />
+                  <button disabled={searchBusy} className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200"><Search size={13} /></button>
+                </form>
+                <div className="flex-1 overflow-auto space-y-1">
+                  {searchResults.map((hit, idx) => (
+                    <button
+                      key={idx}
+                      onClick={async () => {
+                        await openFileByPath(hit.file);
+                        setTimeout(() => {
+                          editorRef.current?.revealLineInCenter(hit.line);
+                          editorRef.current?.setPosition({ lineNumber: hit.line, column: 1 });
+                          editorRef.current?.focus();
+                        }, 120);
+                      }}
+                      className="w-full text-left p-2 rounded bg-[#0a0a0a] hover:bg-neutral-800/70 border border-neutral-800/70 space-y-0.5"
+                    >
+                      <div className="flex items-center justify-between text-[11px] text-neutral-300 font-medium">
+                        <span className="truncate">{hit.file}</span>
+                        <span className="text-neutral-500 ml-2">:{hit.line}</span>
+                      </div>
+                      <div className="text-[10px] font-mono text-neutral-500 truncate">{hit.text}</div>
+                    </button>
+                  ))}
+                  {!searchResults.length && <div className="text-[11px] text-neutral-600 p-2">{searchBusy ? "Searching…" : "Enter a keyword to search across workspace files."}</div>}
                 </div>
               </div>
             )}
@@ -1102,6 +1287,7 @@ export default function Home() {
                   <button onClick={openGitDiff} className={"flex items-center gap-1 rounded px-2 py-1 text-[11px] " + (diffView && !diffView.isAiEdit ? "bg-neutral-200 text-black" : "hover:bg-neutral-800 text-neutral-400")} title="Git Diff"><GitCompare size={12} /></button>
                   <button onClick={openSymbolOutline} className="p-1.5 hover:bg-neutral-800 rounded text-neutral-400" title="Symbol Outline"><ListTree size={13} /></button>
                 </>}
+                {activeFile && <button onClick={runActiveFile} className="flex items-center gap-1 bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 rounded px-2 py-1 text-[11px]" title="Run active file in Linux Terminal"><Play size={11} />Run</button>}
                 <button disabled={!activeFile || !dirty} onClick={saveFile} className="flex items-center gap-1 bg-neutral-200 text-black disabled:opacity-25 rounded px-2 py-1 text-[11px] font-medium" title="Save (Ctrl+S)"><Save size={11} />Save</button>
                 <button onClick={() => setTerminalVisible(v => !v)} className={"p-1.5 rounded hover:bg-neutral-800 " + (terminalVisible ? "text-neutral-200" : "text-neutral-500")} title="Toggle Terminal (Ctrl+J)"><SquareTerminal size={13} /></button>
               </div>
@@ -1149,7 +1335,12 @@ export default function Home() {
                     beforeMount={defineObsidianTheme}
                     language={languageFor(activeFile)}
                     value={fileContent}
-                    onMount={editor => { editorRef.current = editor; }}
+                    onMount={editor => {
+                      editorRef.current = editor;
+                      editor.onDidChangeCursorPosition((e: any) => {
+                        setCursorPos({ line: e.position.lineNumber, col: e.position.column });
+                      });
+                    }}
                     onChange={v => setFileContent(v || "")}
                     options={{
                       minimap: { enabled: false },
@@ -1217,6 +1408,24 @@ export default function Home() {
           </section>
         )}
       </div>
+
+      {/* Bottom IDE Status Bar */}
+      <footer className="h-6 shrink-0 border-t border-neutral-800/80 bg-[#111111] px-3 flex items-center justify-between text-[10px] text-neutral-500">
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1 text-neutral-300"><GitBranch size={11} />{gitBranch}</span>
+          <span className="flex items-center gap-1"><span className={"w-1.5 h-1.5 rounded-full " + (apiStatus === "Online" ? "bg-emerald-400" : "bg-amber-400")} />{apiStatus}</span>
+          <span>Linux Sandbox</span>
+        </div>
+        <div className="flex items-center gap-3">
+          {activeFile && <>
+            <span>Ln {cursorPos.line}, Col {cursorPos.col}</span>
+            <span className="uppercase">{languageFor(activeFile)}</span>
+            <span>Spaces: 2</span>
+            <span>UTF-8</span>
+          </>}
+          <button onClick={() => { setQuickOpenQuery(""); setShowQuickOpen(true); }} className="hover:text-neutral-200">Quick Open (Ctrl+P)</button>
+        </div>
+      </footer>
     </main>
   );
 }

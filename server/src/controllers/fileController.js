@@ -31,8 +31,25 @@ async function pushRuntimeChanges(workspaceService) {
 export async function listFiles(req, res) {
   const workspaceService = workspaceForRequest(req);
   const dirPath = req.query.path || ".";
+  const recursive = req.query.recursive === "1" || req.query.recursive === "true";
   try {
     await pullRuntimeChanges(workspaceService);
+    if (recursive) {
+      const collected = [];
+      const walk = async (relDir, depth = 0) => {
+        if (depth > 6 || collected.length >= 400) return;
+        const data = await workspaceService.listDirectory(relDir);
+        for (const entry of data.entries || []) {
+          if (entry.name === "node_modules" || entry.name === ".git" || entry.name === ".next") continue;
+          collected.push(entry);
+          if (entry.isDirectory && collected.length < 400) {
+            await walk(entry.path, depth + 1);
+          }
+        }
+      };
+      await walk(dirPath);
+      return res.json({ path: dirPath, entries: collected });
+    }
     const data = await workspaceService.listDirectory(dirPath);
     res.json(data);
   } catch (err) {
