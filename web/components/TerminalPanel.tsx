@@ -160,10 +160,13 @@ export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, 
         if (disposed || !containerRef.current) return;
         terminal = new Terminal({
           cursorBlink: true,
+          cursorStyle: "bar",
+          cursorWidth: 2,
           convertEol: false,
           scrollback: 5000,
-          fontFamily: 'Consolas, "Cascadia Code", "Fira Code", monospace',
+          fontFamily: '"Cascadia Code", "JetBrains Mono", "Fira Code", Consolas, monospace',
           fontSize: 12,
+          lineHeight: 1.35,
           theme: {
             background: "#0a0a0a",
             foreground: "#e5e5e5",

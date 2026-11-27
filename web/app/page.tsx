@@ -62,10 +62,13 @@ const defineObsidianTheme = (monaco: any) => {
     colors: {
       "editor.background": "#0a0a0a",
       "editor.lineHighlightBackground": "#141416",
+      "editorCursor.foreground": "#ffffff",
       "editorLineNumber.foreground": "#404040",
       "editorLineNumber.activeForeground": "#a3a3a3",
       "editorGutter.background": "#0a0a0a",
       "editor.selectionBackground": "#262629",
+      "editorIndentGuide.background1": "#1c1c1e",
+      "editorIndentGuide.activeBackground1": "#3f3f46",
       "editorWidget.background": "#141416",
       "editorWidget.border": "#262626",
     },
@@ -1135,7 +1138,35 @@ export default function Home() {
                 diffView ? (
                   <DiffEditor height="100%" theme="ath-obsidian" beforeMount={defineObsidianTheme} language={languageFor(activeFile)} original={diffView.original} modified={diffView.modified} options={{ renderSideBySide: true, readOnly: true, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false }} />
                 ) : (
-                  <Editor height="100%" theme="ath-obsidian" beforeMount={defineObsidianTheme} language={languageFor(activeFile)} value={fileContent} onMount={editor => { editorRef.current = editor; }} onChange={v => setFileContent(v || "")} options={{ minimap: { enabled: false }, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false, tabSize: 2, padding: { top: 8 } }} />
+                  <Editor
+                    height="100%"
+                    theme="ath-obsidian"
+                    beforeMount={defineObsidianTheme}
+                    language={languageFor(activeFile)}
+                    value={fileContent}
+                    onMount={editor => { editorRef.current = editor; }}
+                    onChange={v => setFileContent(v || "")}
+                    options={{
+                      minimap: { enabled: false },
+                      fontSize: 13,
+                      lineHeight: 20,
+                      fontFamily: '"Cascadia Code", "JetBrains Mono", "Fira Code", Consolas, monospace',
+                      fontLigatures: true,
+                      cursorBlinking: "smooth",
+                      cursorSmoothCaretAnimation: "on",
+                      cursorStyle: "line",
+                      cursorWidth: 2,
+                      smoothScrolling: true,
+                      renderLineHighlight: "all",
+                      bracketPairColorization: { enabled: true },
+                      guides: { bracketPairs: true, indentation: true },
+                      mouseWheelZoom: true,
+                      automaticLayout: true,
+                      scrollBeyondLastLine: false,
+                      tabSize: 2,
+                      padding: { top: 12, bottom: 12 },
+                    }}
+                  />
                 )
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-neutral-600 gap-3">
