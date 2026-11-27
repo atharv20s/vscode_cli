@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Editor from "@monaco-editor/react";
-import { Activity, Bot, ChevronLeft, Code2, File, FilePlus2, Folder, Play, Plus, RefreshCw, Save, Send, SquareTerminal, X } from "lucide-react";
+import Editor, { DiffEditor } from "@monaco-editor/react";
+import { Activity, Bot, Check, ChevronLeft, Code2, Copy, File, FilePlus2, Folder, GitCompare, ListTree, Plus, RefreshCw, Save, Send, Share2, Sparkles, SquareTerminal, Trash2, Users, X } from "lucide-react";
 import TerminalPanel from "@/components/TerminalPanel";
 import { api } from "@/lib/api";
 
@@ -13,6 +13,8 @@ type ModelOption = { key: string; name: string; tier: string; provider: string; 
 type RepoOption = { full_name: string; name: string; owner: { login: string }; default_branch: string };
 type AgentTask = { id: string; owner: string; repo: string; status: string; pr_url?: string; error?: string };
 type ConversationOption = { id: string; title: string; model?: string; messages: string | any[] };
+type ShareLink = { id: string; workspaceId: string; permission: string; expiresAt: string; createdAt?: string };
+type DiffViewState = { title: string; original: string; modified: string; isAiEdit?: boolean } | null;
 
 const languageFor = (file: string) => {
   const ext = file.split(".").pop()?.toLowerCase() || "";
@@ -52,6 +54,16 @@ export default function Home() {
   const [repoPrompt, setRepoPrompt] = useState("");
   const [repoBusy, setRepoBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<"chat" | "tasks">("chat");
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shares, setShares] = useState<ShareLink[]>([]);
+  const [sharePermission, setSharePermission] = useState<"edit" | "view">("edit");
+  const [latestShareUrl, setLatestShareUrl] = useState("");
+  const [shareBusy, setShareBusy] = useState(false);
+  const [diffView, setDiffView] = useState<DiffViewState>(null);
+  const [showInlineEdit, setShowInlineEdit] = useState(false);
+  const [inlineEditPrompt, setInlineEditPrompt] = useState("");
+  const [inlineEditBusy, setInlineEditBusy] = useState(false);
+  const editorRef = useRef<any>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const clearPreview = useCallback(() => setPreviewUrl(""), []);
 
@@ -175,6 +187,8 @@ export default function Home() {
     setFileContent("");
     setSavedContent("");
     setFileVersion(null);
+    setDiffView(null);
+    setShowInlineEdit(false);
     await refreshFiles(".");
   };
 
@@ -203,6 +217,8 @@ export default function Home() {
       setFileContent(data.content || "");
       setSavedContent(data.content || "");
       setFileVersion(data.version || null);
+      setDiffView(null);
+      setShowInlineEdit(false);
     } catch (error: any) { setNotice(error.message); }
   };
 
@@ -312,6 +328,160 @@ export default function Home() {
     finally { setRepoBusy(false); }
   };
 
+  const loadShares = useCallback(async () => {
+    try {
+      const data = await api.json<{ shares: ShareLink[] }>("/api/workspace/collaboration/shares?workspaceId=" + encodeURIComponent(workspaceId));
+      setShares(data.shares || []);
+    } catch (error: any) {
+      setNotice(error.message || "Could not load share links.");
+    }
+  }, [workspaceId]);
+
+  const openShareModal = async () => {
+    setShowShareModal(true);
+    setLatestShareUrl("");
+    await loadShares();
+  };
+
+  const createShareLink = async () => {
+    if (shareBusy) return;
+    setShareBusy(true);
+    try {
+      const data = await api.json<{ share: ShareLink; url: string }>("/api/workspace/collaboration/shares", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, permission: sharePermission, expiresInHours: 168 }),
+      });
+      let shareUrl = data.url;
+      try {
+        const parsed = new URL(data.url);
+        if (parsed.hash && typeof window !== "undefined") {
+          shareUrl = window.location.origin + "/" + parsed.hash;
+        }
+      } catch { /* fallback to backend url */ }
+      setLatestShareUrl(shareUrl);
+      await loadShares();
+      setNotice("Share link created (" + sharePermission + " access).");
+    } catch (error: any) {
+      setNotice(error.message || "Failed to create share link.");
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const revokeShareLink = async (shareId: string) => {
+    try {
+      await api.json("/api/workspace/collaboration/shares/" + encodeURIComponent(shareId), { method: "DELETE" });
+      setShares(prev => prev.filter(item => item.id !== shareId));
+      setNotice("Share link revoked.");
+    } catch (error: any) {
+      setNotice(error.message || "Failed to revoke share link.");
+    }
+  };
+
+  const openGitDiff = async () => {
+    if (!activeFile) return;
+    if (diffView && !diffView.isAiEdit) {
+      setDiffView(null);
+      return;
+    }
+    try {
+      const data = await api.json<{ file: string; original: string; modified: string; isNew?: boolean }>("/api/workspace/git/diff?file=" + encodeURIComponent(activeFile));
+      setDiffView({
+        title: (data.isNew ? "New file: " : "Git HEAD vs Working: ") + data.file,
+        original: data.original || "",
+        modified: fileContent,
+        isAiEdit: false,
+      });
+    } catch (error: any) {
+      setNotice(error.message || "Git diff unavailable for this workspace.");
+    }
+  };
+
+  const runInlineAiEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!activeFile || !inlineEditPrompt.trim() || inlineEditBusy) return;
+    setInlineEditBusy(true);
+    try {
+      const instruction = [
+        `Edit the file "${activeFile}" according to this instruction: ${inlineEditPrompt.trim()}`,
+        "Return ONLY the complete updated file contents inside a single code block, with no extra explanation before or after.",
+        "",
+        "Current file contents:",
+        "```" + languageFor(activeFile),
+        fileContent,
+        "```",
+      ].join("\n");
+
+      const response = await api.fetchWithAuth("/api/agent/chat", {
+        method: "POST",
+        body: JSON.stringify({ message: instruction, model }),
+      });
+      if (!response.ok || !response.body) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.message || "Inline AI edit failed (" + response.status + ")");
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let resultText = "";
+      const parseFrame = (frame: string) => {
+        for (const line of frame.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const text = line.slice(5).trim();
+          if (!text || text === "[DONE]") continue;
+          try {
+            const evt = JSON.parse(text);
+            if (evt.type === "text_delta") resultText += (evt.data?.content || evt.data?.text || "");
+            else if (evt.type === "text_complete" && evt.data?.content) resultText = evt.data.content;
+            else if (evt.type === "error") throw new Error(evt.data?.message || "Inline edit error");
+          } catch (err: any) {
+            if (err?.message && err.message !== "Unexpected end of JSON input") throw err;
+          }
+        }
+      };
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() || "";
+        frames.forEach(parseFrame);
+      }
+      if (buffer.trim()) parseFrame(buffer);
+
+      let proposed = resultText.trim();
+      const fenceMatch = proposed.match(/^```[a-zA-Z0-9_-]*\r?\n([\s\S]*?)\r?\n```$/);
+      if (fenceMatch) proposed = fenceMatch[1];
+      if (!proposed) throw new Error("AI returned an empty edit.");
+
+      setDiffView({
+        title: "AI Edit Preview: " + activeFile,
+        original: fileContent,
+        modified: proposed,
+        isAiEdit: true,
+      });
+      setShowInlineEdit(false);
+      setInlineEditPrompt("");
+    } catch (error: any) {
+      setNotice(error.message || "Inline AI edit failed.");
+    } finally {
+      setInlineEditBusy(false);
+    }
+  };
+
+  const acceptDiffEdit = () => {
+    if (!diffView?.isAiEdit) return;
+    setFileContent(diffView.modified);
+    setDiffView(null);
+    setNotice("AI edit applied to editor. Click Save to persist.");
+  };
+
+  const openSymbolOutline = () => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    editorRef.current.getAction("editor.action.quickOutline")?.run();
+  };
+
   const dirty = Boolean(activeFile && fileContent !== savedContent);
   const configuredModels = useMemo(() => models.filter(item => item.configured), [models]);
 
@@ -329,10 +499,47 @@ export default function Home() {
             {sessions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
           </select>
           <button className="p-2 rounded hover:bg-slate-800" title="Create workspace" onClick={() => setShowCreateWorkspace(value => !value)}><Plus size={16}/></button>
+          <button className="flex items-center gap-1.5 bg-indigo-600/20 hover:bg-indigo-600/35 text-indigo-300 border border-indigo-500/30 rounded px-2.5 py-1.5" title="Share workspace" onClick={openShareModal}><Share2 size={14}/><span>Share</span></button>
         </div>
       </header>
 
       {showCreateWorkspace && <div className="px-4 py-2 border-b border-slate-800 flex gap-2 bg-slate-900"><input className="bg-slate-950 border border-slate-700 rounded px-3 py-1 text-sm" placeholder="Workspace name" value={workspaceName} onChange={event => setWorkspaceName(event.target.value)}/><button className="bg-indigo-600 rounded px-3 text-sm" onClick={createWorkspace}>Create</button><button className="text-slate-400" onClick={() => setShowCreateWorkspace(false)}><X size={16}/></button></div>}
+      {showShareModal && <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+        <div className="w-full max-w-lg rounded-xl border border-slate-800 bg-[#0d1422] shadow-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-semibold"><Users size={16} className="text-indigo-400"/>Share Workspace</div>
+            <button onClick={() => setShowShareModal(false)} className="text-slate-400 hover:text-slate-200"><X size={16}/></button>
+          </div>
+          <div className="p-4 space-y-4 text-xs">
+            <div className="flex items-center gap-2">
+              <select value={sharePermission} onChange={event => setSharePermission(event.target.value as "edit" | "view")} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs">
+                <option value="edit">Can edit files &amp; terminal</option>
+                <option value="view">View only</option>
+              </select>
+              <button onClick={createShareLink} disabled={shareBusy} className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded px-3 py-2 font-medium text-white">
+                {shareBusy ? "Creating link…" : "Create Share Link"}
+              </button>
+            </div>
+            {latestShareUrl && <div className="p-2.5 rounded bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-2">
+              <input readOnly value={latestShareUrl} className="flex-1 bg-transparent text-emerald-200 outline-none text-[11px]" />
+              <button onClick={() => { navigator.clipboard?.writeText(latestShareUrl); setNotice("Share URL copied to clipboard."); }} className="flex items-center gap-1 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 px-2 py-1 rounded"><Copy size={12}/>Copy</button>
+            </div>}
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Active Share Links ({shares.length})</div>
+              <div className="max-h-44 overflow-auto space-y-1.5">
+                {shares.map(item => <div key={item.id} className="flex items-center justify-between px-3 py-2 rounded bg-slate-900 border border-slate-800">
+                  <div>
+                    <span className="font-medium text-slate-200">{item.permission.toUpperCase()}</span>
+                    <span className="ml-2 text-slate-500">Expires {new Date(item.expiresAt).toLocaleDateString()}</span>
+                  </div>
+                  <button onClick={() => revokeShareLink(item.id)} className="text-rose-400 hover:text-rose-300 flex items-center gap-1" title="Revoke link"><Trash2 size={13}/>Revoke</button>
+                </div>)}
+                {!shares.length && <div className="text-slate-500 py-2">No active share links for this workspace.</div>}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>}
       {notice && <button onClick={() => setNotice("")} className="text-left text-xs px-4 py-2 bg-amber-500/10 text-amber-300 border-b border-amber-900/50">{notice}<span className="float-right">dismiss</span></button>}
 
       <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[230px_minmax(0,1fr)_390px]">
@@ -351,17 +558,40 @@ export default function Home() {
 
         <section className="min-w-0 min-h-0 flex flex-col">
           <div className="h-10 shrink-0 border-b border-slate-800 flex items-center justify-between px-3 bg-[#0b111d]">
-            <div className="text-xs text-slate-400 flex items-center gap-2"><File size={14}/>{activeFile || "No file open"}{dirty ? <span className="text-amber-300">● unsaved</span> : null}</div>
-            <div className="flex items-center gap-2"><button disabled={!activeFile || !dirty} onClick={saveFile} className="flex items-center gap-1.5 bg-indigo-600 disabled:opacity-30 rounded px-2.5 py-1 text-xs"><Save size={13}/>Save</button><button onClick={() => setTerminalVisible(value => !value)} className="p-1.5 hover:bg-slate-800 rounded" title="Toggle terminal"><SquareTerminal size={15}/></button></div>
+            <div className="text-xs text-slate-400 flex items-center gap-2 truncate"><File size={14}/>{activeFile || "No file open"}{dirty ? <span className="text-amber-300">● unsaved</span> : null}</div>
+            <div className="flex items-center gap-1.5">
+              {activeFile && <>
+                <button onClick={() => setShowInlineEdit(v => !v)} className={"flex items-center gap-1 rounded px-2 py-1 text-xs " + (showInlineEdit ? "bg-indigo-600 text-white" : "bg-slate-800/80 hover:bg-slate-800 text-indigo-300")} title="Inline AI Edit"><Sparkles size={13}/>AI Edit</button>
+                <button onClick={openGitDiff} className={"flex items-center gap-1 rounded px-2 py-1 text-xs " + (diffView && !diffView.isAiEdit ? "bg-indigo-600 text-white" : "hover:bg-slate-800 text-slate-300")} title="Compare with Git HEAD"><GitCompare size={13}/>Diff</button>
+                <button onClick={openSymbolOutline} className="p-1.5 hover:bg-slate-800 rounded text-slate-300" title="Symbol Outline"><ListTree size={14}/></button>
+              </>}
+              <button disabled={!activeFile || !dirty} onClick={saveFile} className="flex items-center gap-1.5 bg-indigo-600 disabled:opacity-30 rounded px-2.5 py-1 text-xs"><Save size={13}/>Save</button>
+              <button onClick={() => setTerminalVisible(value => !value)} className="p-1.5 hover:bg-slate-800 rounded" title="Toggle terminal"><SquareTerminal size={15}/></button>
+            </div>
           </div>
+          {showInlineEdit && activeFile && <form onSubmit={runInlineAiEdit} className="px-3 py-2 border-b border-slate-800 bg-slate-900/90 flex items-center gap-2">
+            <Sparkles size={14} className="text-indigo-400 shrink-0"/>
+            <input value={inlineEditPrompt} onChange={e => setInlineEditPrompt(e.target.value)} placeholder={`Describe how AI should edit ${activeFile}…`} className="flex-1 bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500" autoFocus/>
+            <button disabled={inlineEditBusy || !inlineEditPrompt.trim()} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded px-3 py-1.5 text-xs text-white">{inlineEditBusy ? "Generating…" : "Preview Edit"}</button>
+            <button type="button" onClick={() => setShowInlineEdit(false)} className="text-slate-400 hover:text-slate-200 p-1"><X size={14}/></button>
+          </form>}
+          {diffView && <div className="px-3 py-1.5 border-b border-slate-800 bg-indigo-950/40 flex items-center justify-between text-xs">
+            <span className="text-indigo-200 font-medium truncate">{diffView.title}</span>
+            <div className="flex items-center gap-2">
+              {diffView.isAiEdit && <button onClick={acceptDiffEdit} className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded"><Check size={13}/>Accept Edit</button>}
+              <button onClick={() => setDiffView(null)} className="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded"><X size={13}/>Close Diff</button>
+            </div>
+          </div>}
           <div className="flex-1 min-h-0">
-            {activeFile ? <Editor height="100%" theme="vs-dark" language={languageFor(activeFile)} value={fileContent} onChange={value => setFileContent(value || "")} options={{ minimap: { enabled: false }, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false, tabSize: 2 }} /> :
+            {activeFile ? (diffView ?
+              <DiffEditor height="100%" theme="vs-dark" language={languageFor(activeFile)} original={diffView.original} modified={diffView.modified} options={{ renderSideBySide: true, readOnly: true, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false }} /> :
+              <Editor height="100%" theme="vs-dark" language={languageFor(activeFile)} value={fileContent} onMount={editor => { editorRef.current = editor; }} onChange={value => setFileContent(value || "")} options={{ minimap: { enabled: false }, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false, tabSize: 2 }} />) :
               <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3"><Code2 size={38}/><div className="text-sm">Open a file or create a new one</div><button onClick={createFile} className="text-xs px-3 py-2 bg-indigo-600 text-white rounded">Create file</button></div>}
           </div>
           {terminalVisible && <div className="h-60 shrink-0 border-t border-slate-800 bg-[#080c13] flex flex-col">
             <div className="h-9 flex items-center justify-between px-3 border-b border-slate-800 text-[11px] text-slate-400 uppercase">
               <span className="flex items-center gap-2"><SquareTerminal size={14}/>Interactive terminal</span>
-              <span className="text-slate-500">xterm.js · workspace PTY</span>
+              <span className="text-slate-500">xterm.js · Linux PTY</span>
             </div>
             <div className="flex-1 min-h-0 p-2"><TerminalPanel workspaceId={workspaceId} apiStatus={apiStatus} onPreviewReady={setPreviewUrl} onPreviewStopped={clearPreview}/></div>
           </div>}

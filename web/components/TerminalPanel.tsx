@@ -68,7 +68,9 @@ export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, 
       url.searchParams.set("terminalSessionId", terminalSessionId as string);
 
       try {
-        socket = new WebSocket(url.toString(), ["ath-auth", token]);
+        const shareToken = api.getShareToken();
+        const protocols = shareToken ? ["ath-auth", token, "ath-share." + shareToken] : ["ath-auth", token];
+        socket = new WebSocket(url.toString(), protocols);
       } catch {
         scheduleReconnect();
         return;

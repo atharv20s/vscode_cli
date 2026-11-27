@@ -7,12 +7,20 @@ class ApiClient {
   private refreshToken: string | null = null;
   private refreshPromise: Promise<string> | null = null;
   private workspaceId = "default";
+  private shareToken: string | null = null;
 
   constructor() {
     if (typeof window !== "undefined") {
       this.accessToken = localStorage.getItem("ath_access_token");
       this.refreshToken = localStorage.getItem("ath_refresh_token");
       this.workspaceId = localStorage.getItem("ath_workspace_id") || "default";
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const queryParams = new URLSearchParams(window.location.search);
+      const token = hashParams.get("workspace-share") || queryParams.get("workspace-share") || sessionStorage.getItem("ath_share_token");
+      if (token) {
+        this.shareToken = token;
+        sessionStorage.setItem("ath_share_token", token);
+      }
     }
   }
 
@@ -43,6 +51,13 @@ class ApiClient {
 
   getWorkspaceId() { return this.workspaceId; }
 
+  getShareToken() { return this.shareToken; }
+
+  clearShareToken() {
+    this.shareToken = null;
+    if (typeof window !== "undefined") sessionStorage.removeItem("ath_share_token");
+  }
+
   private async refreshAccessToken(): Promise<string> {
     if (!this.refreshToken) throw new Error("Session expired. Sign in again.");
     if (!this.refreshPromise) {
@@ -67,6 +82,7 @@ class ApiClient {
       const headers = new Headers(options.headers || {});
       if (token && !headers.has("Authorization")) headers.set("Authorization", "Bearer " + token);
       if (this.workspaceId && !headers.has("X-Workspace-Id")) headers.set("X-Workspace-Id", this.workspaceId);
+      if (this.shareToken && !headers.has("X-ATH-Share-Token")) headers.set("X-ATH-Share-Token", this.shareToken);
       if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
       }
