@@ -6,6 +6,7 @@ import {
   Activity,
   Bot,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Code2,
@@ -52,6 +53,107 @@ const SLASH_ACTIONS = [
   { cmd: "/refactor", label: "Refactor cleanly", insert: "Refactor for readability and performance: " },
   { cmd: "/clear", label: "Start a fresh conversation", insert: "__CLEAR__" },
 ];
+
+const defineObsidianTheme = (monaco: any) => {
+  monaco.editor.defineTheme("ath-obsidian", {
+    base: "vs-dark",
+    inherit: true,
+    rules: [],
+    colors: {
+      "editor.background": "#0a0a0a",
+      "editor.lineHighlightBackground": "#141416",
+      "editorLineNumber.foreground": "#404040",
+      "editorLineNumber.activeForeground": "#a3a3a3",
+      "editorGutter.background": "#0a0a0a",
+      "editor.selectionBackground": "#262629",
+      "editorWidget.background": "#141416",
+      "editorWidget.border": "#262626",
+    },
+  });
+};
+
+type DropdownOption = { value: string; label: string; sublabel?: string; disabled?: boolean };
+
+function DarkDropdown({
+  value,
+  options,
+  onChange,
+  placeholder = "Select…",
+  align = "left",
+  direction = "down",
+  className = "",
+}: {
+  value: string;
+  options: DropdownOption[];
+  onChange: (value: string) => void;
+  placeholder?: string;
+  align?: "left" | "right";
+  direction?: "down" | "up";
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const current = options.find(o => o.value === value);
+
+  return (
+    <div ref={ref} className={"relative inline-block " + className}>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between gap-2 bg-[#161618] hover:bg-[#1e1e22] border border-neutral-800/90 hover:border-neutral-700 rounded-lg px-2.5 py-1 text-[11px] text-neutral-200 transition-colors outline-none"
+      >
+        <span className="truncate">{current?.label || placeholder}</span>
+        <ChevronDown size={12} className={"text-neutral-500 shrink-0 transition-transform " + (open ? "rotate-180" : "")} />
+      </button>
+      {open && (
+        <div
+          className={
+            "absolute z-50 min-w-[180px] max-h-60 overflow-auto rounded-xl border border-neutral-800 bg-[#141416]/95 backdrop-blur-md shadow-2xl p-1 " +
+            (align === "right" ? "right-0 " : "left-0 ") +
+            (direction === "up" ? "bottom-full mb-1.5" : "top-full mt-1.5")
+          }
+        >
+          {options.map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              disabled={opt.disabled}
+              onClick={() => {
+                if (opt.disabled) return;
+                onChange(opt.value);
+                setOpen(false);
+              }}
+              className={
+                "w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-left text-[11px] transition-colors " +
+                (opt.disabled
+                  ? "text-neutral-600 cursor-not-allowed"
+                  : opt.value === value
+                    ? "bg-neutral-800 text-white"
+                    : "text-neutral-300 hover:bg-neutral-800/70 hover:text-white")
+              }
+            >
+              <div className="min-w-0">
+                <div className="truncate font-medium">{opt.label}</div>
+                {opt.sublabel && <div className="text-[10px] text-neutral-500 truncate">{opt.sublabel}</div>}
+              </div>
+              {opt.value === value && <Check size={12} className="text-neutral-200 shrink-0" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const languageFor = (file: string) => {
   const ext = file.split(".").pop()?.toLowerCase() || "";
@@ -657,9 +759,13 @@ export default function Home() {
             <span className={"w-1.5 h-1.5 rounded-full " + (apiStatus === "Online" ? "bg-emerald-400" : "bg-amber-400")} />
             {apiStatus}
           </span>
-          <select className="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-[11px] text-neutral-300 max-w-36 outline-none" value={workspaceId} onChange={e => changeWorkspace(e.target.value)}>
-            {sessions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
+          <DarkDropdown
+            value={workspaceId}
+            onChange={val => changeWorkspace(val)}
+            options={sessions.map(item => ({ value: item.id, label: item.name }))}
+            align="right"
+            className="w-36"
+          />
           <button onClick={() => setShowCreateWorkspace(v => !v)} className="p-1.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200" title="New Workspace"><Plus size={14} /></button>
           <button onClick={openShareModal} className="flex items-center gap-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 rounded px-2.5 py-1 text-[11px]" title="Share Workspace">
             <Share2 size={12} /><span>Share</span>
@@ -695,10 +801,15 @@ export default function Home() {
             </div>
             <div className="p-4 space-y-4 text-xs">
               <div className="flex items-center gap-2">
-                <select value={sharePermission} onChange={e => setSharePermission(e.target.value as "edit" | "view")} className="bg-[#0a0a0a] border border-neutral-700 rounded px-3 py-2 text-xs text-neutral-200">
-                  <option value="edit">Can edit files &amp; terminal</option>
-                  <option value="view">View only</option>
-                </select>
+                <DarkDropdown
+                  value={sharePermission}
+                  onChange={val => setSharePermission(val as "edit" | "view")}
+                  options={[
+                    { value: "edit", label: "Can edit files & terminal" },
+                    { value: "view", label: "View only" },
+                  ]}
+                  className="w-48"
+                />
                 <button onClick={createShareLink} disabled={shareBusy} className="flex-1 bg-neutral-100 hover:bg-white disabled:opacity-40 text-black font-medium rounded px-3 py-2">
                   {shareBusy ? "Creating…" : "Create Share Link"}
                 </button>
@@ -787,10 +898,13 @@ export default function Home() {
               <div className="flex-1 min-h-0 flex flex-col p-2.5 space-y-2 text-xs overflow-auto">
                 <div className="text-[10px] text-neutral-500 flex items-center gap-1.5"><FolderGit2 size={12} />{workerStatus}</div>
                 <form onSubmit={createRepoTask} className="space-y-2">
-                  <select value={selectedRepo} onChange={e => setSelectedRepo(e.target.value)} className="w-full bg-[#0a0a0a] border border-neutral-800 rounded p-1.5 text-xs text-neutral-200">
-                    <option value="">Select repository</option>
-                    {repos.map(r => <option key={r.full_name} value={r.full_name}>{r.full_name}</option>)}
-                  </select>
+                  <DarkDropdown
+                    value={selectedRepo}
+                    onChange={val => setSelectedRepo(val)}
+                    placeholder="Select repository"
+                    options={repos.map(r => ({ value: r.full_name, label: r.full_name }))}
+                    className="w-full"
+                  />
                   <textarea value={repoPrompt} onChange={e => setRepoPrompt(e.target.value)} placeholder="Describe repo change…" className="w-full h-16 bg-[#0a0a0a] border border-neutral-800 rounded p-2 text-xs text-neutral-200 outline-none" />
                   <button disabled={!selectedRepo || !repoPrompt.trim() || repoBusy} className="w-full bg-neutral-200 text-black font-medium disabled:opacity-30 rounded py-1.5 text-xs">
                     {repoBusy ? "Queueing…" : "Queue Task"}
@@ -911,9 +1025,18 @@ export default function Home() {
               <div className="flex items-center justify-between px-3 pb-2.5 pt-1 text-xs">
                 <div className="flex items-center gap-2">
                   <button type="button" onClick={createFile} className="p-1 rounded hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200" title="New file"><Plus size={14} /></button>
-                  <select value={model} onChange={e => setModel(e.target.value)} className="bg-transparent text-neutral-400 hover:text-neutral-200 text-[11px] outline-none cursor-pointer max-w-44">
-                    {models.map(item => <option key={item.key} value={item.key} disabled={!item.configured} className="bg-[#141414]">{item.name} · {item.tier}{item.configured ? "" : " (off)"}</option>)}
-                  </select>
+                  <DarkDropdown
+                    value={model}
+                    onChange={val => setModel(val)}
+                    direction="up"
+                    options={models.map(item => ({
+                      value: item.key,
+                      label: item.name,
+                      sublabel: item.tier + (item.configured ? "" : " (not configured)"),
+                      disabled: !item.configured,
+                    }))}
+                    className="w-40"
+                  />
                   <button type="button" onClick={toggleApproveAll} className={"flex items-center gap-1 text-[11px] px-2 py-0.5 rounded " + (approveAllEnabled ? "bg-neutral-800 text-neutral-100" : "text-neutral-500 hover:text-neutral-300")} title="Turbo: auto-approve safe/asked commands">
                     <Zap size={11} className={approveAllEnabled ? "text-amber-400" : ""} />
                     {approveAllEnabled ? "Turbo" : "Ask"}
@@ -940,11 +1063,28 @@ export default function Home() {
             <div className="h-10 shrink-0 border-b border-neutral-800/80 flex items-center justify-between px-2.5 bg-[#111111] gap-2">
               <div className="flex items-center gap-1 overflow-x-auto min-w-0">
                 {openTabs.map(tab => (
-                  <button key={tab} onClick={() => openFileByPath(tab)} className={"flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] shrink-0 " + (activeFile === tab ? "bg-[#1c1c1e] text-white border border-neutral-800" : "text-neutral-500 hover:text-neutral-300")}>
-                    <File size={11} />
-                    <span className="max-w-28 truncate">{tab.split("/").pop()}</span>
-                    {activeFile === tab && dirty && <span className="text-amber-400">●</span>}
-                  </button>
+                  <div key={tab} className={"group flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-md text-[11px] shrink-0 transition-colors " + (activeFile === tab ? "bg-[#1c1c1e] text-white border border-neutral-800" : "text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900")}>
+                    <button onClick={() => openFileByPath(tab)} className="flex items-center gap-1.5">
+                      <File size={11} />
+                      <span className="max-w-28 truncate">{tab.split("/").pop()}</span>
+                      {activeFile === tab && dirty && <span className="text-amber-400">●</span>}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const next = openTabs.filter(t => t !== tab);
+                        setOpenTabs(next);
+                        if (activeFile === tab) {
+                          if (next.length) void openFileByPath(next[next.length - 1]);
+                          else { setActiveFile(""); setFileContent(""); setSavedContent(""); setDiffView(null); }
+                        }
+                      }}
+                      className="opacity-0 group-hover:opacity-100 hover:text-white rounded p-0.5 transition-opacity"
+                      title="Close tab"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
                 ))}
                 {!openTabs.length && <span className="text-[11px] text-neutral-500 px-1">No file open</span>}
               </div>
@@ -978,12 +1118,24 @@ export default function Home() {
               </div>
             )}
 
+            {activeFile && (
+              <div className="h-6 shrink-0 px-3 border-b border-neutral-800/50 bg-[#0a0a0a] flex items-center gap-1 text-[11px] text-neutral-500 truncate">
+                <span>{workspaceId}</span>
+                {activeFile.split("/").map((seg, i, arr) => (
+                  <React.Fragment key={i}>
+                    <ChevronRight size={10} className="text-neutral-700 shrink-0" />
+                    <span className={i === arr.length - 1 ? "text-neutral-300 font-medium" : ""}>{seg}</span>
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
+
             <div className="flex-1 min-h-0">
               {activeFile ? (
                 diffView ? (
-                  <DiffEditor height="100%" theme="vs-dark" language={languageFor(activeFile)} original={diffView.original} modified={diffView.modified} options={{ renderSideBySide: true, readOnly: true, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false }} />
+                  <DiffEditor height="100%" theme="ath-obsidian" beforeMount={defineObsidianTheme} language={languageFor(activeFile)} original={diffView.original} modified={diffView.modified} options={{ renderSideBySide: true, readOnly: true, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false }} />
                 ) : (
-                  <Editor height="100%" theme="vs-dark" language={languageFor(activeFile)} value={fileContent} onMount={editor => { editorRef.current = editor; }} onChange={v => setFileContent(v || "")} options={{ minimap: { enabled: false }, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false, tabSize: 2 }} />
+                  <Editor height="100%" theme="ath-obsidian" beforeMount={defineObsidianTheme} language={languageFor(activeFile)} value={fileContent} onMount={editor => { editorRef.current = editor; }} onChange={v => setFileContent(v || "")} options={{ minimap: { enabled: false }, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false, tabSize: 2, padding: { top: 8 } }} />
                 )
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-neutral-600 gap-3">
