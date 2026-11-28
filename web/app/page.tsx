@@ -224,6 +224,7 @@ export default function Home() {
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [repoPrompt, setRepoPrompt] = useState("");
   const [repoBusy, setRepoBusy] = useState(false);
+  const [githubUser, setGithubUser] = useState<{ username: string; hasGithub: boolean } | null>(null);
 
   // Share & Collaboration
   const [showShareModal, setShowShareModal] = useState(false);
@@ -308,8 +309,27 @@ export default function Home() {
     setMessages(visible.length ? visible : [{ role: "assistant", content: selected.title || "Conversation loaded." }]);
   }, [conversations]);
 
+  const connectGithubRedirect = () => {
+    if (typeof window === "undefined") return;
+    window.location.href = "/api/auth/github?redirect=" + encodeURIComponent(window.location.origin);
+  };
+
   const initialize = useCallback(async () => {
     try {
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        const oauthToken = params.get("token");
+        const authErr = params.get("auth_error");
+        if (oauthToken) {
+          api.setTokens(oauthToken, "");
+          window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+          setSidebarTab("repos");
+          setNotice("GitHub connected successfully.");
+        } else if (authErr) {
+          window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+          setNotice("GitHub login error: " + authErr);
+        }
+      }
       if (!api.getAccessToken()) {
         const guest = await fetch("/api/auth/guest", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
         let auth: any = {};
@@ -351,6 +371,10 @@ export default function Home() {
       api.setWorkspaceId(selected);
       setWorkspaceId(selected);
       await refreshFiles(".");
+      try {
+        const me = await api.json<{ user?: { username: string; hasGithub: boolean } }>("/api/auth/me");
+        if (me?.user) setGithubUser({ username: me.user.username, hasGithub: Boolean(me.user.hasGithub) });
+      } catch { /* optional */ }
       try {
         const poolResponse = await api.fetchWithAuth("/api/github/worker-pool");
         if (poolResponse.ok) {
@@ -935,6 +959,15 @@ export default function Home() {
           <button onClick={openShareModal} className="flex items-center gap-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 rounded px-2.5 py-1 text-[11px]" title="Share Workspace">
             <Share2 size={12} /><span>Share</span>
           </button>
+          {githubUser?.hasGithub ? (
+            <span className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded bg-neutral-900 border border-neutral-800 text-[11px] text-neutral-300" title="Connected to GitHub">
+              <FolderGit2 size={12} className="text-emerald-400" />@{githubUser.username}
+            </span>
+          ) : (
+            <button onClick={connectGithubRedirect} className="hidden sm:flex items-center gap-1.5 bg-neutral-100 hover:bg-white text-black font-medium rounded px-2.5 py-1 text-[11px]" title="Connect GitHub via OAuth">
+              <FolderGit2 size={12} /><span>Connect GitHub</span>
+            </button>
+          )}
           <button onClick={() => setEditorVisible(v => !v)} className={"p-1.5 rounded hover:bg-neutral-800 " + (editorVisible ? "text-neutral-200" : "text-neutral-500")} title="Toggle Editor & Terminal">
             <PanelRight size={15} />
           </button>
@@ -1182,8 +1215,21 @@ export default function Home() {
             )}
 
             {sidebarTab === "repos" && (
-              <div className="flex-1 min-h-0 flex flex-col p-2.5 space-y-2 text-xs overflow-auto">
-                <div className="text-[10px] text-neutral-500 flex items-center gap-1.5"><FolderGit2 size={12} />{workerStatus}</div>
+              <div className="flex-1 min-h-0 flex flex-col p-2.5 space-y-2.5 text-xs overflow-auto">
+                {!githubUser?.hasGithub ? (
+                  <div className="rounded-xl border border-neutral-800 bg-[#0a0a0a] p-3 space-y-2.5">
+                    <div className="text-xs font-medium text-neutral-200 flex items-center gap-1.5"><FolderGit2 size={14} />Connect GitHub</div>
+                    <p className="text-[11px] text-neutral-500 leading-relaxed">Authorize with GitHub to browse your repositories, queue autonomous coding tasks, and open draft PRs.</p>
+                    <button onClick={connectGithubRedirect} className="w-full bg-neutral-100 hover:bg-white text-black font-medium rounded-lg py-2 text-xs flex items-center justify-center gap-2">
+                      <FolderGit2 size={13} />Continue with GitHub
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-neutral-400 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5"><FolderGit2 size={12} className="text-emerald-400" />@{githubUser.username}</span>
+                    <span className="text-neutral-500 truncate">{workerStatus}</span>
+                  </div>
+                )}
                 <form onSubmit={createRepoTask} className="space-y-2">
                   <DarkDropdown
                     value={selectedRepo}

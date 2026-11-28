@@ -256,14 +256,27 @@ export async function refreshAccessToken(req, res) {
 /**
  * GET /api/auth/github — Redirect to GitHub OAuth Authorization page.
  */
+function isSafeFrontendRedirect(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== "string") return false;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    return parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname.endsWith(".vercel.app") || parsed.hostname.endsWith(".sslip.io");
+  } catch {
+    return false;
+  }
+}
+
 export function githubLoginRedirect(req, res) {
   if (!config.githubClientId) {
     return res.redirect("/?github_modal=true");
   }
   const redirectUri = `${config.publicUrl || `http://localhost:${config.port}`}/api/auth/github/callback`;
+  const requestedRedirect = typeof req.query.redirect === "string" && isSafeFrontendRedirect(req.query.redirect) ? req.query.redirect : "";
+  const stateParam = requestedRedirect ? `&state=${encodeURIComponent(requestedRedirect)}` : "";
   const githubUrl = `https://github.com/login/oauth/authorize?client_id=${config.githubClientId}&redirect_uri=${encodeURIComponent(
     redirectUri
-  )}&scope=repo,read:user,user:email`;
+  )}&scope=repo,read:user,user:email${stateParam}`;
   res.redirect(githubUrl);
 }
 
@@ -475,10 +488,12 @@ export async function githubCallback(req, res) {
     });
 
     // 5. Redirect back to frontend IDE with tokens
-    res.redirect(`/?token=${jwtToken}`);
+    const stateOrigin = typeof req.query.state === "string" && isSafeFrontendRedirect(req.query.state) ? req.query.state.replace(/\/$/, "") : "";
+    res.redirect(`${stateOrigin}/?token=${jwtToken}`);
   } catch (err) {
     logger.error("GitHub OAuth callback error", { error: err.message });
-    res.status(500).redirect(`/?auth_error=${encodeURIComponent(err.message)}`);
+    const stateOrigin = typeof req.query.state === "string" && isSafeFrontendRedirect(req.query.state) ? req.query.state.replace(/\/$/, "") : "";
+    res.status(500).redirect(`${stateOrigin}/?auth_error=${encodeURIComponent(err.message)}`);
   }
 }
 
