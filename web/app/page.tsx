@@ -325,15 +325,21 @@ export default function Home() {
     if (!githubTokenInput.trim() || githubConnectBusy) return;
     setGithubConnectBusy(true);
     try {
-      await api.json("/api/auth/connect-github", {
+      const data = await api.json<{ token?: string; githubUser?: { username: string } }>("/api/auth/connect-github", {
         method: "POST",
         body: JSON.stringify({ token: githubTokenInput.trim() }),
       });
+      if (data?.token) {
+        api.setTokens(data.token, "");
+      }
+      if (data?.githubUser?.username) {
+        setGithubUser({ username: data.githubUser.username, hasGithub: true });
+      }
       setGithubTokenInput("");
       setShowGithubModal(false);
       setSidebarTab("repos");
       await initialize();
-      setNotice("GitHub account connected and saved.");
+      setNotice("GitHub account connected and saved to database.");
     } catch (error: any) {
       setNotice(error.message || "Invalid GitHub token.");
     } finally {

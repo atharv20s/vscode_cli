@@ -320,6 +320,7 @@ export async function connectGithubToken(req, res) {
 
     let user = null;
     if (userId) {
+      await updateUserToken(userId, cleanToken);
       await updateUserProfile(userId, {
         avatarUrl: githubUser.avatar_url,
         githubId: githubUser.id,
