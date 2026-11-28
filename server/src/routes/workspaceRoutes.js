@@ -375,7 +375,7 @@ router.post("/git/commit-push", async (req, res) => {
         const basicAuth = Buffer.from(`x-access-token:${token}`).toString("base64");
         pushArgs.push("-c", `http.https://github.com/.extraheader=AUTHORIZATION: basic ${basicAuth}`);
       }
-      pushArgs.push("push");
+      pushArgs.push("push", "-u", "origin", "HEAD");
       const pushRes = await execFileAsync("git", pushArgs, { cwd: workspace.workspaceRoot, timeout: 30000, windowsHide: true });
       pushOutput = String(pushRes.stdout || "") + String(pushRes.stderr || "");
     }
