@@ -26,7 +26,8 @@ import { pullWorkspaceFromRemote, syncWorkspaceOnRemote } from "../services/remo
 import { createAgentRunSnapshot, completeAgentRunSnapshot, rollbackAgentRunSnapshot } from "../services/agentRunSnapshotService.js";
 import { streamChatCompletion } from "../services/llmService.js";
 import { buildRepositorySymbolIndex, getTreeSitterDiagnostics } from "../services/repoSymbolIndex.js";
-import { sanitizeChildEnv } from "../services/secretSanitizer.js";
+import { sanitizeChildEnv, sanitizeSecrets } from "../services/secretSanitizer.js";
+import { findUserById } from "../db/database.js";
 
 const router = Router();
 const execFileAsync = promisify(execFile);
@@ -336,6 +337,54 @@ router.get("/git/diff", async (req, res) => {
     if (error.code === "ENOENT") return res.status(404).json({ error: "FileNotFound" });
     if (error.code === 128 || /not a git repository/i.test(error.message || "")) return res.status(409).json({ error: "GitRepositoryUnavailable" });
     return res.status(503).json({ error: "GitDiffUnavailable", message: "Unable to prepare the selected file diff." });
+  }
+});
+
+router.post("/git/commit-push", async (req, res) => {
+  const message = String(req.body?.message || "").trim();
+  const shouldPush = req.body?.push !== false;
+  if (!message || message.length > 500) {
+    return res.status(400).json({ error: "InvalidCommitMessage", message: "Commit message is required (1-500 chars)." });
+  }
+  if (req.workspaceAccess?.permission !== "owner") {
+    return res.status(403).json({ error: "Forbidden", message: "Only the workspace owner can commit and push." });
+  }
+  const workspace = getWorkspaceService(req.user.id, req.get("X-Workspace-Id") || "default");
+  try {
+    const gitArgs = ["-c", "safe.directory=" + workspace.workspaceRoot];
+    const user = await findUserById(req.user.id);
+    if (user?.username) {
+      await execFileAsync("git", [...gitArgs, "config", "user.name", user.username], { cwd: workspace.workspaceRoot, windowsHide: true }).catch(() => {});
+      await execFileAsync("git", [...gitArgs, "config", "user.email", user.email || `${user.username}@users.noreply.github.com`], { cwd: workspace.workspaceRoot, windowsHide: true }).catch(() => {});
+    }
+    await execFileAsync("git", [...gitArgs, "add", "-A"], { cwd: workspace.workspaceRoot, timeout: 15000, windowsHide: true });
+    let commitOutput = "";
+    try {
+      const commitRes = await execFileAsync("git", [...gitArgs, "commit", "-m", message], { cwd: workspace.workspaceRoot, timeout: 15000, windowsHide: true });
+      commitOutput = String(commitRes.stdout || "");
+    } catch (err) {
+      const out = String(err.stdout || "") + String(err.stderr || "");
+      if (!/nothing to commit/i.test(out)) throw err;
+      commitOutput = "Nothing new to commit.";
+    }
+    let pushOutput = "";
+    if (shouldPush) {
+      const token = user?.github_access_token;
+      const pushArgs = [...gitArgs];
+      if (token) {
+        const basicAuth = Buffer.from(`x-access-token:${token}`).toString("base64");
+        pushArgs.push("-c", `http.https://github.com/.extraheader=AUTHORIZATION: basic ${basicAuth}`);
+      }
+      pushArgs.push("push");
+      const pushRes = await execFileAsync("git", pushArgs, { cwd: workspace.workspaceRoot, timeout: 30000, windowsHide: true });
+      pushOutput = String(pushRes.stdout || "") + String(pushRes.stderr || "");
+    }
+    if (config.executionRuntime === "remote") {
+      await syncWorkspaceOnRemote({ workspaceId: workspace.workspaceId, workspaceDir: workspace.workspaceRoot }).catch(() => {});
+    }
+    return res.json({ success: true, commitOutput: sanitizeSecrets(commitOutput), pushOutput: sanitizeSecrets(pushOutput) });
+  } catch (error) {
+    return res.status(500).json({ error: "GitCommitPushFailed", message: sanitizeSecrets(error.message || "Git commit/push failed.") });
   }
 });
 

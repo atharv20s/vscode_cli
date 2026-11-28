@@ -224,6 +224,9 @@ export default function Home() {
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [repoPrompt, setRepoPrompt] = useState("");
   const [repoBusy, setRepoBusy] = useState(false);
+  const [cloneBusy, setCloneBusy] = useState(false);
+  const [commitMsg, setCommitMsg] = useState("");
+  const [commitBusy, setCommitBusy] = useState(false);
   const [githubUser, setGithubUser] = useState<{ username: string; hasGithub: boolean } | null>(null);
 
   // Share & Collaboration
@@ -750,6 +753,48 @@ export default function Home() {
     finally { setRepoBusy(false); }
   };
 
+  const cloneAndOpenRepo = async () => {
+    if (!selectedRepo || cloneBusy) return;
+    const [owner, name] = selectedRepo.split("/");
+    if (!owner || !name) return;
+    setCloneBusy(true);
+    try {
+      const data = await api.json<{ session: WorkspaceSession; repo: string }>(
+        "/api/github/repos/" + encodeURIComponent(owner) + "/" + encodeURIComponent(name) + "/clone",
+        { method: "POST" }
+      );
+      if (data.session) {
+        setSessions(prev => [...prev, data.session]);
+        await changeWorkspace(data.session.id);
+        setSidebarTab("files");
+        setNotice("Cloned and opened " + data.repo);
+      }
+    } catch (error: any) {
+      setNotice(error.message || "Failed to clone repository.");
+    } finally {
+      setCloneBusy(false);
+    }
+  };
+
+  const commitAndPush = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!commitMsg.trim() || commitBusy) return;
+    setCommitBusy(true);
+    try {
+      await api.json("/api/workspace/git/commit-push", {
+        method: "POST",
+        body: JSON.stringify({ message: commitMsg.trim(), push: true }),
+      });
+      setCommitMsg("");
+      await refreshFiles(currentDir);
+      setNotice("Committed and pushed to GitHub.");
+    } catch (error: any) {
+      setNotice(error.message || "Commit/push failed.");
+    } finally {
+      setCommitBusy(false);
+    }
+  };
+
   const loadShares = useCallback(async () => {
     try {
       const data = await api.json<{ shares: ShareLink[] }>("/api/workspace/collaboration/shares?workspaceId=" + encodeURIComponent(workspaceId));
@@ -1230,19 +1275,43 @@ export default function Home() {
                     <span className="text-neutral-500 truncate">{workerStatus}</span>
                   </div>
                 )}
-                <form onSubmit={createRepoTask} className="space-y-2">
-                  <DarkDropdown
-                    value={selectedRepo}
-                    onChange={val => setSelectedRepo(val)}
-                    placeholder="Select repository"
-                    options={repos.map(r => ({ value: r.full_name, label: r.full_name }))}
-                    className="w-full"
-                  />
-                  <textarea value={repoPrompt} onChange={e => setRepoPrompt(e.target.value)} placeholder="Describe repo change…" className="w-full h-16 bg-[#0a0a0a] border border-neutral-800 rounded p-2 text-xs text-neutral-200 outline-none" />
-                  <button disabled={!selectedRepo || !repoPrompt.trim() || repoBusy} className="w-full bg-neutral-200 text-black font-medium disabled:opacity-30 rounded py-1.5 text-xs">
-                    {repoBusy ? "Queueing…" : "Queue Task"}
-                  </button>
-                </form>
+                {githubUser?.hasGithub && (
+                  <>
+                    <div className="space-y-1.5 pb-2 border-b border-neutral-800">
+                      <DarkDropdown
+                        value={selectedRepo}
+                        onChange={val => setSelectedRepo(val)}
+                        placeholder="Select repository"
+                        options={repos.map(r => ({ value: r.full_name, label: r.full_name }))}
+                        className="w-full"
+                      />
+                      <button type="button" onClick={cloneAndOpenRepo} disabled={!selectedRepo || cloneBusy} className="w-full bg-neutral-100 hover:bg-white disabled:opacity-30 text-black font-medium rounded-lg py-1.5 text-xs">
+                        {cloneBusy ? "Cloning into IDE…" : "Clone & Open in IDE"}
+                      </button>
+                    </div>
+
+                    <form onSubmit={commitAndPush} className="space-y-1.5 pb-2 border-b border-neutral-800">
+                      <div className="text-[10px] uppercase tracking-wider text-neutral-500">Source Control ({gitBranch})</div>
+                      <input
+                        value={commitMsg}
+                        onChange={e => setCommitMsg(e.target.value)}
+                        placeholder="Commit message…"
+                        className="w-full bg-[#0a0a0a] border border-neutral-800 rounded px-2 py-1.5 text-xs text-neutral-200 outline-none"
+                      />
+                      <button disabled={!commitMsg.trim() || commitBusy} className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 text-white font-medium rounded-lg py-1.5 text-xs">
+                        {commitBusy ? "Pushing…" : "Commit & Push"}
+                      </button>
+                    </form>
+
+                    <form onSubmit={createRepoTask} className="space-y-1.5">
+                      <div className="text-[10px] uppercase tracking-wider text-neutral-500">Autonomous PR Task</div>
+                      <textarea value={repoPrompt} onChange={e => setRepoPrompt(e.target.value)} placeholder="Describe PR change…" className="w-full h-14 bg-[#0a0a0a] border border-neutral-800 rounded p-2 text-xs text-neutral-200 outline-none" />
+                      <button disabled={!selectedRepo || !repoPrompt.trim() || repoBusy} className="w-full bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium disabled:opacity-30 rounded-lg py-1.5 text-xs">
+                        {repoBusy ? "Queueing…" : "Queue PR Task"}
+                      </button>
+                    </form>
+                  </>
+                )}
                 <div className="space-y-1.5 pt-2 border-t border-neutral-800">
                   {tasks.map(t => (
                     <div key={t.id} className="rounded border border-neutral-800 bg-[#0a0a0a] p-2 text-[11px]">
