@@ -334,7 +334,7 @@ export async function updateUserToken(userId, githubAccessToken) {
     .run(githubAccessToken, userId);
 }
 
-export async function updateUserProfile(userId, { avatarUrl, githubId, githubAccessToken }) {
+export async function updateUserProfile(userId, { avatarUrl, githubId, githubAccessToken, username }) {
   const pool = getPostgresPool();
   if (pool) {
     if (githubId) {
@@ -347,9 +347,10 @@ export async function updateUserProfile(userId, { avatarUrl, githubId, githubAcc
         avatar_url = COALESCE($1, avatar_url),
         github_id = COALESCE($2, github_id),
         github_access_token = COALESCE($3, github_access_token),
+        username = COALESCE($4, username),
         updated_at = CURRENT_TIMESTAMP
-       WHERE id = $4`,
-      [avatarUrl || null, githubId || null, githubAccessToken || null, userId]
+       WHERE id = $5`,
+      [avatarUrl || null, githubId || null, githubAccessToken || null, username || null, userId]
     );
     return;
   }
@@ -368,10 +369,11 @@ export async function updateUserProfile(userId, { avatarUrl, githubId, githubAcc
         avatar_url = COALESCE(?, avatar_url),
         github_id = COALESCE(?, github_id),
         github_access_token = COALESCE(?, github_access_token),
+        username = COALESCE(?, username),
         updated_at = datetime('now') 
        WHERE id = ?`
     )
-    .run(avatarUrl || null, githubId || null, githubAccessToken || null, userId);
+    .run(avatarUrl || null, githubId || null, githubAccessToken || null, username || null, userId);
 }
 
 // ============================================

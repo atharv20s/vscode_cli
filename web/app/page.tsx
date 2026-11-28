@@ -4,12 +4,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Editor, { DiffEditor } from "@monaco-editor/react";
 import {
   Activity,
+  AlertTriangle,
   Bot,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Code2,
+  Columns2,
   Copy,
   File,
   FilePlus2,
@@ -18,6 +20,7 @@ import {
   FolderPlus,
   GitBranch,
   GitCompare,
+  KeyRound,
   ListTree,
   MessageSquarePlus,
   PanelLeft,
@@ -212,6 +215,10 @@ export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [terminalVisible, setTerminalVisible] = useState(true);
+  const [bottomTab, setBottomTab] = useState<"terminal" | "problems">("terminal");
+  const [diagnostics, setDiagnostics] = useState<Array<{ line: number; column: number; severity: string; message: string }>>([]);
+  const [splitFile, setSplitFile] = useState("");
+  const [splitContent, setSplitContent] = useState("");
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [editorVisible, setEditorVisible] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<"files" | "search" | "chats" | "repos">("files");
@@ -517,6 +524,7 @@ export default function Home() {
       setSavedContent(fileContent);
       setTabBuffers(prev => ({ ...prev, [activeFile]: { content: fileContent, savedContent: fileContent, version: data.version || null } }));
       setNotice("Saved " + activeFile);
+      void runDiagnostics(activeFile, fileContent);
       await refreshFiles(currentDir);
     } catch (error: any) {
       setNotice((error as any).status === 409 ? "Save conflict: reload before saving." : error.message);
@@ -950,6 +958,42 @@ export default function Home() {
     editorRef.current.getAction("editor.action.quickOutline")?.run();
   };
 
+  const runDiagnostics = useCallback(async (filePath: string, content: string) => {
+    if (!filePath) { setDiagnostics([]); return; }
+    try {
+      const data = await api.json<{ diagnostics?: Array<{ line: number; column: number; severity: string; message: string }> }>("/api/workspace/diagnostics", {
+        method: "POST",
+        body: JSON.stringify({ path: filePath, content }),
+      });
+      setDiagnostics(data.diagnostics || []);
+    } catch { /* diagnostics optional */ }
+  }, []);
+
+  const toggleSplitEditor = async () => {
+    if (splitFile) {
+      setSplitFile("");
+      setSplitContent("");
+      return;
+    }
+    const candidate = openTabs.find(t => t !== activeFile) || activeFile;
+    if (!candidate) return;
+    try {
+      const data = await api.json<any>("/api/workspace/file?path=" + encodeURIComponent(candidate));
+      setSplitFile(candidate);
+      setSplitContent(data.content || "");
+    } catch { /* ignore */ }
+  };
+
+  const deleteConversationById = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await api.json("/api/agent/conversations/" + encodeURIComponent(id), { method: "DELETE" });
+      setConversations(prev => prev.filter(c => c.id !== id));
+      if (conversationId === id) openConversation("");
+      setNotice("Conversation deleted.");
+    } catch (error: any) { setNotice(error.message || "Failed to delete conversation."); }
+  };
+
   const handlePermissionRequested = useCallback((req: { permissionId: string; resource: string; action: string; payload: any }) => {
     if (!req?.permissionId) return;
     setPendingPermissions(prev => prev.some(p => p.permissionId === req.permissionId) ? prev : [...prev, req]);
@@ -1325,9 +1369,10 @@ export default function Home() {
             {sidebarTab === "chats" && (
               <div className="flex-1 overflow-auto p-1.5 space-y-0.5 text-xs">
                 {conversations.map(c => (
-                  <button key={c.id} onClick={() => openConversation(c.id)} className={"w-full text-left px-2.5 py-2 rounded-md truncate " + (conversationId === c.id ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200")}>
-                    {c.title || "Untitled conversation"}
-                  </button>
+                  <div key={c.id} onClick={() => openConversation(c.id)} className={"group cursor-pointer w-full flex items-center justify-between gap-1 px-2.5 py-2 rounded-md " + (conversationId === c.id ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200")}>
+                    <span className="truncate">{c.title || "Untitled conversation"}</span>
+                    <button type="button" onClick={e => deleteConversationById(c.id, e)} className="opacity-0 group-hover:opacity-100 hover:text-rose-400 p-0.5 transition-opacity shrink-0" title="Delete chat"><Trash2 size={11} /></button>
+                  </div>
                 ))}
                 {!conversations.length && <div className="text-[11px] text-neutral-600 p-2">No saved conversations yet.</div>}
               </div>
@@ -1347,9 +1392,12 @@ export default function Home() {
                     </button>
                   </div>
                 ) : (
-                  <div className="text-[10px] text-neutral-400 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5"><FolderGit2 size={12} className="text-emerald-400" />@{githubUser.username}</span>
-                    <span className="text-neutral-500 truncate">{workerStatus}</span>
+                  <div className="text-[10px] text-neutral-400 flex items-center justify-between gap-1">
+                    <span className="flex items-center gap-1.5 truncate"><FolderGit2 size={12} className="text-emerald-400 shrink-0" />@{githubUser.username}</span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button type="button" onClick={() => initialize()} className="p-1 hover:text-white rounded" title="Refresh GitHub repos"><RefreshCw size={11} /></button>
+                      <button type="button" onClick={() => setShowGithubModal(true)} className="p-1 hover:text-white rounded" title="Update GitHub Token"><KeyRound size={11} /></button>
+                    </div>
                   </div>
                 )}
                 {githubUser?.hasGithub && (
@@ -1572,6 +1620,7 @@ export default function Home() {
                   <button onClick={() => setShowInlineEdit(v => !v)} className={"flex items-center gap-1 rounded px-2 py-1 text-[11px] " + (showInlineEdit ? "bg-neutral-200 text-black" : "bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border border-neutral-800")} title="Inline AI Edit (Ctrl+K)"><Sparkles size={11} />Edit</button>
                   <button onClick={openGitDiff} className={"flex items-center gap-1 rounded px-2 py-1 text-[11px] " + (diffView && !diffView.isAiEdit ? "bg-neutral-200 text-black" : "hover:bg-neutral-800 text-neutral-400")} title="Git Diff"><GitCompare size={12} /></button>
                   <button onClick={openSymbolOutline} className="p-1.5 hover:bg-neutral-800 rounded text-neutral-400" title="Symbol Outline"><ListTree size={13} /></button>
+                  <button onClick={toggleSplitEditor} className={"p-1.5 hover:bg-neutral-800 rounded " + (splitFile ? "text-white bg-neutral-800" : "text-neutral-400")} title="Toggle Split Editor"><Columns2 size={13} /></button>
                 </>}
                 {activeFile && <button onClick={runActiveFile} className="flex items-center gap-1 bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 rounded px-2 py-1 text-[11px]" title="Run active file in Linux Terminal"><Play size={11} />Run</button>}
                 <button disabled={!activeFile || !dirty} onClick={saveFile} className="flex items-center gap-1 bg-neutral-200 text-black disabled:opacity-25 rounded px-2 py-1 text-[11px] font-medium" title="Save (Ctrl+S)"><Save size={11} />Save</button>
@@ -1610,7 +1659,8 @@ export default function Home() {
               </div>
             )}
 
-            <div className="flex-1 min-h-0">
+            <div className="flex-1 min-h-0 flex">
+              <div className="flex-1 min-w-0 min-h-0">
               {activeFile ? (
                 diffView ? (
                   <DiffEditor height="100%" theme="ath-obsidian" beforeMount={defineObsidianTheme} language={languageFor(activeFile)} original={diffView.original} modified={diffView.modified} options={{ renderSideBySide: true, readOnly: true, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false }} />
@@ -1657,25 +1707,70 @@ export default function Home() {
                   <button onClick={createFile} className="text-xs px-3 py-1.5 bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 rounded-lg border border-neutral-700">New File</button>
                 </div>
               )}
+              </div>
+              {splitFile && (
+                <div className="w-1/2 min-w-0 min-h-0 border-l border-neutral-800 flex flex-col">
+                  <div className="h-7 shrink-0 px-2.5 bg-[#111111] border-b border-neutral-800 flex items-center justify-between text-[11px] text-neutral-300">
+                    <span className="truncate">{splitFile}</span>
+                    <button onClick={() => { setSplitFile(""); setSplitContent(""); }} className="text-neutral-500 hover:text-white"><X size={12} /></button>
+                  </div>
+                  <div className="flex-1 min-h-0">
+                    <Editor
+                      height="100%"
+                      theme="ath-obsidian"
+                      beforeMount={defineObsidianTheme}
+                      language={languageFor(splitFile)}
+                      value={splitContent}
+                      options={{ minimap: { enabled: false }, fontSize: 13, readOnly: true, automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 12, bottom: 12 } }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {terminalVisible && (
               <div className="h-56 shrink-0 border-t border-neutral-800/80 bg-[#0a0a0a] flex flex-col">
                 <div className="h-8 flex items-center justify-between px-3 border-b border-neutral-800/80 bg-[#111111] text-[10px] text-neutral-400 uppercase tracking-wider">
-                  <span className="flex items-center gap-1.5"><SquareTerminal size={12} />Terminal</span>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => setBottomTab("terminal")} className={"flex items-center gap-1.5 py-1 " + (bottomTab === "terminal" ? "text-white font-semibold" : "text-neutral-500 hover:text-neutral-300")}><SquareTerminal size={12} />Terminal</button>
+                    <button onClick={() => { setBottomTab("problems"); void runDiagnostics(activeFile, fileContent); }} className={"flex items-center gap-1.5 py-1 " + (bottomTab === "problems" ? "text-white font-semibold" : "text-neutral-500 hover:text-neutral-300")}><AlertTriangle size={11} />Problems ({diagnostics.length})</button>
+                  </div>
                   <span className="text-neutral-500">Linux PTY · Ctrl+J</span>
                 </div>
-                <div className="flex-1 min-h-0 p-1.5">
-                  <TerminalPanel
-                    workspaceId={workspaceId}
-                    apiStatus={apiStatus === "Online" ? "API online" : apiStatus}
-                    onPreviewReady={setPreviewUrl}
-                    onPreviewStopped={clearPreview}
-                    onPermissionRequested={handlePermissionRequested}
-                    onPermissionResolved={handlePermissionResolved}
-                    onRegisterWsSender={fn => { wsSenderRef.current = fn; }}
-                  />
-                </div>
+                {bottomTab === "terminal" ? (
+                  <div className="flex-1 min-h-0 p-1.5">
+                    <TerminalPanel
+                      workspaceId={workspaceId}
+                      apiStatus={apiStatus === "Online" ? "API online" : apiStatus}
+                      onPreviewReady={setPreviewUrl}
+                      onPreviewStopped={clearPreview}
+                      onPermissionRequested={handlePermissionRequested}
+                      onPermissionResolved={handlePermissionResolved}
+                      onRegisterWsSender={fn => { wsSenderRef.current = fn; }}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex-1 overflow-auto p-2 space-y-1 text-xs">
+                    {diagnostics.map((d, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          editorRef.current?.revealLineInCenter(d.line);
+                          editorRef.current?.setPosition({ lineNumber: d.line, column: d.column || 1 });
+                          editorRef.current?.focus();
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded bg-[#111111] hover:bg-neutral-800/70 border border-neutral-800/80 flex items-center justify-between gap-2"
+                      >
+                        <span className="flex items-center gap-2 truncate">
+                          <AlertTriangle size={12} className={d.severity === "error" ? "text-rose-400 shrink-0" : "text-amber-400 shrink-0"} />
+                          <span className="text-neutral-200 truncate">{d.message}</span>
+                        </span>
+                        <span className="text-[10px] text-neutral-500 shrink-0">Ln {d.line}:{d.column || 1}</span>
+                      </button>
+                    ))}
+                    {!diagnostics.length && <div className="text-[11px] text-neutral-500 p-2">No problems detected in {activeFile || "workspace"}.</div>}
+                  </div>
+                )}
               </div>
             )}
 

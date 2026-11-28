@@ -324,6 +324,7 @@ export async function connectGithubToken(req, res) {
       await updateUserProfile(userId, {
         avatarUrl: githubUser.avatar_url,
         githubId: githubUser.id,
+        username: githubUser.login,
       });
       user = await findUserById(userId);
     }
