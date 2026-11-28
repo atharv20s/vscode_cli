@@ -268,11 +268,17 @@ function isSafeFrontendRedirect(rawUrl) {
 }
 
 export function githubLoginRedirect(req, res) {
-  if (!config.githubClientId) {
-    return res.redirect("/?github_modal=true");
+  const requestedRedirect = typeof req.query.redirect === "string" && isSafeFrontendRedirect(req.query.redirect) ? req.query.redirect : "";
+  const isPlaceholder =
+    !config.githubClientId ||
+    !config.githubClientSecret ||
+    /^your_github/i.test(config.githubClientId) ||
+    /^your_github/i.test(config.githubClientSecret);
+  if (isPlaceholder) {
+    const targetOrigin = requestedRedirect ? requestedRedirect.replace(/\/$/, "") : "";
+    return res.redirect(`${targetOrigin}/?github_setup=1`);
   }
   const redirectUri = `${config.publicUrl || `http://localhost:${config.port}`}/api/auth/github/callback`;
-  const requestedRedirect = typeof req.query.redirect === "string" && isSafeFrontendRedirect(req.query.redirect) ? req.query.redirect : "";
   const stateParam = requestedRedirect ? `&state=${encodeURIComponent(requestedRedirect)}` : "";
   const githubUrl = `https://github.com/login/oauth/authorize?client_id=${config.githubClientId}&redirect_uri=${encodeURIComponent(
     redirectUri

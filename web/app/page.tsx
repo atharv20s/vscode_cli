@@ -228,6 +228,9 @@ export default function Home() {
   const [commitMsg, setCommitMsg] = useState("");
   const [commitBusy, setCommitBusy] = useState(false);
   const [githubUser, setGithubUser] = useState<{ username: string; hasGithub: boolean } | null>(null);
+  const [showGithubModal, setShowGithubModal] = useState(false);
+  const [githubTokenInput, setGithubTokenInput] = useState("");
+  const [githubConnectBusy, setGithubConnectBusy] = useState(false);
 
   // Share & Collaboration
   const [showShareModal, setShowShareModal] = useState(false);
@@ -317,17 +320,43 @@ export default function Home() {
     window.location.href = "/api/auth/github?redirect=" + encodeURIComponent(window.location.origin);
   };
 
+  const submitGithubToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!githubTokenInput.trim() || githubConnectBusy) return;
+    setGithubConnectBusy(true);
+    try {
+      await api.json("/api/auth/connect-github", {
+        method: "POST",
+        body: JSON.stringify({ token: githubTokenInput.trim() }),
+      });
+      setGithubTokenInput("");
+      setShowGithubModal(false);
+      setSidebarTab("repos");
+      await initialize();
+      setNotice("GitHub account connected and saved.");
+    } catch (error: any) {
+      setNotice(error.message || "Invalid GitHub token.");
+    } finally {
+      setGithubConnectBusy(false);
+    }
+  };
+
   const initialize = useCallback(async () => {
     try {
       if (typeof window !== "undefined") {
         const params = new URLSearchParams(window.location.search);
         const oauthToken = params.get("token");
         const authErr = params.get("auth_error");
+        const githubSetup = params.get("github_setup") || params.get("github_modal");
         if (oauthToken) {
           api.setTokens(oauthToken, "");
           window.history.replaceState({}, "", window.location.pathname + window.location.hash);
           setSidebarTab("repos");
           setNotice("GitHub connected successfully.");
+        } else if (githubSetup) {
+          window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+          setSidebarTab("repos");
+          setShowGithubModal(true);
         } else if (authErr) {
           window.history.replaceState({}, "", window.location.pathname + window.location.hash);
           setNotice("GitHub login error: " + authErr);
@@ -1034,6 +1063,45 @@ export default function Home() {
         </button>
       )}
 
+      {/* GitHub Connect / OAuth Setup Modal */}
+      {showGithubModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowGithubModal(false)}>
+          <div className="w-full max-w-md rounded-xl border border-neutral-800 bg-[#141416] shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium text-neutral-100"><FolderGit2 size={15} />Connect GitHub</div>
+              <button onClick={() => setShowGithubModal(false)} className="text-neutral-400 hover:text-neutral-200"><X size={15} /></button>
+            </div>
+            <div className="p-4 space-y-4 text-xs">
+              <form onSubmit={submitGithubToken} className="space-y-2.5">
+                <div className="text-neutral-300 font-medium">Instant Connect (Personal Access Token)</div>
+                <p className="text-[11px] text-neutral-500">
+                  Generate a token with <span className="font-mono text-neutral-300">repo</span> scope on{" "}
+                  <a href="https://github.com/settings/tokens/new?scopes=repo,read:user,user:email&description=ATH-IDE" target="_blank" rel="noreferrer" className="text-neutral-200 underline">
+                    GitHub Tokens
+                  </a>{" "}
+                  and paste it below:
+                </p>
+                <input
+                  type="password"
+                  autoFocus
+                  value={githubTokenInput}
+                  onChange={e => setGithubTokenInput(e.target.value)}
+                  placeholder="ghp_... or github_pat_..."
+                  className="w-full bg-[#0a0a0a] border border-neutral-700 focus:border-neutral-500 rounded-lg px-3 py-2 text-xs text-neutral-100 font-mono outline-none"
+                />
+                <button disabled={!githubTokenInput.trim() || githubConnectBusy} className="w-full bg-neutral-100 hover:bg-white disabled:opacity-30 text-black font-medium rounded-lg py-2 text-xs">
+                  {githubConnectBusy ? "Connecting…" : "Save & Connect GitHub"}
+                </button>
+              </form>
+              <div className="pt-3 border-t border-neutral-800 space-y-1.5 text-[11px] text-neutral-500">
+                <div className="text-neutral-300 font-medium">Want 1-click OAuth Redirect?</div>
+                <p>Replace the placeholder <span className="font-mono text-neutral-300">GITHUB_CLIENT_ID</span> &amp; <span className="font-mono text-neutral-300">GITHUB_CLIENT_SECRET</span> in <span className="font-mono text-neutral-300">.env</span> with your GitHub OAuth App credentials.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Share Modal */}
       {showShareModal && (
         <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
@@ -1267,6 +1335,9 @@ export default function Home() {
                     <p className="text-[11px] text-neutral-500 leading-relaxed">Authorize with GitHub to browse your repositories, queue autonomous coding tasks, and open draft PRs.</p>
                     <button onClick={connectGithubRedirect} className="w-full bg-neutral-100 hover:bg-white text-black font-medium rounded-lg py-2 text-xs flex items-center justify-center gap-2">
                       <FolderGit2 size={13} />Continue with GitHub
+                    </button>
+                    <button onClick={() => setShowGithubModal(true)} className="w-full bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border border-neutral-800 rounded-lg py-1.5 text-[11px]">
+                      Or connect with GitHub Token
                     </button>
                   </div>
                 ) : (
