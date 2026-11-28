@@ -52,6 +52,9 @@ export default function TerminalPanel({ workspaceId, apiStatus, onPreviewReady, 
     }
 
     const getWebSocketUrl = () => {
+      if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+        return "ws://" + window.location.hostname + ":3001/ws";
+      }
       const configured = process.env.NEXT_PUBLIC_WS_URL;
       if (configured) return configured;
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";

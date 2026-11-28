@@ -186,8 +186,10 @@ export default function Home() {
   const [fileContent, setFileContent] = useState("");
   const [savedContent, setSavedContent] = useState("");
   const [fileVersion, setFileVersion] = useState<string | null>(null);
+  const [tabBuffers, setTabBuffers] = useState<Record<string, { content: string; savedContent: string; version: string | null }>>({});
   const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
   const [gitBranch, setGitBranch] = useState("main");
+  const [gitFileStatuses, setGitFileStatuses] = useState<Record<string, string>>({});
   const [showQuickOpen, setShowQuickOpen] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -258,8 +260,11 @@ export default function Home() {
     ]);
     setFiles(data.entries || []);
     if (allData.entries?.length) setAllFiles(allData.entries);
-    api.json<{ branch?: string }>("/api/workspace/git/status").then(g => {
+    api.json<{ branch?: string; files?: Array<{ path: string; kind: string }> }>("/api/workspace/git/status").then(g => {
       if (g?.branch) setGitBranch(g.branch);
+      const map: Record<string, string> = {};
+      for (const item of g?.files || []) map[item.path] = item.kind;
+      setGitFileStatuses(map);
     }).catch(() => {});
   }, []);
 
@@ -395,18 +400,39 @@ export default function Home() {
   };
 
   const openFileByPath = useCallback(async (filePath: string) => {
-    try {
-      const data = await api.json<any>("/api/workspace/file?path=" + encodeURIComponent(filePath));
+    if (activeFile && activeFile !== filePath) {
+      setTabBuffers(prev => ({
+        ...prev,
+        [activeFile]: { content: fileContent, savedContent, version: fileVersion },
+      }));
+    }
+    const cached = tabBuffers[filePath];
+    if (cached && cached.content !== cached.savedContent) {
       setActiveFile(filePath);
       setOpenTabs(prev => prev.includes(filePath) ? prev : [...prev, filePath]);
-      setFileContent(data.content || "");
-      setSavedContent(data.content || "");
-      setFileVersion(data.version || null);
+      setFileContent(cached.content);
+      setSavedContent(cached.savedContent);
+      setFileVersion(cached.version);
+      setDiffView(null);
+      setShowInlineEdit(false);
+      setEditorVisible(true);
+      return;
+    }
+    try {
+      const data = await api.json<any>("/api/workspace/file?path=" + encodeURIComponent(filePath));
+      const content = data.content || "";
+      const version = data.version || null;
+      setActiveFile(filePath);
+      setOpenTabs(prev => prev.includes(filePath) ? prev : [...prev, filePath]);
+      setFileContent(content);
+      setSavedContent(content);
+      setFileVersion(version);
+      setTabBuffers(prev => ({ ...prev, [filePath]: { content, savedContent: content, version } }));
       setDiffView(null);
       setShowInlineEdit(false);
       setEditorVisible(true);
     } catch (error: any) { setNotice(error.message); }
-  }, []);
+  }, [activeFile, fileContent, fileVersion, savedContent, tabBuffers]);
 
   const openFile = async (entry: FileEntry) => {
     if (entry.isDirectory) {
@@ -427,6 +453,7 @@ export default function Home() {
       const data = await api.json<any>("/api/workspace/file", { method: "POST", headers, body: JSON.stringify({ path: activeFile, content: fileContent }) });
       setFileVersion(data.version || null);
       setSavedContent(fileContent);
+      setTabBuffers(prev => ({ ...prev, [activeFile]: { content: fileContent, savedContent: fileContent, version: data.version || null } }));
       setNotice("Saved " + activeFile);
       await refreshFiles(currentDir);
     } catch (error: any) {
@@ -1086,11 +1113,18 @@ export default function Home() {
                     <div key={entry.path} onClick={() => openFile(entry)} className={"group cursor-pointer w-full flex items-center justify-between gap-1 px-2 py-1.5 rounded text-left " + (activeFile === entry.path ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200")}>
                       <div className="flex items-center gap-2 min-w-0">
                         {entry.isDirectory ? <Folder size={13} className="text-neutral-400 shrink-0" /> : <File size={13} className="text-neutral-500 shrink-0" />}
-                        <span className="truncate">{entry.name}</span>
+                        <span className={"truncate " + (gitFileStatuses[entry.path] === "modified" ? "text-amber-300" : gitFileStatuses[entry.path] === "added" ? "text-emerald-300" : gitFileStatuses[entry.path] === "deleted" ? "text-rose-400 line-through" : "")}>{entry.name}</span>
                       </div>
-                      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 shrink-0 transition-opacity">
-                        <button type="button" onClick={e => renameEntry(entry, e)} className="p-0.5 hover:text-white" title="Rename"><Pencil size={11} /></button>
-                        <button type="button" onClick={e => deleteEntry(entry, e)} className="p-0.5 hover:text-rose-400" title="Delete"><Trash2 size={11} /></button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {gitFileStatuses[entry.path] && (
+                          <span className={"text-[9px] font-bold px-1 " + (gitFileStatuses[entry.path] === "modified" ? "text-amber-400" : gitFileStatuses[entry.path] === "added" ? "text-emerald-400" : "text-rose-400")}>
+                            {gitFileStatuses[entry.path] === "modified" ? "M" : gitFileStatuses[entry.path] === "added" ? "A" : "D"}
+                          </span>
+                        )}
+                        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity">
+                          <button type="button" onClick={e => renameEntry(entry, e)} className="p-0.5 hover:text-white" title="Rename"><Pencil size={11} /></button>
+                          <button type="button" onClick={e => deleteEntry(entry, e)} className="p-0.5 hover:text-rose-400" title="Delete"><Trash2 size={11} /></button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1320,7 +1354,7 @@ export default function Home() {
                     <button onClick={() => openFileByPath(tab)} className="flex items-center gap-1.5">
                       <File size={11} />
                       <span className="max-w-28 truncate">{tab.split("/").pop()}</span>
-                      {activeFile === tab && dirty && <span className="text-amber-400">●</span>}
+                      {((activeFile === tab && dirty) || (activeFile !== tab && tabBuffers[tab] && tabBuffers[tab].content !== tabBuffers[tab].savedContent)) && <span className="text-amber-400">●</span>}
                     </button>
                     <button
                       onClick={(e) => {
